@@ -38,6 +38,9 @@ pnpm typecheck
 # Type-check and build for production
 pnpm build
 
+# Serve the production build (used by OSC — respects $PORT)
+pnpm start
+
 # Preview the production build locally
 pnpm preview
 
