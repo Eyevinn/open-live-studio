@@ -3,11 +3,8 @@ import { cn } from '@/lib/cn'
 import { useProductionStore } from '@/store/production.store'
 
 const NAV_ITEMS = [
-  { to: '/setup',       label: 'Setup',       icon: '⚙' },
-  { to: '/controller',  label: 'Controller',  icon: '🎬' },
-  { to: '/viewer',      label: 'Viewer',      icon: '📺' },
-  { to: '/intercom',    label: 'Intercom',    icon: '🎙' },
-  { to: '/multiviewer', label: 'Multiviewer', icon: '⊞' },
+  { to: '/setup',      label: 'Setup',      icon: '⚙' },
+  { to: '/controller', label: 'Controller', icon: '🎬' },
 ]
 
 export function NavBar() {
@@ -31,7 +28,7 @@ export function NavBar() {
               cn(
                 'flex flex-col items-center justify-center gap-0.5 py-2.5 rounded text-[10px] font-medium transition-colors',
                 isActive
-                  ? 'bg-[--color-accent] text-white'
+                  ? 'bg-[--color-accent] text-[#1a1a1a]'
                   : 'text-[--color-text-muted] hover:text-[--color-text-primary] hover:bg-[--color-surface-3]',
               )
             }

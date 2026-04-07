@@ -34,7 +34,6 @@ export function MultiviewCell({ source }: MultiviewCellProps) {
         tally={tally}
         className="w-full rounded-none"
       />
-      {/* Top-right tally indicator */}
       <div className="absolute top-1.5 right-1.5">
         <TallyLight state={tally} size="sm" />
       </div>
