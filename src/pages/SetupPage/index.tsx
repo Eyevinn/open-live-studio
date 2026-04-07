@@ -1,15 +1,13 @@
 import { useState } from 'react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { SourcesPanel } from './SourcesPanel'
-import { PipelineEditor } from './PipelineEditor'
 import { ProductionsPanel } from './ProductionsPanel'
 import { cn } from '@/lib/cn'
 
-type Tab = 'sources' | 'pipeline' | 'productions'
+type Tab = 'sources' | 'productions'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'sources', label: 'Sources' },
-  { id: 'pipeline', label: 'Pipeline' },
   { id: 'productions', label: 'Productions' },
 ]
 
@@ -20,7 +18,7 @@ export function SetupPage() {
     <div className="flex flex-col h-full">
       <PageHeader
         title="Setup"
-        subtitle="Configure sources, pipeline, and productions"
+        subtitle="Configure sources and productions"
       />
 
       {/* Tabs */}
@@ -44,11 +42,6 @@ export function SetupPage() {
       {/* Tab content */}
       <div className="flex-1 overflow-auto p-5">
         {activeTab === 'sources' && <SourcesPanel />}
-        {activeTab === 'pipeline' && (
-          <div className="h-full flex flex-col" style={{ minHeight: '500px' }}>
-            <PipelineEditor />
-          </div>
-        )}
         {activeTab === 'productions' && <ProductionsPanel />}
       </div>
     </div>

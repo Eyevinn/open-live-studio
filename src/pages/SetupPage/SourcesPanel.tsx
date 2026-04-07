@@ -12,7 +12,7 @@ function timeSince(ts: number): string {
 }
 
 export function SourcesPanel() {
-  const { sources, isLoading, lastFetchedAt, refresh, removeSource, addSource } = useSourcesStore()
+  const { sources, isLoading, lastFetchedAt, removeSource, addSource } = useSourcesStore()
   const [addOpen, setAddOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [newAddress, setNewAddress] = useState('')
@@ -34,10 +34,7 @@ export function SourcesPanel() {
           </span>
           {isLoading && <span className="text-xs text-[--color-accent]">Refreshing…</span>}
         </div>
-        <div className="flex gap-2">
-          <Button size="sm" variant="ghost" onClick={refresh} disabled={isLoading}>↻ Refresh</Button>
-          <Button size="sm" variant="active" onClick={() => setAddOpen(true)}>+ Add Source</Button>
-        </div>
+        <Button size="sm" variant="active" onClick={() => setAddOpen(true)}>+ Add Source</Button>
       </div>
 
       <div className="flex flex-col gap-1">

@@ -4,6 +4,7 @@ import { NavBar } from './NavBar'
 import { useStreamDeck } from '@/hooks/useStreamDeck'
 import { useProductionStore } from '@/store/production.store'
 import { useSourcesStore } from '@/store/sources.store'
+import { useProductionsStore } from '@/store/productions.store'
 
 function LiveClock() {
   return (
@@ -15,8 +16,18 @@ function LiveClock() {
 
 export function Shell() {
   useStreamDeck()
-  const fetchAll = useSourcesStore((s) => s.fetchAll)
-  useEffect(() => { void fetchAll() }, [fetchAll])
+  const fetchSources = useSourcesStore((s) => s.fetchAll)
+  const fetchProductions = useProductionsStore((s) => s.fetchAll)
+
+  useEffect(() => {
+    void fetchSources()
+    void fetchProductions()
+    const id = setInterval(() => {
+      void fetchSources()
+      void fetchProductions()
+    }, 5000)
+    return () => clearInterval(id)
+  }, [fetchSources, fetchProductions])
 
   const isLive = useProductionStore((s) => s.isLive)
   const activeProductionId = useProductionStore((s) => s.activeProductionId)
