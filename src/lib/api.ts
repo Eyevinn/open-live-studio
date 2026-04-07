@@ -13,24 +13,67 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>
 }
 
+export type StreamType = 'srt' | 'whip'
+
 export interface ApiSource {
   id: string
   name: string
   address: string
+  streamType: StreamType
   status: 'active' | 'inactive'
   liveCamera?: boolean
+}
+
+export interface ProductionSourceAssignment {
+  sourceId: string
+  mixerInput: string
 }
 
 export interface ApiProduction {
   id: string
   name: string
   status: 'active' | 'inactive'
+  sources: ProductionSourceAssignment[]
+  templateId?: string
+  stromFlowId?: string
 }
 
-type RawProduction = { _id: string; name: string; status: 'active' | 'inactive' }
+export interface ApiTemplate {
+  id: string
+  name: string
+  description?: string
+  flow: {
+    elements: unknown[]
+    blocks: unknown[]
+    links: unknown[]
+  }
+  inputs: Array<{
+    id: string
+    blockId: string
+    addressProperty: string
+  }>
+  createdAt: string
+  updatedAt: string
+}
+
+type RawProduction = {
+  _id: string
+  name: string
+  status: 'active' | 'inactive'
+  sources: ProductionSourceAssignment[]
+  templateId?: string
+  stromFlowId?: string
+}
 
 function normalizeProduction(d: RawProduction): ApiProduction {
-  return { id: d._id, name: d.name, status: d.status }
+  return {
+    id: d._id,
+    name: d.name,
+    status: d.status,
+    sources: d.sources ?? [],
+    templateId: d.templateId,
+    stromFlowId: d.stromFlowId,
+  }
 }
 
 export const productionsApi = {
@@ -41,6 +84,12 @@ export const productionsApi = {
   create: (body: { name: string }) =>
     request<RawProduction>('/api/v1/productions', {
       method: 'POST',
+      body: JSON.stringify(body),
+    }).then(normalizeProduction),
+
+  update: (id: string, body: { name?: string; templateId?: string | null }) =>
+    request<RawProduction>(`/api/v1/productions/${id}`, {
+      method: 'PATCH',
       body: JSON.stringify(body),
     }).then(normalizeProduction),
 
@@ -57,6 +106,15 @@ export const productionsApi = {
 
   remove: (id: string) =>
     request<void>(`/api/v1/productions/${id}`, { method: 'DELETE' }),
+
+  assignSource: (id: string, body: ProductionSourceAssignment) =>
+    request<ProductionSourceAssignment & { _rev: string }>(`/api/v1/productions/${id}/sources`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  unassignSource: (id: string, mixerInput: string) =>
+    request<void>(`/api/v1/productions/${id}/sources/${encodeURIComponent(mixerInput)}`, { method: 'DELETE' }),
 }
 
 export const sourcesApi = {
@@ -77,4 +135,27 @@ export const sourcesApi = {
 
   remove: (id: string) =>
     request<void>(`/api/v1/sources/${id}`, { method: 'DELETE' }),
+}
+
+export const templatesApi = {
+  list: () =>
+    request<ApiTemplate[]>('/api/v1/templates'),
+
+  create: (body: Omit<ApiTemplate, 'id' | 'createdAt' | 'updatedAt'>) =>
+    request<ApiTemplate>('/api/v1/templates', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  get: (id: string) =>
+    request<ApiTemplate>(`/api/v1/templates/${id}`),
+
+  update: (id: string, body: Partial<Omit<ApiTemplate, 'id' | 'createdAt' | 'updatedAt'>>) =>
+    request<ApiTemplate>(`/api/v1/templates/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  remove: (id: string) =>
+    request<void>(`/api/v1/templates/${id}`, { method: 'DELETE' }),
 }

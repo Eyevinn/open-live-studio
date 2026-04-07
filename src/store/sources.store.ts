@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
-import { sourcesApi, type ApiSource } from '@/lib/api'
+import { sourcesApi, type ApiSource, type StreamType } from '@/lib/api'
 
 export type SourceStatus = 'active' | 'inactive'
 
@@ -9,6 +9,7 @@ export interface Source {
   id: string
   name: string
   address: string
+  streamType: StreamType
   status: SourceStatus
   color: string
   liveCamera?: boolean
@@ -31,7 +32,15 @@ interface SourcesActions {
 const SOURCE_COLOR = '#27272a'
 
 function fromApi(s: ApiSource): Source {
-  return { id: s.id, name: s.name, address: s.address, status: s.status, color: SOURCE_COLOR, liveCamera: s.liveCamera }
+  return {
+    id: s.id,
+    name: s.name,
+    address: s.address,
+    streamType: s.streamType,
+    status: s.status,
+    color: SOURCE_COLOR,
+    liveCamera: s.liveCamera,
+  }
 }
 
 export const useSourcesStore = create<SourcesState & SourcesActions>()(

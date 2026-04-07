@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
-import { productionsApi, type ApiProduction } from '@/lib/api'
+import { productionsApi, type ApiProduction, type ProductionSourceAssignment } from '@/lib/api'
 
 export type ProductionStatus = 'active' | 'inactive'
 
@@ -9,6 +9,9 @@ export interface Production {
   id: string
   name: string
   status: ProductionStatus
+  sources: ProductionSourceAssignment[]
+  templateId?: string
+  stromFlowId?: string
 }
 
 interface ProductionsState {
@@ -22,10 +25,20 @@ interface ProductionsActions {
   addProduction: (name: string) => Promise<void>
   removeProduction: (id: string) => Promise<void>
   updateStatus: (id: string, status: ProductionStatus) => Promise<void>
+  updateTemplateId: (id: string, templateId: string | null) => Promise<void>
+  assignSource: (id: string, assignment: ProductionSourceAssignment) => Promise<void>
+  unassignSource: (id: string, mixerInput: string) => Promise<void>
 }
 
 function fromApi(p: ApiProduction): Production {
-  return { id: p.id, name: p.name, status: p.status }
+  return {
+    id: p.id,
+    name: p.name,
+    status: p.status,
+    sources: p.sources ?? [],
+    templateId: p.templateId,
+    stromFlowId: p.stromFlowId,
+  }
 }
 
 export const useProductionsStore = create<ProductionsState & ProductionsActions>()(
@@ -67,7 +80,40 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
           : productionsApi.deactivate(id))
         set((state) => {
           const prod = state.productions.find((p) => p.id === id)
-          if (prod) prod.status = updated.status
+          if (prod) {
+            prod.status = updated.status
+            prod.stromFlowId = updated.stromFlowId
+          }
+        })
+      },
+
+      updateTemplateId: async (id, templateId) => {
+        const updated = await productionsApi.update(id, { templateId })
+        set((state) => {
+          const prod = state.productions.find((p) => p.id === id)
+          if (prod) prod.templateId = updated.templateId
+        })
+      },
+
+      assignSource: async (id, assignment) => {
+        await productionsApi.assignSource(id, assignment)
+        set((state) => {
+          const prod = state.productions.find((p) => p.id === id)
+          if (!prod) return
+          const existing = prod.sources.findIndex((s) => s.mixerInput === assignment.mixerInput)
+          if (existing !== -1) {
+            prod.sources[existing] = assignment
+          } else {
+            prod.sources.push(assignment)
+          }
+        })
+      },
+
+      unassignSource: async (id, mixerInput) => {
+        await productionsApi.unassignSource(id, mixerInput)
+        set((state) => {
+          const prod = state.productions.find((p) => p.id === id)
+          if (prod) prod.sources = prod.sources.filter((s) => s.mixerInput !== mixerInput)
         })
       },
     })),

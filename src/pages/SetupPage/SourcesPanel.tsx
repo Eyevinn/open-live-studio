@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useSourcesStore } from '@/store/sources.store'
+import type { StreamType } from '@/lib/api'
 import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
@@ -11,17 +12,24 @@ function timeSince(ts: number): string {
   return `${Math.floor(secs / 60)}m ago`
 }
 
+const STREAM_TYPE_LABELS: Record<StreamType, string> = {
+  srt: 'SRT',
+  whip: 'WHIP',
+}
+
 export function SourcesPanel() {
   const { sources, isLoading, lastFetchedAt, removeSource, addSource } = useSourcesStore()
   const [addOpen, setAddOpen] = useState(false)
   const [newName, setNewName] = useState('')
   const [newAddress, setNewAddress] = useState('')
+  const [newStreamType, setNewStreamType] = useState<StreamType>('srt')
 
   function handleAdd() {
     if (!newName.trim()) return
-    addSource({ name: newName.trim(), address: newAddress.trim(), status: 'inactive', color: '#27272a' })
+    addSource({ name: newName.trim(), address: newAddress.trim(), streamType: newStreamType, status: 'inactive', color: '#27272a' })
     setNewName('')
     setNewAddress('')
+    setNewStreamType('srt')
     setAddOpen(false)
   }
 
@@ -45,7 +53,12 @@ export function SourcesPanel() {
           >
             <StatusDot color={src.status === 'active' ? 'red' : 'gray'} />
             <div className="flex-1 min-w-0">
-              <span className="text-sm font-medium text-[--color-text-primary] truncate block">{src.name}</span>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-[--color-text-primary] truncate">{src.name}</span>
+                <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-[--color-surface-raised] text-[--color-text-muted] uppercase">
+                  {STREAM_TYPE_LABELS[src.streamType]}
+                </span>
+              </div>
               <span className="text-xs text-[--color-text-muted] font-mono truncate block">{src.address}</span>
             </div>
             <Button size="sm" variant="ghost" onClick={() => removeSource(src.id)} className="opacity-40 hover:opacity-100">✕</Button>
@@ -66,12 +79,31 @@ export function SourcesPanel() {
             />
           </div>
           <div>
+            <label className="text-xs text-[--color-text-muted] uppercase tracking-wider block mb-1">Stream Type</label>
+            <div className="flex gap-2">
+              {(['srt', 'whip'] as StreamType[]).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  onClick={() => setNewStreamType(t)}
+                  className={`flex-1 py-2 rounded text-sm font-mono uppercase transition-colors ${
+                    newStreamType === t
+                      ? 'bg-[--color-accent] text-white'
+                      : 'bg-[--color-surface-raised] border border-[--color-border-strong] text-[--color-text-muted] hover:text-[--color-text-primary]'
+                  }`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div>
             <label className="text-xs text-[--color-text-muted] uppercase tracking-wider block mb-1">Address</label>
             <input
               type="text"
               value={newAddress}
               onChange={(e) => setNewAddress(e.target.value)}
-              placeholder="srt://192.168.1.10:9000"
+              placeholder={newStreamType === 'srt' ? 'srt://192.168.1.10:9000' : 'https://ingest.example.com/whip/token'}
               className="w-full px-3 py-2 rounded bg-[--color-surface-raised] border border-[--color-border-strong] text-sm text-[--color-text-primary] focus:outline-none focus:ring-1 focus:ring-[--color-accent]"
             />
           </div>
