@@ -12,6 +12,7 @@ export interface Production {
   sources: ProductionSourceAssignment[]
   templateId?: string
   stromFlowId?: string
+  whepEndpoint?: string
 }
 
 interface ProductionsState {
@@ -38,6 +39,7 @@ function fromApi(p: ApiProduction): Production {
     sources: p.sources ?? [],
     templateId: p.templateId,
     stromFlowId: p.stromFlowId,
+    whepEndpoint: p.whepEndpoint,
   }
 }
 

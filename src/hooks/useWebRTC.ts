@@ -1,32 +1,55 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useViewerStore } from '@/store/viewer.store'
-import { getViewerStream } from '@/lib/webrtc'
+import { WhepClient } from '@/lib/webrtc'
 
 /**
- * Initialises the viewer stream on mount.
- * Uses real camera via getUserMedia, falls back to canvas color bars.
+ * Manages the program stream for the controller's PGM monitor.
+ *
+ * - With a whepEndpoint: establishes a real WHEP connection to Strom.
+ * - Without one: shows offline state — never touches the camera.
+ *
+ * Reconnects automatically when whepEndpoint changes.
  * See docs/repo-patterns.md: "WebRTC viewer fails on mobile without TURN"
  */
-export function useWebRTC(): void {
+export function useWebRTC(whepEndpoint?: string | null): void {
   const setProgramStream = useViewerStore((s) => s.setProgramStream)
   const setConnectionState = useViewerStore((s) => s.setConnectionState)
   const disconnect = useViewerStore((s) => s.disconnect)
+  const clientRef = useRef<WhepClient | null>(null)
 
   useEffect(() => {
     let cancelled = false
-    setConnectionState('connecting')
 
-    void getViewerStream().then(({ stream, isMock }) => {
-      if (cancelled) {
-        stream.getTracks().forEach((t) => t.stop())
-        return
-      }
-      setProgramStream(stream, isMock)
-    })
+    if (whepEndpoint) {
+      setConnectionState('connecting')
+      const client = new WhepClient(whepEndpoint, {
+        onVideoTrack: (stream) => {
+          if (!cancelled) setProgramStream(stream, false)
+        },
+        onConnected: () => {
+          if (!cancelled) setConnectionState('connected')
+        },
+        onDisconnected: () => {
+          if (!cancelled) setConnectionState('disconnected')
+        },
+        onError: () => {
+          if (!cancelled) setConnectionState('error')
+        },
+      }, { iceServersUrl: '/api/v1/ice-servers', proxyUrl: '/api/v1/whep-proxy' })
+      clientRef.current = client
+      void client.connect()
+    } else {
+      disconnect()
+    }
 
     return () => {
       cancelled = true
-      disconnect()
+      if (clientRef.current) {
+        void clientRef.current.disconnect()
+        clientRef.current = null
+      } else {
+        disconnect()
+      }
     }
-  }, [setProgramStream, setConnectionState, disconnect])
+  }, [whepEndpoint, setProgramStream, setConnectionState, disconnect])
 }

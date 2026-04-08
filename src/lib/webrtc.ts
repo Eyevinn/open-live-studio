@@ -4,19 +4,229 @@
  * See docs/repo-patterns.md: "WebRTC viewer fails on mobile without TURN"
  */
 
-/**
- * Attempt to get a real camera stream.
- * Falls back to canvas color bars if permission is denied or unavailable.
- */
-export async function getViewerStream(): Promise<{ stream: MediaStream; isMock: boolean }> {
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30 } },
-      audio: false,
-    })
-    return { stream, isMock: false }
-  } catch {
-    return { stream: createColorBarStream(), isMock: true }
+// ---------------------------------------------------------------------------
+// WhepClient — WHEP viewer connection
+// Ported from strom/backend/static/whep/whep.js.
+// ---------------------------------------------------------------------------
+
+type WhepCallbacks = {
+  onVideoTrack?: (stream: MediaStream) => void
+  onConnected?: () => void
+  onDisconnected?: () => void
+  onError?: (msg: string) => void
+}
+
+type WhepOptions = {
+  /** Override the ICE servers URL. Defaults to {endpoint origin}/api/ice-servers.
+   *  Use the backend proxy URL to avoid CORS/auth issues with remote Strom instances. */
+  iceServersUrl?: string
+  /** Proxy URL for WHEP SDP signaling. When set, POST/DELETE go to
+   *  {proxyUrl}?target={encodeURIComponent(stromUrl)} instead of Strom directly. */
+  proxyUrl?: string
+}
+
+export class WhepClient {
+  private pc: RTCPeerConnection | null = null
+  private resourceUrl: string | null = null
+  private healthInterval: ReturnType<typeof setInterval> | null = null
+  private prevFramesDecoded = 0
+  private prevPacketsLost = 0
+  private frozenSince = 0
+  private lossRecoveryPending = false
+
+  constructor(
+    private readonly endpoint: string,
+    private readonly callbacks: WhepCallbacks = {},
+    private readonly options: WhepOptions = {},
+  ) {}
+
+  async connect(): Promise<boolean> {
+    try {
+      // Fetch ICE config. Use the provided iceServersUrl (backend proxy) or fall
+      // back to the endpoint's origin — the proxy avoids CORS/auth issues with
+      // remote Strom instances.
+      const iceUrl = this.options.iceServersUrl ?? `${new URL(this.endpoint).origin}/api/ice-servers`
+      let iceServers: RTCIceServer[] = []
+      let iceTransportPolicy: RTCIceTransportPolicy = 'all'
+      try {
+        const resp = await fetch(iceUrl)
+        if (resp.ok) {
+          // Backend proxy returns { iceServers }; Strom directly returns { ice_servers }
+          const cfg = await resp.json() as { iceServers?: RTCIceServer[]; ice_servers?: RTCIceServer[]; ice_transport_policy?: string }
+          const servers = cfg.iceServers ?? cfg.ice_servers
+          if (servers?.length) iceServers = servers
+          if (cfg.ice_transport_policy) iceTransportPolicy = cfg.ice_transport_policy as RTCIceTransportPolicy
+        }
+      } catch { /* use browser defaults */ }
+
+      this.pc = new RTCPeerConnection({ iceServers, iceTransportPolicy })
+
+      const remoteStream = new MediaStream()
+      this.pc.ontrack = (event) => {
+        remoteStream.addTrack(event.track)
+        if (event.track.kind === 'video') {
+          this.callbacks.onVideoTrack?.(remoteStream)
+        }
+      }
+
+      this.pc.oniceconnectionstatechange = () => {
+        const state = this.pc?.iceConnectionState
+        console.log('[WhepClient] ICE state:', state)
+        if (state === 'connected' || state === 'completed') {
+          this.callbacks.onConnected?.()
+          this._startHealthMonitor()
+        } else if (state === 'failed') {
+          this.callbacks.onError?.('ICE connection failed — check TURN server')
+        } else if (state === 'disconnected') {
+          this.callbacks.onDisconnected?.()
+        }
+      }
+
+      this.pc.onicecandidateerror = (e) => {
+        console.warn('[WhepClient] ICE candidate error:', e.errorCode, e.errorText, e.url)
+      }
+
+      this.pc.onicecandidate = (e) => {
+        if (e.candidate) {
+          console.log('[WhepClient] Local candidate:', e.candidate.type, e.candidate.protocol, e.candidate.address)
+        } else {
+          console.log('[WhepClient] ICE gathering complete')
+        }
+      }
+
+      // recvonly transceivers — server decides what to send
+      this.pc.addTransceiver('audio', { direction: 'recvonly' })
+      this.pc.addTransceiver('video', { direction: 'recvonly' })
+
+      const offer = await this.pc.createOffer()
+      // Enable Opus stereo locally — Chrome defaults to mono
+      offer.sdp = this._enableOpusStereo(offer.sdp ?? '')
+      await this.pc.setLocalDescription(offer)
+
+      // Wait for ICE gathering (2 s timeout)
+      await new Promise<void>((resolve) => {
+        if (this.pc?.iceGatheringState === 'complete') { resolve(); return }
+        const timer = setTimeout(resolve, 2000)
+        this.pc!.onicegatheringstatechange = () => {
+          if (this.pc?.iceGatheringState === 'complete') { clearTimeout(timer); resolve() }
+        }
+      })
+
+      // Strip Opus stereo params before sending — webrtcsink capsfilter rejects them
+      const serverSdp = this._stripOpusStereoForServer(this.pc.localDescription!.sdp)
+      const postUrl = this.options.proxyUrl
+        ? `${this.options.proxyUrl}?target=${encodeURIComponent(this.endpoint)}`
+        : this.endpoint
+      const resp = await fetch(postUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp' },
+        body: serverSdp,
+      })
+      if (!resp.ok) {
+        const text = await resp.text()
+        throw new Error(`WHEP ${resp.status}: ${text}`)
+      }
+
+      this.resourceUrl = resp.headers.get('Location')
+      const answerSdp = await resp.text()
+      // Log Strom's ICE candidates from the answer for diagnostics
+      answerSdp.split('\r\n').filter(l => l.startsWith('a=candidate')).forEach(l => console.log('[WhepClient] Remote candidate:', l))
+      await this.pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
+      return true
+    } catch (err) {
+      this.callbacks.onError?.((err as Error).message)
+      this.close()
+      return false
+    }
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.resourceUrl) {
+      try { await fetch(this.resourceUrl, { method: 'DELETE' }) } catch { /* ignore */ }
+    }
+    this.close()
+    this.callbacks.onDisconnected?.()
+  }
+
+  close(): void {
+    if (this.healthInterval) { clearInterval(this.healthInterval); this.healthInterval = null }
+    this.pc?.close()
+    this.pc = null
+    this.resourceUrl = null
+  }
+
+  isConnected(): boolean {
+    const s = this.pc?.iceConnectionState
+    return s === 'connected' || s === 'completed'
+  }
+
+  // Enable stereo for Opus — Chrome defaults to mono (stereo=0)
+  private _enableOpusStereo(sdp: string): string {
+    const match = sdp.match(/a=rtpmap:(\d+) opus\/48000\/2/i)
+    if (!match) return sdp
+    const pt = match[1]
+    return sdp.replace(new RegExp(`(a=fmtp:${pt} [^\r\n]+)`, 'g'), (m) =>
+      m.includes('stereo=') ? m : `${m};stereo=1;sprop-stereo=1`
+    )
+  }
+
+  // Strip stereo params before sending to server — webrtcsink codec discovery rejects them
+  private _stripOpusStereoForServer(sdp: string): string {
+    return sdp.replace(/;stereo=1/g, '').replace(/;sprop-stereo=1/g, '')
+  }
+
+  // Detect video freeze after packet loss and recover by re-attaching the stream
+  private _startHealthMonitor(): void {
+    if (this.healthInterval) return
+    this.prevFramesDecoded = 0
+    this.prevPacketsLost = 0
+    this.frozenSince = 0
+    this.lossRecoveryPending = false
+
+    this.healthInterval = setInterval(() => {
+      if (!this.isConnected()) return
+      void this.pc!.getStats().then((stats) => {
+        let framesDecoded = 0, packetsLost = 0
+        stats.forEach((r) => {
+          if (r.type === 'inbound-rtp' && (r as RTCInboundRtpStreamStats & { kind?: string }).kind === 'video') {
+            framesDecoded = (r as RTCInboundRtpStreamStats).framesDecoded ?? 0
+            packetsLost = (r as RTCInboundRtpStreamStats).packetsLost ?? 0
+          }
+        })
+
+        const newLoss = packetsLost - this.prevPacketsLost
+        const newFrames = framesDecoded - this.prevFramesDecoded
+        if (newLoss > 0 && this.prevPacketsLost > 0) this.lossRecoveryPending = true
+
+        const now = Date.now()
+        if (this.prevFramesDecoded > 0 && newFrames === 0) {
+          if (!this.frozenSince) this.frozenSince = now
+        } else {
+          if (this.lossRecoveryPending && newFrames > 0) this.lossRecoveryPending = false
+          this.frozenSince = 0
+        }
+
+        if (this.frozenSince && this.lossRecoveryPending && now - this.frozenSince > 3000) {
+          this._recoverVideo()
+          this.frozenSince = 0
+          this.lossRecoveryPending = false
+        }
+
+        this.prevFramesDecoded = framesDecoded
+        this.prevPacketsLost = packetsLost
+      }).catch(() => { /* PC closing */ })
+    }, 1000)
+  }
+
+  // Re-attach video track to force decoder reset + PLI keyframe request
+  private _recoverVideo(): void {
+    if (!this.pc) return
+    for (const receiver of this.pc.getReceivers()) {
+      if (receiver.track?.kind === 'video') {
+        this.callbacks.onVideoTrack?.(new MediaStream([receiver.track]))
+        break
+      }
+    }
   }
 }
 
@@ -83,20 +293,11 @@ export function createColorBarStream(): MediaStream {
 }
 
 /**
- * Acquires a stream for a source: real camera for liveCamera sources, canvas mock otherwise.
+ * Acquires a canvas mock stream for a source tile. Never accesses the camera —
+ * real video comes from WHEP streams, not getUserMedia.
  */
-export async function getSourceStream(source: { color: string; name: string; liveCamera?: boolean }): Promise<MediaStream> {
-  if (source.liveCamera) {
-    try {
-      return await navigator.mediaDevices.getUserMedia({
-        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
-        audio: false,
-      })
-    } catch {
-      // Camera denied or unavailable — fall through to canvas mock
-    }
-  }
-  return createSourceStream(source.color, source.name)
+export function getSourceStream(source: { color: string; name: string }): Promise<MediaStream> {
+  return Promise.resolve(createSourceStream(source.color, source.name))
 }
 
 /**

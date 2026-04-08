@@ -1,45 +1,30 @@
-import { useEffect, useCallback, useState } from 'react'
-import { useShallow } from 'zustand/react/shallow'
+import { useEffect, useCallback } from 'react'
 import { useWebRTC } from '@/hooks/useWebRTC'
 import { useControllerWs } from '@/hooks/useControllerWs'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/Button'
-import { MultiviewCell } from '@/components/ui/MultiviewCell'
 import { ProgramPreview } from './ProgramPreview'
-import { SourceBusDual } from './SourceBusDual'
 import { TransitionPanel } from './TransitionPanel'
 import { GraphicsPanel } from './GraphicsPanel'
 import { StreamDeckSurface } from './StreamDeckSurface'
 import { DskPanel } from './DskPanel'
-import { AudioPanel } from './AudioPanel'
 import { MacroBar } from './MacroBar'
 import { TimerBar } from './TimerBar'
 import { StreamingStatus } from './StreamingStatus'
 import { useProductionStore } from '@/store/production.store'
-import { useSourcesStore } from '@/store/sources.store'
+import { useProductionsStore } from '@/store/productions.store'
 import { useStatsStore } from '@/store/stats.store'
-import { cn } from '@/lib/cn'
-
-type GridSize = '2x2' | '3x3' | '4x4'
-const GRID_COLS: Record<GridSize, number> = { '2x2': 2, '3x3': 3, '4x4': 4 }
-const GRID_MAX: Record<GridSize, number>  = { '2x2': 4, '3x3': 9, '4x4': 16 }
-const LS_KEY = 'openlive:multiviewer-grid'
 
 export function ControllerPage() {
-  useWebRTC()
-
   const { isLive, setLive, cut, take, activeProductionId } = useProductionStore()
+  const whepEndpoint = useProductionsStore(
+    (s) => s.productions.find((p) => p.id === activeProductionId)?.whepEndpoint,
+  )
+  useWebRTC(whepEndpoint)
   const send = useControllerWs(activeProductionId)
   const startPolling = useStatsStore((s) => s.startPolling)
   const stopPolling = useStatsStore((s) => s.stopPolling)
 
-  const [gridSize, setGridSize] = useState<GridSize>(() =>
-    (localStorage.getItem(LS_KEY) as GridSize | null) ?? '2x2'
-  )
-
-  useEffect(() => { localStorage.setItem(LS_KEY, gridSize) }, [gridSize])
-
-  // Start/stop streaming stats polling with the active production
   useEffect(() => {
     if (activeProductionId) {
       startPolling(activeProductionId)
@@ -48,10 +33,6 @@ export function ControllerPage() {
     }
     return () => stopPolling()
   }, [activeProductionId, startPolling, stopPolling])
-
-  const sources = useSourcesStore(useShallow((s) =>
-    s.sources.slice(0, GRID_MAX[gridSize])
-  ))
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
@@ -78,10 +59,6 @@ export function ControllerPage() {
     send({ type: 'MACRO_EXEC', macroId })
   }
 
-  const cols = GRID_COLS[gridSize]
-  const maxCells = GRID_MAX[gridSize]
-  const emptyCells = Math.max(0, maxCells - sources.length)
-
   return (
     <div className="flex flex-col h-full">
       <PageHeader
@@ -103,70 +80,18 @@ export function ControllerPage() {
       />
 
       <div className="flex-1 overflow-auto p-4 flex flex-col gap-4">
-        {/* Main 3-column layout on large screens */}
-        <div className="grid grid-cols-1 lg:grid-cols-[auto_1fr_auto] gap-4 items-start">
-          {/* Left: Source Bus */}
-          <div className="lg:w-64 xl:w-72">
-            <SourceBusDual />
-          </div>
+        {/* Multiviewer — full-width WHEP player */}
+        <ProgramPreview />
 
-          {/* Centre: PGM/PVW + Transitions + DSK */}
-          <div className="flex flex-col gap-3">
-            <ProgramPreview />
-            <TransitionPanel />
-            <DskPanel onToggle={handleDskToggle} />
-          </div>
+        {/* Controls — full width */}
+        <TransitionPanel />
+        <DskPanel onToggle={handleDskToggle} />
 
-          {/* Right: Audio */}
-          <div className="lg:w-56 xl:w-64">
-            <AudioPanel />
-          </div>
-        </div>
-
-        {/* Multiviewer */}
-        <div className="flex flex-col gap-3 p-4 bg-[--color-surface-3] rounded-xl border border-[--color-border]">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-widest text-[--color-text-muted]">Multiviewer</span>
-            <div className="flex gap-1">
-              {(['2x2', '3x3', '4x4'] as GridSize[]).map((size) => (
-                <button
-                  key={size}
-                  onClick={() => setGridSize(size)}
-                  className={cn(
-                    'px-2.5 py-1 rounded text-[10px] font-mono font-bold uppercase transition-all',
-                    gridSize === size
-                      ? 'bg-[--color-accent] text-[--color-text-dark]'
-                      : 'bg-[--color-surface-raised] text-[--color-text-muted] hover:text-[--color-text-primary] border border-[--color-border-strong]',
-                  )}
-                >
-                  {size}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="bg-black rounded-lg overflow-hidden">
-            <div className="grid gap-px" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
-              {sources.map((src) => (
-                <MultiviewCell key={src.id} source={src} />
-              ))}
-              {Array.from({ length: emptyCells }, (_, i) => (
-                <div key={`empty-${i}`} className="aspect-video bg-zinc-950 flex items-center justify-center">
-                  <span className="text-zinc-700 text-[10px] font-mono uppercase tracking-widest">No Source</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Macro bar */}
         {activeProductionId && (
           <MacroBar productionId={activeProductionId} onExec={handleMacroExec} />
         )}
 
-        {/* Graphics */}
         <GraphicsPanel />
-
-        {/* Stream Deck */}
         <StreamDeckSurface />
       </div>
     </div>

@@ -36,6 +36,7 @@ export interface ApiProduction {
   sources: ProductionSourceAssignment[]
   templateId?: string
   stromFlowId?: string
+  whepEndpoint?: string
 }
 
 export interface ApiTemplate {
@@ -63,6 +64,7 @@ type RawProduction = {
   sources: ProductionSourceAssignment[]
   templateId?: string
   stromFlowId?: string
+  whepEndpoint?: string
 }
 
 function normalizeProduction(d: RawProduction): ApiProduction {
@@ -73,6 +75,7 @@ function normalizeProduction(d: RawProduction): ApiProduction {
     sources: d.sources ?? [],
     templateId: d.templateId,
     stromFlowId: d.stromFlowId,
+    whepEndpoint: d.whepEndpoint,
   }
 }
 
