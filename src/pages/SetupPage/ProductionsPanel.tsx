@@ -308,6 +308,7 @@ export function ProductionsPanel() {
       <div className="flex flex-col gap-2">
         {productions.map((prod) => {
           const isActive = prod.status === 'active'
+          const isActivating = prod.status === 'activating'
           const template = templates.find((t) => t.id === prod.templateId)
           const assignedCount = prod.sources.length
           const totalSlots = template?.inputs.length ?? 0
@@ -323,7 +324,10 @@ export function ProductionsPanel() {
             >
               {/* Top row */}
               <div className="flex items-center gap-3">
-                <StatusDot color={isActive ? 'red' : 'gray'} />
+                <StatusDot
+                  color={isActive ? 'red' : isActivating ? 'yellow' : 'gray'}
+                  pulse={isActivating}
+                />
                 <div className="flex-1 min-w-0">
                   <span className="text-sm font-medium text-[--color-text-primary] truncate block">
                     {prod.name}
@@ -345,24 +349,43 @@ export function ProductionsPanel() {
                       size="sm"
                       variant="ghost"
                       onClick={() => setConfiguringId(prod.id)}
+                      disabled={isActivating}
                     >
                       ⚙ Sources
                     </Button>
                   )}
-                  <Button
-                    size="sm"
-                    variant={isActive ? 'ghost' : 'pvw'}
-                    onClick={() => {
-                      void updateStatus(prod.id, isActive ? 'inactive' : 'active')
-                      setActiveProduction(isActive ? null : prod.id)
-                    }}
-                  >
-                    {isActive ? 'Deactivate' : 'Activate'}
-                  </Button>
+                  {isActive ? (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={isActivating}
+                      onClick={() => {
+                        void updateStatus(prod.id, 'inactive')
+                        setActiveProduction(null)
+                      }}
+                    >
+                      Deactivate
+                    </Button>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="pvw"
+                      disabled={isActivating}
+                      onClick={() => {
+                        if (!isActivating) {
+                          void updateStatus(prod.id, 'active')
+                          setActiveProduction(prod.id)
+                        }
+                      }}
+                    >
+                      {isActivating ? 'Activating...' : 'Activate'}
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="ghost"
                     onClick={() => handleDelete(prod.id)}
+                    disabled={isActivating}
                     className="opacity-40 hover:opacity-100"
                   >
                     ✕

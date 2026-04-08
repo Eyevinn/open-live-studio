@@ -3,7 +3,10 @@ import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
 import { productionsApi, type ApiProduction, type ProductionSourceAssignment } from '@/lib/api'
 
-export type ProductionStatus = 'active' | 'inactive'
+export type ProductionStatus = 'active' | 'inactive' | 'activating'
+
+const ACTIVATION_POLL_INTERVAL_MS = 1000
+const ACTIVATION_POLL_TIMEOUT_MS = 35000
 
 export interface Production {
   id: string
@@ -12,6 +15,7 @@ export interface Production {
   sources: ProductionSourceAssignment[]
   templateId?: string
   stromFlowId?: string
+  whepEndpoint?: string
 }
 
 interface ProductionsState {
@@ -38,6 +42,7 @@ function fromApi(p: ApiProduction): Production {
     sources: p.sources ?? [],
     templateId: p.templateId,
     stromFlowId: p.stromFlowId,
+    whepEndpoint: p.whepEndpoint,
   }
 }
 
@@ -83,8 +88,40 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
           if (prod) {
             prod.status = updated.status
             prod.stromFlowId = updated.stromFlowId
+            prod.whepEndpoint = updated.whepEndpoint
           }
         })
+
+        if (updated.status === 'activating') {
+          // Poll until status is no longer 'activating' or timeout is reached
+          const deadline = Date.now() + ACTIVATION_POLL_TIMEOUT_MS
+          const poll = async (): Promise<void> => {
+            if (Date.now() >= deadline) {
+              console.warn(`[productions] Activation polling timed out for production ${id}`)
+              return
+            }
+            await new Promise<void>((resolve) => setTimeout(resolve, ACTIVATION_POLL_INTERVAL_MS))
+            try {
+              const polled = await productionsApi.get(id)
+              set((state) => {
+                const prod = state.productions.find((p) => p.id === id)
+                if (prod) {
+                  prod.status = polled.status
+                  prod.stromFlowId = polled.stromFlowId
+                  prod.whepEndpoint = polled.whepEndpoint
+                }
+              })
+              if (polled.status === 'activating') {
+                await poll()
+              }
+            } catch (err) {
+              console.error(`[productions] Activation poll error for ${id}:`, err)
+              // Retry on network error unless past deadline
+              await poll()
+            }
+          }
+          await poll()
+        }
       },
 
       updateTemplateId: async (id, templateId) => {
