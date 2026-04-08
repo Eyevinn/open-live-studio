@@ -22,6 +22,20 @@ export async function connectWhep(
   pc.addTransceiver('video', { direction: 'recvonly' })
   pc.addTransceiver('audio', { direction: 'recvonly' })
 
+  // Assign ontrack BEFORE setLocalDescription/setRemoteDescription.
+  // In Chromium and Safari, ontrack events can fire synchronously during
+  // setRemoteDescription processing — assigning the handler late silently
+  // drops those tracks, leaving the viewer black.
+  const stream = new MediaStream()
+  pc.ontrack = (event) => {
+    const incomingStream = event.streams[0] ?? new MediaStream([event.track])
+    incomingStream.getTracks().forEach((t) => {
+      if (!stream.getTracks().includes(t)) {
+        stream.addTrack(t)
+      }
+    })
+  }
+
   // Create offer and set as local description
   const offer = await pc.createOffer()
   await pc.setLocalDescription(offer)
@@ -57,12 +71,6 @@ export async function connectWhep(
 
   const answerSdp = await response.text()
   await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
-
-  // Collect incoming tracks into a MediaStream
-  const stream = new MediaStream()
-  pc.ontrack = (event) => {
-    stream.addTrack(event.track)
-  }
 
   // Wait for ICE to reach 'connected' state within the timeout
   await new Promise<void>((resolve, reject) => {
