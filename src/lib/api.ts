@@ -32,10 +32,11 @@ export interface ProductionSourceAssignment {
 export interface ApiProduction {
   id: string
   name: string
-  status: 'active' | 'inactive'
+  status: 'active' | 'inactive' | 'activating'
   sources: ProductionSourceAssignment[]
   templateId?: string
   stromFlowId?: string
+  whepEndpoint?: string
 }
 
 export interface ApiTemplate {
@@ -59,10 +60,11 @@ export interface ApiTemplate {
 type RawProduction = {
   _id: string
   name: string
-  status: 'active' | 'inactive'
+  status: 'active' | 'inactive' | 'activating'
   sources: ProductionSourceAssignment[]
   templateId?: string
   stromFlowId?: string
+  whepEndpoint?: string
 }
 
 function normalizeProduction(d: RawProduction): ApiProduction {
@@ -73,6 +75,7 @@ function normalizeProduction(d: RawProduction): ApiProduction {
     sources: d.sources ?? [],
     templateId: d.templateId,
     stromFlowId: d.stromFlowId,
+    whepEndpoint: d.whepEndpoint,
   }
 }
 
@@ -80,6 +83,10 @@ export const productionsApi = {
   list: () =>
     request<RawProduction[]>('/api/v1/productions')
       .then((docs) => docs.map(normalizeProduction)),
+
+  get: (id: string) =>
+    request<RawProduction>(`/api/v1/productions/${id}`)
+      .then(normalizeProduction),
 
   create: (body: { name: string }) =>
     request<RawProduction>('/api/v1/productions', {
@@ -207,6 +214,11 @@ export const audioApi = {
 export const statsApi = {
   streaming: (productionId: string) =>
     request<ApiStreamingStats>(`/api/v1/productions/${productionId}/stats/streaming`),
+}
+
+export const iceServersApi = {
+  get: () =>
+    request<{ iceServers: RTCIceServer[] }>('/api/v1/ice-servers'),
 }
 
 export const templatesApi = {
