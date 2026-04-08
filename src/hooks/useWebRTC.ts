@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 import { useViewerStore } from '@/store/viewer.store'
 import { WhepClient } from '@/lib/webrtc'
 
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
+
 /**
  * Manages the program stream for the controller's PGM monitor.
  *
@@ -36,7 +38,7 @@ export function useWebRTC(whepEndpoint?: string | null): void {
         onError: () => {
           if (!cancelled) setConnectionState('error')
         },
-      }, { iceServersUrl: '/api/v1/ice-servers', proxyUrl: '/api/v1/whep-proxy' })
+      }, { iceServersUrl: `${API_BASE}/api/v1/ice-servers`, proxyUrl: `${API_BASE}/api/v1/whep-proxy` })
       clientRef.current = client
       void client.connect()
     } else {
