@@ -2,7 +2,7 @@ import { cn } from '@/lib/cn'
 import type { ReactNode } from 'react'
 
 interface PageHeaderProps {
-  title: string
+  title: ReactNode
   subtitle?: string
   actions?: ReactNode
   className?: string
@@ -11,7 +11,7 @@ interface PageHeaderProps {
 export function PageHeader({ title, subtitle, actions, className }: PageHeaderProps) {
   return (
     <div className={cn(
-      'flex items-center justify-between px-6 py-4 border-b border-[--color-border]',
+      'flex items-center justify-between px-6 h-14 border-b border-[--color-border] flex-shrink-0',
       className,
     )}>
       <div>

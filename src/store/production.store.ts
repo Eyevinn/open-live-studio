@@ -2,12 +2,13 @@ import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
 
-export type TransitionType = 'cut' | 'mix' | 'wipe'
+export type TransitionType = 'mix' | 'dip' | 'push'
 
 interface ProductionState {
   pgmSourceId: string | null
   pvwSourceId: string | null
   isLive: boolean
+  isFtb: boolean
   transitionType: TransitionType
   transitionDurationMs: number
   tBarPosition: number // 0.0–1.0
@@ -16,7 +17,8 @@ interface ProductionState {
 
 interface ProductionActions {
   cut: () => void
-  take: () => void
+  auto: () => void
+  ftb: () => void
   setPvw: (sourceId: string) => void
   setPgm: (sourceId: string) => void
   setTransitionType: (type: TransitionType) => void
@@ -33,9 +35,10 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
       pgmSourceId: null,
       pvwSourceId: null,
       isLive: false,
-      transitionType: 'cut',
-      transitionDurationMs: 500,
-      tBarPosition: 0,
+      isFtb: false,
+      transitionType: 'mix',
+      transitionDurationMs: 1000,
+      tBarPosition: 1,
       activeProductionId: null,
 
       // Actions
@@ -44,15 +47,21 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
           const temp = state.pgmSourceId
           state.pgmSourceId = state.pvwSourceId
           state.pvwSourceId = temp
+          state.isFtb = false
         }),
 
-      take: () =>
+      auto: () =>
         set((state) => {
-          // For mix/wipe: swap PVW → PGM (same as cut in mock, animation would differ in real app)
           const temp = state.pgmSourceId
           state.pgmSourceId = state.pvwSourceId
           state.pvwSourceId = temp
           state.tBarPosition = 0
+          state.isFtb = false
+        }),
+
+      ftb: () =>
+        set((state) => {
+          state.isFtb = !state.isFtb
         }),
 
       setPvw: (sourceId) =>

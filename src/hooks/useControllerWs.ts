@@ -8,6 +8,9 @@ type OutboundMessage =
   | { type: 'CUT'; sourceId: string }
   | { type: 'TRANSITION'; sourceId: string; transitionType: string; durationMs?: number }
   | { type: 'TAKE' }
+  | { type: 'SET_PVW'; sourceId: string }
+  | { type: 'FTB'; active?: boolean; durationMs?: number }
+  | { type: 'SET_OVL'; alpha: number }
   | { type: 'GO_LIVE' }
   | { type: 'CUT_STREAM' }
   | { type: 'GRAPHIC_ON'; overlayId: string }
@@ -25,6 +28,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   const setPgm = useProductionStore((s) => s.setPgm)
   const setPvw = useProductionStore((s) => s.setPvw)
   const setLive = useProductionStore((s) => s.setLive)
+  const setTBarPosition = useProductionStore((s) => s.setTBarPosition)
 
   useEffect(() => {
     if (!productionId) return
@@ -42,6 +46,11 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
             }
             if (typeof msg['pvw'] === 'string' || msg['pvw'] === null) {
               setPvw(msg['pvw'] as string)
+            }
+            break
+          case 'OVL_STATE':
+            if (typeof msg['alpha'] === 'number') {
+              setTBarPosition(msg['alpha'] as number)
             }
             break
           case 'ON_AIR':
@@ -62,7 +71,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
       ws.close()
       wsRef.current = null
     }
-  }, [productionId, setPgm, setPvw, setLive])
+  }, [productionId, setPgm, setPvw, setLive, setTBarPosition])
 
   const send = useCallback((msg: OutboundMessage) => {
     const ws = wsRef.current
