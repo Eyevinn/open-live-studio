@@ -32,8 +32,8 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl }:
   const sources = useSourcesStore((s) => s.sources)
 
   const VIRTUAL_SOURCE_NAMES: Record<string, string> = {
-    '__test1__': 'Test - Pinwheel',
-    '__test2__': 'Test - Colors',
+    '__test1__': 'Pinwheel',
+    '__test2__': 'Colors',
   }
 
   // One slot per assignment, sorted by mixer input — handles duplicates and virtual sources

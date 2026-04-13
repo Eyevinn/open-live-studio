@@ -16,8 +16,8 @@ const STREAM_TYPE_LABELS: Record<StreamType, string> = {
   srt: 'MPEG-TS/SRT',
   efp: 'EFP/SRT',
   whip: 'WHIP',
-  test1: 'Test 1',
-  test2: 'Test 2',
+  test1: 'Pinwheel',
+  test2: 'Colors',
 }
 
 const STREAM_TYPE_HAS_ADDRESS: Record<StreamType, boolean> = {

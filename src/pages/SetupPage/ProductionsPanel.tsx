@@ -51,8 +51,8 @@ function SlotRow({ index, currentSourceId, canRemove, onChange, onRemove }: Slot
           </option>
         ))}
         <optgroup label="Test Streams">
-          <option value="__test1__">Test - Pinwheel</option>
-          <option value="__test2__">Test - Colors</option>
+          <option value="__test1__">Pinwheel</option>
+          <option value="__test2__">Colors</option>
         </optgroup>
       </select>
       <button
@@ -458,13 +458,19 @@ export function ProductionsPanel() {
 // Small badge showing mixerInput → source name
 // ---------------------------------------------------------------------------
 
+const VIRTUAL_SOURCE_NAMES: Record<string, string> = {
+  '__test1__': 'Pinwheel',
+  '__test2__': 'Colors',
+}
+
 function SourceAssignmentBadge({ assignment }: { assignment: { sourceId: string; mixerInput: string } }) {
   const source = useSourcesStore((s) => s.sources.find((src) => src.id === assignment.sourceId))
+  const name = source?.name ?? VIRTUAL_SOURCE_NAMES[assignment.sourceId] ?? assignment.sourceId
   return (
     <span className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-[--color-surface-raised] border border-[--color-border] text-[--color-text-muted]">
       <span className="text-[--color-text-primary] font-mono">{assignment.mixerInput}</span>
       <span>→</span>
-      <span>{source?.name ?? assignment.sourceId}</span>
+      <span>{name}</span>
     </span>
   )
 }
