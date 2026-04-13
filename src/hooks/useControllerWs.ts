@@ -2,8 +2,8 @@ import { useEffect, useCallback, useRef } from 'react'
 import { useProductionStore } from '@/store/production.store'
 
 const WS_BASE = (
-  (typeof window !== 'undefined' && (window as unknown as { _env_?: { VITE_API_URL?: string } })._env_?.VITE_API_URL) ||
-  import.meta.env.VITE_API_URL ||
+  (typeof window !== 'undefined' && (window as unknown as { _env_?: { OPEN_LIVE_URL?: string } })._env_?.OPEN_LIVE_URL) ||
+  import.meta.env.OPEN_LIVE_URL ||
   'http://localhost:3000'
 ).replace(/^http/, 'ws')
 

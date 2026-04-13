@@ -1,7 +1,8 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_API_URL: string
+  readonly OPEN_LIVE_URL: string
+  readonly OSC_PAT: string
 }
 
 interface ImportMeta {

@@ -7,8 +7,8 @@ set -e
 # start from the current process environment.
 cat > /usr/share/nginx/html/env-config.js <<EOF
 window._env_ = {
-  VITE_API_URL: "${VITE_API_URL:-}",
-  VITE_API_PAT: "${VITE_API_PAT:-}",
+  OPEN_LIVE_URL: "${OPEN_LIVE_URL:-}",
+  OSC_PAT: "${OSC_PAT:-}",
 };
 EOF
 

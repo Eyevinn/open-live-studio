@@ -28,8 +28,8 @@ function isExpiringSoon(c: SatCache): boolean {
 function getPat(): string | undefined {
   return (
     (typeof window !== 'undefined' &&
-      (window as unknown as { _env_?: { VITE_API_PAT?: string } })._env_?.VITE_API_PAT) ||
-    (import.meta.env.VITE_API_PAT as string | undefined) ||
+      (window as unknown as { _env_?: { OSC_PAT?: string } })._env_?.OSC_PAT) ||
+    (import.meta.env.OSC_PAT as string | undefined) ||
     undefined
   )
 }

@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useViewerStore } from '@/store/viewer.store'
 import { WhepClient } from '@/lib/webrtc'
 
-const API_BASE = import.meta.env.VITE_API_URL ?? ''
+const API_BASE = import.meta.env.OPEN_LIVE_URL ?? ''
 
 /**
  * Manages the program stream for the controller's PGM monitor.
