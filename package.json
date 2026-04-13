@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "start": "serve -s dist --listen ${PORT:-8080}",
+    "start": "node -e \"const fs=require('fs');fs.writeFileSync('dist/env-config.js','window._env_='+JSON.stringify({VITE_API_URL:process.env.VITE_API_URL||''})+';')\" && serve -s dist --listen ${PORT:-8080}",
     "preview": "vite preview",
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc --noEmit"
