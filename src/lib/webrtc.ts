@@ -23,6 +23,8 @@ type WhepOptions = {
   /** Proxy URL for WHEP SDP signaling. When set, POST/DELETE go to
    *  {proxyUrl}?target={encodeURIComponent(stromUrl)} instead of Strom directly. */
   proxyUrl?: string
+  /** Bearer token for authenticating requests to iceServersUrl and proxyUrl. */
+  authToken?: string
 }
 
 export class WhepClient {
@@ -48,8 +50,9 @@ export class WhepClient {
       const iceUrl = this.options.iceServersUrl ?? `${new URL(this.endpoint).origin}/api/ice-servers`
       let iceServers: RTCIceServer[] = []
       let iceTransportPolicy: RTCIceTransportPolicy = 'all'
+      const authHeaders: Record<string, string> = this.options.authToken ? { Authorization: `Bearer ${this.options.authToken}` } : {}
       try {
-        const resp = await fetch(iceUrl)
+        const resp = await fetch(iceUrl, { headers: authHeaders })
         if (resp.ok) {
           // Backend proxy returns { iceServers }; Strom directly returns { ice_servers }
           const cfg = await resp.json() as { iceServers?: RTCIceServer[]; ice_servers?: RTCIceServer[]; ice_transport_policy?: string }
@@ -119,7 +122,7 @@ export class WhepClient {
         : this.endpoint
       const resp = await fetch(postUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/sdp' },
+        headers: { 'Content-Type': 'application/sdp', ...authHeaders },
         body: serverSdp,
       })
       if (!resp.ok) {
