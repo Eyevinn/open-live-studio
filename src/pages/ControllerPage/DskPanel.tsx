@@ -28,7 +28,7 @@ export function DskPanel({ onToggle }: DskPanelProps) {
         {assignments.map((a) => {
           const dskMatch = /dsk_in_(\d+)$/.exec(a.dskInput)
           if (!dskMatch) return null
-          const layer = parseInt(dskMatch[1], 10)
+          const layer = parseInt(dskMatch[1] ?? '0', 10)
           const active = dskState[layer] ?? false
           const graphic = graphics.find((g) => g.id === a.graphicId)
           const label = DSK_LABELS[a.dskInput] ?? a.dskInput

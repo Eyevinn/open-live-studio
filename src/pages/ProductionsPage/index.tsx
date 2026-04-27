@@ -1,29 +1,26 @@
 import { useState } from 'react'
 import { PageHeader } from '@/components/layout/PageHeader'
-import { SourcesPanel } from './SourcesPanel'
-import { GraphicsPanel } from './GraphicsPanel'
-import { OutputsPanel } from './OutputsPanel'
+import { ProductionsPanel } from '@/pages/SetupPage/ProductionsPanel'
+import { ConfigsPanel } from '@/pages/SetupPage/ConfigsPanel'
 import { cn } from '@/lib/cn'
 
-type Tab = 'sources' | 'graphics' | 'outputs'
+type Tab = 'productions' | 'configs'
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: 'sources', label: 'Sources' },
-  { id: 'graphics', label: 'Graphics' },
-  { id: 'outputs', label: 'Outputs' },
+  { id: 'productions', label: 'Productions' },
+  { id: 'configs', label: 'Configs' },
 ]
 
-export function SetupPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('sources')
+export function ProductionsPage() {
+  const [activeTab, setActiveTab] = useState<Tab>('productions')
 
   return (
     <div className="flex flex-col h-full">
       <PageHeader
-        title="I/O"
-        subtitle="Configure sources, graphics, and outputs"
+        title="Productions"
+        subtitle="Manage productions and configurations"
       />
 
-      {/* Tabs */}
       <div className="flex border-b border-[--color-border] px-5 pt-2 gap-1">
         {TABS.map((tab) => (
           <button
@@ -41,11 +38,9 @@ export function SetupPage() {
         ))}
       </div>
 
-      {/* Tab content */}
       <div className="flex-1 overflow-auto p-5">
-        {activeTab === 'sources' && <SourcesPanel />}
-        {activeTab === 'graphics' && <GraphicsPanel />}
-        {activeTab === 'outputs' && <OutputsPanel />}
+        {activeTab === 'productions' && <ProductionsPanel />}
+        {activeTab === 'configs' && <ConfigsPanel />}
       </div>
     </div>
   )

@@ -891,13 +891,18 @@ export function ProductionsPanel() {
               <div className="flex gap-2 shrink-0">
                 {isActive && (
                   <Link
-                    to={`/controller?production=${prod.id}`}
+                    to={`/studio?production=${prod.id}`}
                     className="inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium bg-[--color-accent]/10 text-[--color-accent] border border-[--color-accent]/30 hover:bg-[--color-accent]/20 transition-colors"
                   >
-                    <svg viewBox="0 0 16 16" fill="currentColor" className="w-3 h-3" aria-hidden="true">
-                      <path d="M2.75 2a.75.75 0 0 0-.75.75v10.5c0 .414.336.75.75.75h10.5a.75.75 0 0 0 .75-.75V8.5a.75.75 0 0 1 1.5 0v4.75A2.25 2.25 0 0 1 13.25 15.5H2.75A2.25 2.25 0 0 1 .5 13.25V2.75A2.25 2.25 0 0 1 2.75.5H7.5a.75.75 0 0 1 0 1.5H2.75ZM9.25.5a.75.75 0 0 0 0 1.5h3.19L6.22 8.22a.75.75 0 1 0 1.06 1.06l6.22-6.22v3.19a.75.75 0 0 0 1.5 0V1.25A.75.75 0 0 0 13.25.5H9.25Z" />
+                    <svg width="12" height="12" viewBox="0 2 24 24" fill="none" aria-hidden="true">
+                      <rect x="3" y="8" width="18" height="13" rx="1.5" stroke="var(--color-accent)" strokeWidth="1.5" />
+                      <path d="M3 12h18" stroke="var(--color-accent)" strokeWidth="1.5" />
+                      <path d="M7 8L5 12" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" />
+                      <path d="M11 8L9 12" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" />
+                      <path d="M15 8l-2 4" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" />
+                      <path d="M19 8l-2 4" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" />
                     </svg>
-                    Control
+                    Studio
                   </Link>
                 )}
                 <Button
@@ -1010,18 +1015,24 @@ function InlineCopyButton({ label, value }: { label: string; value: string }) {
     })
   }
   return (
-    <span className="inline-flex items-center gap-1 shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-[--color-surface-raised] border border-[--color-border] text-[--color-text-muted]">
-      <span className="text-[--color-text-muted] uppercase">{label}</span>
-      <span className="text-[--color-text-primary]">{value}</span>
-      <button
-        type="button"
-        onClick={handleCopy}
-        title={`Copy ${label}`}
-        className="hover:text-[--color-text-primary] transition-colors"
-      >
-        {copied ? '✓' : '⎘'}
-      </button>
-    </span>
+    <button
+      type="button"
+      onClick={handleCopy}
+      title={value}
+      className="relative -top-0.5 inline-flex items-center gap-1 shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-[--color-surface-raised] border border-[--color-border] text-[--color-text-muted] hover:text-[--color-accent] hover:border-[--color-accent]/40 transition-colors cursor-pointer"
+    >
+      {copied ? (
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 12l6 6L20 6" stroke="var(--color-pvw)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      ) : (
+        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="2" />
+          <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      )}
+      <span className="uppercase tracking-wide">{label}</span>
+    </button>
   )
 }
 

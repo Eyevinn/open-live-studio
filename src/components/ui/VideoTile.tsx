@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useImperativeHandle, forwardRef } from 'react'
 import { cn } from '@/lib/cn'
 import { TallyLight } from './TallyLight'
 import type { TallyState } from '@/hooks/useTallyLight'
@@ -15,6 +15,10 @@ interface VideoTileProps {
   aspectRatio?: '16/9'
 }
 
+export interface VideoTileHandle {
+  setMuted: (muted: boolean) => void
+}
+
 const tallyRingClasses: Record<TallyState, string> = {
   pgm: 'ring-4 ring-[--color-pgm]',
   pvw: 'ring-4 ring-[--color-pvw]',
@@ -25,8 +29,12 @@ const tallyRingClasses: Record<TallyState, string> = {
  * Video element wrapper with tally ring, label, and stream binding.
  * Always uses playsinline autoplay muted for Safari compatibility.
  * See docs/repo-patterns.md: "Safari requires playsinline and autoplay muted"
+ *
+ * Mute toggling must be done imperatively via the ref handle (setMuted) within
+ * a user-gesture handler — useEffect runs outside the gesture context and
+ * browsers silently reject el.muted = false when called asynchronously.
  */
-export function VideoTile({
+export const VideoTile = forwardRef<VideoTileHandle, VideoTileProps>(function VideoTile({
   stream,
   label,
   sublabel,
@@ -36,21 +44,27 @@ export function VideoTile({
   className,
   muted = true,
   aspectRatio = '16/9',
-}: VideoTileProps) {
+}, ref) {
   const videoRef = useRef<HTMLVideoElement>(null)
 
+  useImperativeHandle(ref, () => ({
+    setMuted: (m: boolean) => {
+      if (videoRef.current) videoRef.current.muted = m
+    },
+  }))
+
+  // Only re-runs when the stream changes — avoids flickering on mute toggle.
+  // Initial muted state is set here so autoplay starts correctly.
   useEffect(() => {
     const el = videoRef.current
     if (!el) return
+    el.muted = muted
     el.srcObject = stream
     if (stream) {
       void el.play().catch(() => { /* autoplay policy */ })
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream])
-
-  useEffect(() => {
-    if (videoRef.current) videoRef.current.muted = muted
-  }, [muted])
 
   return (
     <div
@@ -69,7 +83,6 @@ export function VideoTile({
         className="w-full h-full object-contain"
         playsInline
         autoPlay
-        muted
       />
 
       {/* No stream placeholder */}
@@ -101,4 +114,4 @@ export function VideoTile({
       )}
     </div>
   )
-}
+})

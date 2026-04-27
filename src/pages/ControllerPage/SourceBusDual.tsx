@@ -55,7 +55,7 @@ function SourceCell({
 
 export function SourceBusDual() {
   const sources = useSourcesStore(useShallow((s) => s.sources))
-  const { pgmSourceId, pvwSourceId, setPvw, cut } = useProductionStore()
+  const { pgmInput: pgmSourceId, pvwInput: pvwSourceId, setPvw, cut } = useProductionStore()
 
   if (sources.length === 0) {
     return (
