@@ -48,7 +48,7 @@ export function NavBar() {
   const isLive = useProductionStore((s) => s.isLive)
 
   return (
-    <nav className="flex flex-col items-stretch w-24 bg-[--color-surface-2] border-r border-[--color-border] flex-shrink-0">
+    <nav className="flex flex-col items-stretch w-14 bg-[--color-surface-2] border-r border-[--color-border] flex-shrink-0">
       {/* Logo — h-11 matches PageHeader height so the border-b lines up */}
       <div className="h-11 flex items-center justify-center border-b border-[--color-border]">
         <OpenLiveLogo />
@@ -63,7 +63,7 @@ export function NavBar() {
             title={label}
             className={({ isActive }) =>
               cn(
-                'flex flex-col items-center justify-center gap-1 py-3 rounded text-[10px] font-medium transition-all',
+                'flex items-center justify-center py-3 rounded transition-all',
                 isActive
                   ? 'bg-[--color-accent] text-[--color-text-dark]'
                   : 'text-[--color-text-muted] hover:text-[--color-text-primary] hover:bg-[rgba(89,203,232,0.1)]',
@@ -71,7 +71,6 @@ export function NavBar() {
             }
           >
             <Icon />
-            <span className="leading-none">{label}</span>
           </NavLink>
         ))}
       </div>
