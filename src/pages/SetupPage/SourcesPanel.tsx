@@ -124,9 +124,6 @@ export function SourcesPanel() {
                   <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-[--color-surface-raised] text-[--color-text-muted] uppercase">
                     {STREAM_TYPE_LABELS[src.streamType]}
                   </span>
-                  {inActiveProduction && (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-900/50 text-red-400 uppercase tracking-wide">LIVE</span>
-                  )}
                 </div>
                 {STREAM_TYPE_HAS_ADDRESS[src.streamType] && (
                   <span className="text-xs text-[--color-text-muted] font-mono truncate block">

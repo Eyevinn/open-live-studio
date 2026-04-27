@@ -3,6 +3,7 @@ import { useOutputsStore, type OutputType } from '@/store/outputs.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
+import { StatusDot } from '@/components/ui/StatusDot'
 
 const CREATABLE_OUTPUT_TYPES: OutputType[] = ['mpegtssrt', 'efpsrt']
 
@@ -95,15 +96,13 @@ export function OutputsPanel() {
                   : 'border-[--color-border] hover:border-orange-500 cursor-pointer'
               }`}
             >
+              <StatusDot color={inActiveProd ? 'red' : 'gray'} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-[--color-text-primary] truncate">{o.name}</span>
                   <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-[--color-surface-raised] text-[--color-text-muted] uppercase">
                     {OUTPUT_TYPE_LABELS[o.outputType]}
                   </span>
-                  {inActiveProd && (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-900/50 text-red-400 uppercase tracking-wide">LIVE</span>
-                  )}
                 </div>
                 {o.url && (
                   <span className="text-xs text-[--color-text-muted] font-mono truncate block">{o.url}</span>

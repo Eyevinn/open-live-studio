@@ -3,6 +3,7 @@ import { useGraphicsStore } from '@/store/graphics.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
+import { StatusDot } from '@/components/ui/StatusDot'
 
 function timeSince(ts: number): string {
   const secs = Math.floor((Date.now() - ts) / 1000)
@@ -69,15 +70,13 @@ export function GraphicsPanel() {
                   : 'border-[--color-border] hover:border-orange-500 cursor-pointer'
               }`}
             >
+              <StatusDot color={inActiveProduction ? 'red' : 'gray'} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-[--color-text-primary] truncate">{g.name}</span>
                   <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-[--color-surface-raised] text-[--color-text-muted] uppercase">
                     DSK
                   </span>
-                  {inActiveProduction && (
-                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-red-900/50 text-red-400 uppercase tracking-wide">LIVE</span>
-                  )}
                 </div>
                 <span className="text-xs text-[--color-text-muted] font-mono truncate block">{g.url}</span>
               </div>
