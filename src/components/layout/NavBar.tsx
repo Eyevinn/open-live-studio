@@ -48,7 +48,7 @@ export function NavBar() {
   const isLive = useProductionStore((s) => s.isLive)
 
   return (
-    <nav className="flex flex-col items-stretch w-16 bg-[--color-surface-2] border-r border-[--color-border] flex-shrink-0">
+    <nav className="flex flex-col items-stretch w-20 bg-[--color-surface-2] border-r border-[--color-border] flex-shrink-0">
       {/* Logo */}
       <div className="h-14 flex items-center justify-center border-b border-[--color-border]">
         <OpenLiveLogo />

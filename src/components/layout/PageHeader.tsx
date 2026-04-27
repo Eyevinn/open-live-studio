@@ -16,11 +16,6 @@ export function PageHeader({ title, subtitle, center, actions, className }: Page
       className,
     )}>
       <div className="flex items-center gap-3">
-        {/* Brand mark */}
-        <div className="flex items-center gap-2 pr-3 border-r border-zinc-800">
-          <div className="w-2 h-2 bg-orange-500 rounded-none" />
-          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-500">Open Live</span>
-        </div>
         <div>
           {typeof title === 'string' ? (
             <h1 className="text-[11px] font-bold uppercase tracking-[0.12em] text-white">{title}</h1>
