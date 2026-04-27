@@ -6,10 +6,10 @@ import { ConnectionStatus } from '@/components/ui/ConnectionStatus'
 function OpenLiveLogo() {
   return (
     <div className="flex items-center gap-2" aria-label="Open Live">
-      <div className="w-2.5 h-2.5 bg-orange-500 shrink-0" />
+      <div className="w-3 h-3 bg-orange-500 shrink-0" />
       <div className="flex flex-col" style={{ lineHeight: 1.1 }}>
-        <span className="text-[9px] font-bold tracking-[0.2em] text-orange-500">OPEN</span>
-        <span className="text-[9px] font-bold tracking-[0.2em] text-orange-500">LIVE</span>
+        <span className="text-[10px] font-bold tracking-[0.2em] text-orange-500">OPEN</span>
+        <span className="text-[10px] font-bold tracking-[0.2em] text-orange-500">LIVE</span>
       </div>
     </div>
   )
@@ -18,7 +18,7 @@ function OpenLiveLogo() {
 function IOIcon() {
   // Bidirectional arrows — left-pointing on top, right-pointing on bottom
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
       <path d="M4 8h16M4 8l3-3M4 8l3 3" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M20 16H4M20 16l-3-3M20 16l-3 3" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
@@ -28,7 +28,7 @@ function IOIcon() {
 function ProductionsIcon() {
   // Clapperboard
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none">
       <rect x="3" y="8" width="18" height="13" rx="1.5" stroke="var(--color-accent)" strokeWidth="1.5" />
       <path d="M3 12h18" stroke="var(--color-accent)" strokeWidth="1.5" />
       <path d="M7 8L5 12" stroke="var(--color-accent)" strokeWidth="1.5" strokeLinecap="round" />
