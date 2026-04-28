@@ -205,10 +205,14 @@ export function ControllerPage() {
   const setElements = useAudioStore((s) => s.setElements)
 
   useEffect(() => {
-    if (!activeProductionId || activeProduction?.status !== 'active') return
+    if (!activeProductionId) return
+    setElements([], activeProductionId)
+    if (activeProduction?.status !== 'active') return
+    let cancelled = false
     void audioApi.discoverElements(activeProductionId).then((elements) => {
-      if (elements.length > 0) setElements(elements, activeProductionId)
+      if (!cancelled) setElements(elements, activeProductionId)
     }).catch(() => {})
+    return () => { cancelled = true }
   }, [activeProductionId, activeProduction?.status, setElements])
 
   const handleCut = useCallback(() => {

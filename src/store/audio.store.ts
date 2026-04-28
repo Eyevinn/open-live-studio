@@ -35,6 +35,11 @@ export const useAudioStore = create<AudioState & AudioActions>()(
 
       setElements: (elements, productionId) =>
         _set((s) => {
+          if (s.productionId !== productionId) {
+            s.levels = {}
+            s.muted = {}
+            s.meters = {}
+          }
           s.elements = elements
           s.productionId = productionId
           elements.forEach((el) => {

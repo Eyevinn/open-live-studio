@@ -74,7 +74,6 @@ export class WhepClient {
 
       this.pc.oniceconnectionstatechange = () => {
         const state = this.pc?.iceConnectionState
-        console.log('[WhepClient] ICE state:', state)
         if (state === 'connected' || state === 'completed') {
           this.callbacks.onConnected?.()
           this._startHealthMonitor()
@@ -89,13 +88,7 @@ export class WhepClient {
         console.warn('[WhepClient] ICE candidate error:', e.errorCode, e.errorText, e.url)
       }
 
-      this.pc.onicecandidate = (e) => {
-        if (e.candidate) {
-          console.log('[WhepClient] Local candidate:', e.candidate.type, e.candidate.protocol, e.candidate.address)
-        } else {
-          console.log('[WhepClient] ICE gathering complete')
-        }
-      }
+      this.pc.onicecandidate = (_e) => { /* ICE candidate events — no logging needed */ }
 
       // recvonly transceivers — server decides what to send
       this.pc.addTransceiver('audio', { direction: 'recvonly' })
@@ -132,8 +125,6 @@ export class WhepClient {
 
       this.resourceUrl = resp.headers.get('Location')
       const answerSdp = await resp.text()
-      // Log Strom's ICE candidates from the answer for diagnostics
-      answerSdp.split('\r\n').filter(l => l.startsWith('a=candidate')).forEach(l => console.log('[WhepClient] Remote candidate:', l))
       await this.pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
       return true
     } catch (err) {

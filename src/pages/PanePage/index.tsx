@@ -55,10 +55,14 @@ export function PanePage() {
 
   const setElements = useAudioStore((s) => s.setElements)
   useEffect(() => {
-    if (!productionId || activeProduction?.status !== 'active') return
+    if (!productionId) return
+    setElements([], productionId)
+    if (activeProduction?.status !== 'active') return
+    let cancelled = false
     void audioApi.discoverElements(productionId).then((elements) => {
-      if (elements.length > 0) setElements(elements, productionId)
+      if (!cancelled) setElements(elements, productionId)
     }).catch(() => {})
+    return () => { cancelled = true }
   }, [productionId, activeProduction?.status, setElements])
 
   const handleCut       = useCallback(() => { cut(); send({ type: 'CUT', mixerInput: pvwInput ?? '' }) }, [cut, send, pvwInput])

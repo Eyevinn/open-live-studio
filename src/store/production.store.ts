@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
+import { useAudioStore } from './audio.store.js'
 
 export type TransitionType = 'mix' | 'dip' | 'push'
 
@@ -91,11 +92,16 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
           state.tBarPosition = Math.max(0, Math.min(1, pos))
         }),
 
-      setActiveProduction: (id) =>
+      setActiveProduction: (id) => {
         set((state) => {
           state.activeProductionId = id
           state.dskState = {}
-        }),
+        })
+        // Clear audio strips synchronously so the new production never renders with
+        // a previous production's elements. React 18 batches these two store updates
+        // into one render, so the user never sees stale strips.
+        useAudioStore.setState({ elements: [], productionId: id ?? null, levels: {}, muted: {}, meters: {} })
+      },
 
       setDskState: (layer, visible) =>
         set((state) => {

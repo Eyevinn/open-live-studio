@@ -95,7 +95,7 @@ function VuMeter({ elementId }: { elementId: string }) {
 
 function faderToVolume(pos: number): number {
   if (pos <= 0) return 0
-  return Math.pow(0.01, 1 - pos)
+  return Math.min(Math.pow(0.01, 1 - pos), 0.9999)
 }
 
 function volumeToFader(vol: number): number {
@@ -125,7 +125,7 @@ function ChannelStrip({ elementId, label, send, showMute = true, isPgm = false, 
     const volume = faderToVolume(faderPos)
     setLevel(elementId, volume)
 
-    // Auto-mute when fader hits floor, auto-unmute when it leaves
+    // Auto-mute when fader hits floor; unmute on any fader movement above floor
     const nowAtFloor = faderPos <= 0.02
     if (nowAtFloor && !atFloorRef.current) {
       atFloorRef.current = true
@@ -133,27 +133,32 @@ function ChannelStrip({ elementId, label, send, showMute = true, isPgm = false, 
         toggleMute(elementId)
         send({ type: 'AUDIO_SET', elementId, property: 'mute', value: true })
       }
-    } else if (!nowAtFloor && atFloorRef.current) {
-      atFloorRef.current = false
+    } else if (!nowAtFloor) {
+      if (atFloorRef.current) atFloorRef.current = false
       if (muted) {
         toggleMute(elementId)
         send({ type: 'AUDIO_SET', elementId, property: 'mute', value: false })
       }
     }
 
-    if (throttleRef.current) {
-      throttleRef.current.last = volume
+    // At floor: mute already handles silence — cancel any pending volume PATCH and bail.
+    if (nowAtFloor) {
+      if (throttleRef.current) {
+        clearTimeout(throttleRef.current.timer)
+        throttleRef.current = null
+      }
       return
     }
-    send({ type: 'AUDIO_SET', elementId, property: 'volume', value: volume })
-    const entry = { timer: null as unknown as ReturnType<typeof setTimeout>, last: volume }
-    entry.timer = setTimeout(() => {
+
+    // Trailing debounce: send only the final value after the drag settles.
+    // Leading+trailing throttle was sending two overlapping PATCHes at the extremes,
+    // which caused Strom to close the connection mid-request.
+    if (throttleRef.current) clearTimeout(throttleRef.current.timer)
+    const timer = setTimeout(() => {
       throttleRef.current = null
-      if (entry.last !== volume) {
-        send({ type: 'AUDIO_SET', elementId, property: 'volume', value: entry.last })
-      }
-    }, 150)
-    throttleRef.current = entry
+      send({ type: 'AUDIO_SET', elementId, property: 'volume', value: volume })
+    }, 80)
+    throttleRef.current = { timer, last: volume }
   }, [elementId, muted, send, setLevel, toggleMute])
 
   const handleMute = useCallback(() => {
