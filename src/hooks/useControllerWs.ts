@@ -21,7 +21,8 @@ export type OutboundMessage =
   | { type: 'GRAPHIC_OFF'; overlayId: string }
   | { type: 'DSK_TOGGLE'; layer: number; visible?: boolean }
   | { type: 'MACRO_EXEC'; macroId: string }
-  | { type: 'AUDIO_SET'; elementId: string; property: 'volume' | 'mute'; value: number | boolean }
+  | { type: 'AUDIO_SET'; elementId: string; property: 'volume' | 'mute'; value: number | boolean; ramp_ms?: number }
+  | { type: 'AFV_SET'; mixerInput: string; enabled: boolean }
 
 /**
  * Opens a WebSocket connection to /ws/productions/:id/controller.
@@ -34,9 +35,10 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   const setPvw = useProductionStore((s) => s.setPvw)
   const setTBarPosition = useProductionStore((s) => s.setTBarPosition)
   const setDskState = useProductionStore((s) => s.setDskState)
-  const applyLevel = useAudioStore((s) => s.applyLevel)
-  const applyMuted = useAudioStore((s) => s.applyMuted)
-  const applyMeter = useAudioStore((s) => s.applyMeter)
+  const applyLevel           = useAudioStore((s) => s.applyLevel)
+  const applyMuted           = useAudioStore((s) => s.applyMuted)
+  const applyAfvByMixerInput = useAudioStore((s) => s.applyAfvByMixerInput)
+  const applyMeter           = useAudioStore((s) => s.applyMeter)
 
   useEffect(() => {
     if (!productionId) return
@@ -75,6 +77,14 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
               }
             }
             break
+          case 'AFV_STATE': {
+            // applyAfvByMixerInput handles the race between WS messages and the
+            // REST elements fetch — it queues the value if elements aren't loaded yet.
+            if (typeof msg['mixerInput'] === 'string' && typeof msg['enabled'] === 'boolean') {
+              applyAfvByMixerInput(msg['mixerInput'] as string, msg['enabled'] as boolean)
+            }
+            break
+          }
           case 'METER_DATA':
             if (typeof msg['elementId'] === 'string' && Array.isArray(msg['peak']) && Array.isArray(msg['rms'])) {
               applyMeter(msg['elementId'] as string, msg['peak'] as number[], msg['rms'] as number[])
@@ -94,7 +104,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
       ws.close()
       wsRef.current = null
     }
-  }, [productionId, setPgm, setPvw, setTBarPosition, setDskState, applyLevel, applyMuted, applyMeter])
+  }, [productionId, setPgm, setPvw, setTBarPosition, setDskState, applyLevel, applyMuted, applyAfvByMixerInput, applyMeter])
 
   const send = useCallback((msg: OutboundMessage) => {
     const ws = wsRef.current

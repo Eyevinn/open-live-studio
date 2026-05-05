@@ -4,6 +4,7 @@ import { useWebRTC } from '@/hooks/useWebRTC'
 import { useControllerWs } from '@/hooks/useControllerWs'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ProgramPreview, type ProgramPreviewHandle } from './ProgramPreview'
+import { PgmPreview } from './PgmPreview'
 import { TransitionPanel } from './TransitionPanel'
 import { DskPanel } from './DskPanel'
 import { MacroBar } from './MacroBar'
@@ -20,7 +21,7 @@ import { audioApi } from '@/lib/api'
 
 const PANELS_STORAGE_KEY = 'ol-studio-panels'
 
-type Panels = { multiviewer: boolean; controller: boolean; audio: boolean }
+type Panels = { multiviewer: boolean; controller: boolean; audio: boolean; pgm: boolean }
 
 function loadPanels(): Panels {
   try {
@@ -31,10 +32,11 @@ function loadPanels(): Panels {
         multiviewer: p.multiviewer !== false,
         controller:  p.controller  !== false,
         audio:       p.audio       !== false,
+        pgm:         p.pgm         !== false,
       }
     }
   } catch {}
-  return { multiviewer: true, controller: true, audio: true }
+  return { multiviewer: true, controller: true, audio: true, pgm: true }
 }
 
 function savePanels(panels: Panels) {
@@ -115,6 +117,15 @@ function ExitFullscreenIcon() {
   )
 }
 
+function MonitorIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <path d="M8 21h8M12 17v4" />
+    </svg>
+  )
+}
+
 function MultiviewerIcon() {
   return (
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -155,6 +166,9 @@ export function ControllerPage() {
   const activeProduction = useProductionsStore((s) => s.productions.find((p) => p.id === activeProductionId))
   const whepEndpoint = useProductionsStore(
     (s) => s.productions.find((p) => p.id === activeProductionId)?.whepEndpoint,
+  )
+  const pgmWhepEndpoint = useProductionsStore(
+    (s) => s.productions.find((p) => p.id === activeProductionId)?.pgmWhepEndpoint,
   )
   const isOnAir = useIsOnAir()
 
@@ -268,6 +282,7 @@ export function ControllerPage() {
 
   const PANEL_ICONS = [
     { key: 'multiviewer', Icon: MultiviewerIcon },
+    { key: 'pgm',         Icon: MonitorIcon     },
     { key: 'controller',  Icon: ControllerIcon  },
     { key: 'audio',       Icon: AudioIcon        },
   ] as const
@@ -318,45 +333,71 @@ export function ControllerPage() {
       />
 
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {/* Multiviewer — unmounts fully when disabled, killing the WebRTC connection */}
-        {panels.multiviewer && (
-          <div className="flex-1 min-h-0 px-4 pt-9 overflow-hidden flex items-center justify-center">
-            {/* h-full wrapper takes the same height as the video so the absolute label anchors to the video's left edge */}
-            <div className="relative h-full" ref={multiviewerRef}>
-              <div className="absolute -top-6 left-0">
-                <SectionLabel
-                  icon={<MultiviewerIcon />}
-                  onPopOut={activeProductionId ? () => { window.open(`/pane/multiviewer?production=${activeProductionId}`, '_blank', 'noopener'); togglePanel('multiviewer') } : undefined}
-                  actions={
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const next = !multiviewerMuted
-                          programPreviewRef.current?.setMuted(next)
-                          setMultiviewerMuted(next)
-                        }}
-                        title={multiviewerMuted ? 'Unmute' : 'Mute'}
-                        className="cursor-pointer hover:text-[--color-text-primary] transition-colors"
-                      >
-                        {multiviewerMuted ? <MutedIcon /> : <MuteIcon />}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleFullscreen}
-                        title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
-                        className="cursor-pointer hover:text-[--color-text-primary] transition-colors"
-                      >
-                        {isFullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
-                      </button>
-                    </>
-                  }
-                >
-                  Multiviewer
-                </SectionLabel>
+        {/* Video monitors row — Multiviewer + PGM side by side when both enabled.
+            Each panel is a flex-col: label on top, video fills remaining height.
+            flex-1 min-w-0 splits horizontal space so max-w-full on the videos
+            prevents overflow regardless of how many panels are visible. */}
+        {(panels.multiviewer || (panels.pgm && pgmWhepEndpoint)) && (
+          <div className="flex-1 min-h-0 px-4 pt-2 pb-1 overflow-hidden flex flex-row items-stretch gap-6">
+
+            {/* Multiviewer — unmounts fully when disabled, killing the WebRTC connection */}
+            {panels.multiviewer && (
+              <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-1.5" ref={multiviewerRef}>
+                <div className="flex-none">
+                  <SectionLabel
+                    icon={<MultiviewerIcon />}
+                    onPopOut={activeProductionId ? () => { window.open(`/pane/multiviewer?production=${activeProductionId}`, '_blank', 'noopener'); togglePanel('multiviewer') } : undefined}
+                    actions={
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = !multiviewerMuted
+                            programPreviewRef.current?.setMuted(next)
+                            setMultiviewerMuted(next)
+                          }}
+                          title={multiviewerMuted ? 'Unmute' : 'Mute'}
+                          className="cursor-pointer hover:text-[--color-text-primary] transition-colors"
+                        >
+                          {multiviewerMuted ? <MutedIcon /> : <MuteIcon />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleFullscreen}
+                          title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+                          className="cursor-pointer hover:text-[--color-text-primary] transition-colors"
+                        >
+                          {isFullscreen ? <ExitFullscreenIcon /> : <FullscreenIcon />}
+                        </button>
+                      </>
+                    }
+                  >
+                    Multiviewer
+                  </SectionLabel>
+                </div>
+                <div className="flex-1 min-h-0 flex items-center justify-center">
+                  <ProgramPreview ref={programPreviewRef} />
+                </div>
               </div>
-              <ProgramPreview ref={programPreviewRef} />
-            </div>
+            )}
+
+            {/* PGM — self-contained WebRTC, independent of multiviewer stream */}
+            {panels.pgm && pgmWhepEndpoint && (
+              <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-1.5">
+                <div className="flex-none">
+                  <SectionLabel
+                    icon={<MonitorIcon />}
+                    onPopOut={activeProductionId ? () => { window.open(`/pane/pgm?production=${activeProductionId}`, '_blank', 'noopener'); togglePanel('pgm') } : undefined}
+                  >
+                    PGM
+                  </SectionLabel>
+                </div>
+                <div className="flex-1 min-h-0 flex items-center justify-center">
+                  <PgmPreview whepEndpoint={pgmWhepEndpoint} />
+                </div>
+              </div>
+            )}
+
           </div>
         )}
 

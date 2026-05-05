@@ -58,7 +58,7 @@ input[type="range"] {
   accent-color: #f97316;
 }
 
-/* Vertical channel fader — horizontal input rotated -90deg */
+/* Vertical channel fader — horizontal range input rotated -90deg */
 .fader-rotated {
   appearance: none;
   -webkit-appearance: none;
@@ -70,7 +70,9 @@ input[type="range"] {
 }
 .fader-rotated::-webkit-slider-runnable-track {
   height: 3px;
-  background: #2a2a2a;
+  /* Transparent so the tick marks (z-index:1) show above the custom track bar div (z-index:0).
+     Only the thumb pseudo-element needs to be opaque. */
+  background: transparent;
   border-radius: 0;
 }
 .fader-rotated::-webkit-slider-thumb {
@@ -79,34 +81,134 @@ input[type="range"] {
   width: 16px;
   height: 17px;
   margin-top: -7px;
-  /* Brushed metal fader cap */
   background: linear-gradient(
     to right,
-    #4a4a4a 0%,
-    #7a7a7a 15%,
-    #a0a0a0 30%,
-    #c8c8c8 45%,
-    #dedede 50%,
-    #c8c8c8 55%,
-    #a0a0a0 70%,
-    #7a7a7a 85%,
-    #4a4a4a 100%
+    #4a4a4a 0%, #7a7a7a 15%, #a0a0a0 30%,
+    #c8c8c8 45%, #dedede 50%, #c8c8c8 55%,
+    #a0a0a0 70%, #7a7a7a 85%, #4a4a4a 100%
   );
   border: 1px solid #888888;
   border-radius: 1px;
   box-shadow: 0 3px 8px rgba(0,0,0,0.9), inset 0 1px 0 rgba(255,255,255,0.3);
   cursor: pointer;
-  /* Center line on fader cap */
   outline: none;
+}
+.fader-rotated:active::-webkit-slider-thumb {
+  cursor: grabbing;
+}
+/* handle-a overrides — keep cursor scoped to the thumb only */
+.fader-handle-a::-webkit-slider-thumb {
+  cursor: grab;
+}
+.fader-handle-a:active::-webkit-slider-thumb {
+  cursor: grabbing;
 }
 .fader-rotated:disabled::-webkit-slider-thumb {
   background: #2a2a2a;
   border-color: #333333;
   cursor: not-allowed;
 }
+
+/* ── Handle variants — margin-top centering formula ─────────────────────────────
+   After rotate(-90deg): CSS width = visual height on screen, CSS height = visual width.
+   margin-top centres the thumb on the track in the CSS height direction (perpendicular
+   to slider travel), which after rotation becomes the horizontal (left-right) direction.
+   Formula: margin-top = 1.5 − css_height/2
+     (where 1.5 = track_height/2 = 3/2, and css_height must be ODD for an integer result)
+   Validation against the original thumb: height:17 → 1.5 − 8.5 = −7 ✓ (matches original)
+── */
+
+/* ── Handle variant A — Broadcast flat cap (SSL/Neve style) ─────────────────── */
+/* width:9 → 9px tall on screen. height:17 → 17px wide. margin-top: 1.5−8.5 = −7 */
+.fader-handle-a::-webkit-slider-thumb {
+  width: 9px;
+  height: 17px;
+  margin-top: -7px;
+  background: linear-gradient(
+    to right,
+    #5a5a5a 0%, #9a9a9a 20%,
+    #d8d8d8 45%, #f0f0f0 50%, #d8d8d8 55%,
+    #9a9a9a 80%, #5a5a5a 100%
+  );
+  border: 1px solid #707070;
+  border-radius: 1px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.9);
+}
+.fader-handle-a::-moz-range-thumb {
+  width: 9px;
+  height: 17px;
+  background: linear-gradient(
+    to right,
+    #5a5a5a 0%, #9a9a9a 20%,
+    #d8d8d8 45%, #f0f0f0 50%, #d8d8d8 55%,
+    #9a9a9a 80%, #5a5a5a 100%
+  );
+  border: 1px solid #707070;
+  border-radius: 1px;
+}
+
+/* ── Handle variant B — Thin line with pip ───────────────────────────────────── */
+/* width:5 → 5px tall. height:13 → 13px wide. margin-top: 1.5−6.5 = −5 */
+.fader-handle-b::-webkit-slider-thumb {
+  width: 5px;
+  height: 13px;
+  margin-top: -5px;
+  background: linear-gradient(
+    to right,
+    #444 0%, #444 38%,
+    #f97316 38%, #f97316 62%,
+    #444 62%, #444 100%
+  );
+  border: none;
+  border-radius: 0;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.8);
+}
+.fader-handle-b::-moz-range-thumb {
+  width: 5px;
+  height: 13px;
+  background: linear-gradient(
+    to right,
+    #444 0%, #444 38%,
+    #f97316 38%, #f97316 62%,
+    #444 62%, #444 100%
+  );
+  border: none;
+  border-radius: 0;
+}
+
+/* ── Handle variant C — Stepped grip bar ────────────────────────────────────── */
+/* width:11 → 11px tall. height:15 → 15px wide. margin-top: 1.5−7.5 = −6 */
+.fader-handle-c::-webkit-slider-thumb {
+  width: 11px;
+  height: 15px;
+  margin-top: -6px;
+  background: repeating-linear-gradient(
+    to right,
+    #2e2e2e 0px, #2e2e2e 1px,
+    #7a7a7a 1px, #7a7a7a 3px,
+    #2e2e2e 3px, #2e2e2e 4px,
+    #555    4px, #555    5px
+  );
+  border: 1px solid #606060;
+  border-radius: 1px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.9);
+}
+.fader-handle-c::-moz-range-thumb {
+  width: 11px;
+  height: 15px;
+  background: repeating-linear-gradient(
+    to right,
+    #2e2e2e 0px, #2e2e2e 1px,
+    #7a7a7a 1px, #7a7a7a 3px,
+    #2e2e2e 3px, #2e2e2e 4px,
+    #555    4px, #555    5px
+  );
+  border: 1px solid #606060;
+  border-radius: 1px;
+}
 .fader-rotated::-moz-range-track {
   height: 3px;
-  background: #2a2a2a;
+  background: transparent;
   border-radius: 0;
 }
 .fader-rotated::-moz-range-thumb {
@@ -114,15 +216,9 @@ input[type="range"] {
   height: 17px;
   background: linear-gradient(
     to right,
-    #4a4a4a 0%,
-    #7a7a7a 15%,
-    #a0a0a0 30%,
-    #c8c8c8 45%,
-    #dedede 50%,
-    #c8c8c8 55%,
-    #a0a0a0 70%,
-    #7a7a7a 85%,
-    #4a4a4a 100%
+    #4a4a4a 0%, #7a7a7a 15%, #a0a0a0 30%,
+    #c8c8c8 45%, #dedede 50%, #c8c8c8 55%,
+    #a0a0a0 70%, #7a7a7a 85%, #4a4a4a 100%
   );
   border: 1px solid #888888;
   border-radius: 1px;
@@ -148,6 +244,12 @@ input[type="range"] {
   inset: 0;
   pointer-events: none;
   z-index: 2;
+}
+
+/* Fader drag — keep grabbing cursor even when mouse leaves the element */
+body.fader-dragging,
+body.fader-dragging * {
+  cursor: grabbing !important;
 }
 
 /* Hardware button press effect */

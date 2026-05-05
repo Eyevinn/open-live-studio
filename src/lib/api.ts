@@ -73,6 +73,7 @@ export interface ApiProduction {
   templateId?: string
   stromFlowId?: string
   whepEndpoint?: string
+  pgmWhepEndpoint?: string
   whipEndpoints?: Array<{ mixerInput: string; url: string }>
   srtOutputUri?: string
   values?: Record<string, string | number>
@@ -127,6 +128,7 @@ type RawProduction = {
   templateId?: string
   stromFlowId?: string
   whepEndpoint?: string
+  pgmWhepEndpoint?: string
   whipEndpoints?: Array<{ mixerInput: string; url: string }>
   srtOutputUri?: string
   values?: Record<string, string | number>
@@ -146,6 +148,7 @@ function normalizeProduction(d: RawProduction): ApiProduction {
     templateId: d.templateId,
     stromFlowId: d.stromFlowId,
     whepEndpoint: d.whepEndpoint,
+    pgmWhepEndpoint: d.pgmWhepEndpoint,
     whipEndpoints: d.whipEndpoints,
     srtOutputUri: d.srtOutputUri,
     values: d.values,

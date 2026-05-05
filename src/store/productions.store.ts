@@ -19,6 +19,7 @@ export interface Production {
   templateId?: string
   stromFlowId?: string
   whepEndpoint?: string
+  pgmWhepEndpoint?: string
   whipEndpoints?: Array<{ mixerInput: string; url: string }>
   srtOutputUri?: string
   values?: Record<string, string | number>
@@ -61,6 +62,7 @@ function fromApi(p: ApiProduction): Production {
     templateId: p.templateId,
     stromFlowId: p.stromFlowId,
     whepEndpoint: p.whepEndpoint,
+    pgmWhepEndpoint: p.pgmWhepEndpoint,
     whipEndpoints: p.whipEndpoints,
     srtOutputUri: p.srtOutputUri,
     values: p.values,
@@ -112,6 +114,7 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
             prod.status = updated.status
             prod.stromFlowId = updated.stromFlowId
             prod.whepEndpoint = updated.whepEndpoint
+            prod.pgmWhepEndpoint = updated.pgmWhepEndpoint
           }
         })
 
@@ -132,6 +135,7 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
                   prod.status = polled.status
                   prod.stromFlowId = polled.stromFlowId
                   prod.whepEndpoint = polled.whepEndpoint
+                  prod.pgmWhepEndpoint = polled.pgmWhepEndpoint
                   prod.whipEndpoints = polled.whipEndpoints
                   prod.whepOutputUrls = polled.whepOutputUrls
                   prod.srtOutputUri = polled.srtOutputUri
