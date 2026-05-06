@@ -3,10 +3,7 @@ import { useViewerStore } from '@/store/viewer.store'
 import { WhepClient } from '@/lib/webrtc'
 import { getApiToken } from '@/lib/sat'
 
-const API_BASE =
-  (typeof window !== 'undefined' && (window as unknown as { _env_?: { OPEN_LIVE_URL?: string } })._env_?.OPEN_LIVE_URL) ||
-  import.meta.env.OPEN_LIVE_URL ||
-  ''
+import { BASE as API_BASE } from '@/lib/base'
 
 /**
  * Manages the program stream for the controller's PGM monitor.

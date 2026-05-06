@@ -4,10 +4,7 @@ import { getApiToken } from '@/lib/sat'
 import { Badge } from '@/components/ui/Badge'
 import type { ViewerConnectionState } from '@/store/viewer.store'
 
-const API_BASE =
-  (typeof window !== 'undefined' && (window as unknown as { _env_?: { OPEN_LIVE_URL?: string } })._env_?.OPEN_LIVE_URL) ||
-  import.meta.env.OPEN_LIVE_URL ||
-  ''
+import { BASE as API_BASE } from '@/lib/base'
 
 interface PgmPreviewProps {
   whepEndpoint: string

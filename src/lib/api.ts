@@ -1,19 +1,15 @@
-// Runtime env injection: docker-entrypoint.sh writes /env-config.js which sets
-// window._env_.OPEN_LIVE_URL so the backend URL can be changed without rebuilding
-// the image (required for OSC parameter store injection).
-export const BASE =
-  (typeof window !== 'undefined' && (window as unknown as { _env_?: { OPEN_LIVE_URL?: string } })._env_?.OPEN_LIVE_URL) ||
-  import.meta.env.OPEN_LIVE_URL ||
-  'http://localhost:3000'
-
-import { getApiToken } from './sat.js'
+export { BASE } from './base.js'
+import { BASE } from './base.js'
+import { authenticateWithOpenLive, getApiToken, isOnOsc } from './sat.js'
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  await authenticateWithOpenLive()
   const token = await getApiToken()
   const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
   const contentHeaders: Record<string, string> = init?.body !== undefined ? { 'Content-Type': 'application/json' } : {}
 
   const res = await fetch(`${BASE}${path}`, {
+    credentials: isOnOsc() ? 'include' : 'same-origin',
     headers: { ...contentHeaders, ...authHeaders },
     ...init,
   })

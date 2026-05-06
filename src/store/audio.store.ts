@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
-import { devtools, persist } from 'zustand/middleware'
+import { devtools } from 'zustand/middleware'
 import type { ApiAudioElement } from '@/lib/api'
 
 interface MeterReading { peak: number[]; rms: number[]; decay?: number[] }
@@ -32,8 +32,7 @@ interface AudioActions {
 
 export const useAudioStore = create<AudioState & AudioActions>()(
   devtools(
-    persist(
-      immer((_set, get) => ({
+    immer((_set, get) => ({
       elements: [],
       levels: {},
       muted: {},
@@ -102,18 +101,6 @@ export const useAudioStore = create<AudioState & AudioActions>()(
       toggleAfv: (elementId) =>
         _set((s) => { s.afv[elementId] = !s.afv[elementId] }),
       })),
-      {
-        name: 'open-live-audio',
-        // Only persist operator-controlled state — not ephemeral data like meters or elements.
-        // productionId is included so setElements can detect a production change and clear stale levels.
-        partialize: (state) => ({
-          levels:      state.levels,
-          muted:       state.muted,
-          afv:         state.afv,
-          productionId: state.productionId,
-        }),
-      },
-    ),
     { name: 'audio' },
   ),
 )

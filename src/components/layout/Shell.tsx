@@ -2,9 +2,11 @@ import { useEffect } from 'react'
 import { Outlet } from 'react-router'
 import { NavBar } from './NavBar'
 import { useTemplatesStore } from '@/store/templates.store'
+import { useOscAuth } from '@/hooks/useOscAuth'
 
 export function Shell() {
   const fetchTemplates = useTemplatesStore((s) => s.fetchAll)
+  useOscAuth()
 
   useEffect(() => { void fetchTemplates() }, [fetchTemplates])
 
