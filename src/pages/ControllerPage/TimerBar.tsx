@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { BASE } from '@/lib/api'
-import { authenticateWithOpenLive, getApiToken, isOnOsc } from '@/lib/sat'
+import { authenticateWithOpenLive, getApiToken } from '@/lib/sat'
 import { useProgramStartMs, getProgramMode, COUNTDOWN_WINDOW_MS, PROGRAM_WINDOW_MS } from '@/store/programClock.store'
 import { useProductionStore } from '@/store/production.store'
 import { useProductionsStore } from '@/store/productions.store'
@@ -14,7 +14,7 @@ async function fetchServerOffset(): Promise<number> {
     const res = await fetch(`${BASE}/api/v1/ping`, {
       method: 'HEAD',
       cache: 'no-store',
-      credentials: isOnOsc() ? 'include' : 'same-origin',
+      credentials: 'same-origin',
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
     const after = Date.now()

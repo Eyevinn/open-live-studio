@@ -9,7 +9,6 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const contentHeaders: Record<string, string> = init?.body !== undefined ? { 'Content-Type': 'application/json' } : {}
 
   const res = await fetch(`${BASE}${path}`, {
-    credentials: isOnOsc() ? 'include' : 'same-origin',
     headers: { ...contentHeaders, ...authHeaders },
     ...init,
   })
