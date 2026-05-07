@@ -260,13 +260,6 @@ export interface ApiAudioElement {
   mixerInput: string | null
 }
 
-export interface ApiStreamingStats {
-  active: boolean
-  rtpStats?: unknown
-  webrtcStats?: unknown
-  error?: string
-}
-
 export const macrosApi = {
   list: (productionId: string) =>
     request<ApiMacro[]>(`/api/v1/productions/${productionId}/macros`),
@@ -301,11 +294,6 @@ export const audioApi = {
       `/api/v1/productions/${productionId}/audio/${elementId}`,
       { method: 'PATCH', body: JSON.stringify(body) },
     ),
-}
-
-export const statsApi = {
-  streaming: (productionId: string) =>
-    request<ApiStreamingStats>(`/api/v1/productions/${productionId}/stats/streaming`),
 }
 
 export const iceServersApi = {

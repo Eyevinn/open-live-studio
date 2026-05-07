@@ -15,7 +15,6 @@ import { useIsOnAir } from '@/store/programClock.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { useGraphicsStore } from '@/store/graphics.store'
-import { useStatsStore } from '@/store/stats.store'
 import { useAudioStore } from '@/store/audio.store'
 import { audioApi } from '@/lib/api'
 
@@ -216,18 +215,6 @@ export function ControllerPage() {
 
   // WebSocket stays connected regardless of panel visibility (syncs tally + audio state)
   const send = useControllerWs(activeProductionId)
-
-  const startPolling = useStatsStore((s) => s.startPolling)
-  const stopPolling  = useStatsStore((s) => s.stopPolling)
-
-  useEffect(() => {
-    if (activeProductionId) {
-      startPolling(activeProductionId)
-    } else {
-      stopPolling()
-    }
-    return () => stopPolling()
-  }, [activeProductionId, startPolling, stopPolling])
 
   const setElements = useAudioStore((s) => s.setElements)
 
