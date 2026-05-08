@@ -2,8 +2,9 @@ import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
 import { useAudioStore } from './audio.store.js'
+import { usePipelineStore } from './pipeline.store.js'
 
-export type TransitionType = 'mix' | 'dip' | 'push'
+export type TransitionType = 'fade' | 'slide_left' | 'slide_right' | 'slide_up' | 'slide_down'
 
 interface ProductionState {
   /** Active mixer input on program, e.g. "video_in_0" */
@@ -39,7 +40,7 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
       pgmInput: null,
       pvwInput: null,
       isFtb: false,
-      transitionType: 'mix',
+      transitionType: 'fade',
       transitionDurationMs: 1000,
       tBarPosition: 1,
       activeProductionId: null,
@@ -95,12 +96,18 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
       setActiveProduction: (id) => {
         set((state) => {
           state.activeProductionId = id
+          state.pgmInput = null
+          state.pvwInput = null
+          state.isFtb = false
+          state.tBarPosition = 1
           state.dskState = {}
         })
         // Clear audio strips synchronously so the new production never renders with
         // a previous production's elements. React 18 batches these two store updates
         // into one render, so the user never sees stale strips.
         useAudioStore.setState({ elements: [], productionId: id ?? null, levels: {}, muted: {}, meters: {} })
+        // Clear pipeline runtime state
+        usePipelineStore.setState({ stromJson: '', executionState: 'idle', uptimeSeconds: 0, parseError: null })
       },
 
       setDskState: (layer, visible) =>

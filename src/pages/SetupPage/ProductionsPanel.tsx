@@ -140,7 +140,6 @@ function toCallerUrl(url: string): string {
 const OUTPUT_TYPE_LABELS: Record<string, string> = {
   mpegtssrt: 'MPEG-TS/SRT',
   efpsrt: 'EFP/SRT',
-  whep: 'WHEP',
 }
 
 interface OutputSlotRowProps {
@@ -160,8 +159,8 @@ function OutputSlotRow({ value, usedIds, takenByOtherIds, canRemove, onChange, o
         <option value="">— none —</option>
         {Object.entries(
           [...outputs]
-            .filter((o) => o.id === value || !usedIds.includes(o.id))
             .filter((o) => o.outputType !== 'whep')
+            .filter((o) => o.id === value || !usedIds.includes(o.id))
             .sort((a, b) => a.name.localeCompare(b.name))
             .reduce<Record<string, typeof outputs>>((acc, o) => {
               ;(acc[o.outputType] ??= []).push(o)
@@ -181,13 +180,6 @@ function OutputSlotRow({ value, usedIds, takenByOtherIds, canRemove, onChange, o
               {group.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
             </optgroup>
           ))}
-        <optgroup label="WebRTC">
-          {outputs
-            .filter((o) => o.outputType === 'whep' && (o.id === value || !usedIds.includes(o.id)))
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-          <option value={VIRTUAL_OUTPUT_ID}>WHEP Output</option>
-        </optgroup>
       </select>
       <button
         type="button"
@@ -1068,6 +1060,9 @@ export function ProductionsPanel() {
                       />
                     )
                   })}
+                  {isActive && prod.pgmWhepEndpoint && (
+                    <InlineCopyButton label="WHEP OUT: PGM" value={prod.pgmWhepEndpoint} />
+                  )}
                   {isActive && prod.srtOutputUri && (
                     <InlineCopyButton label="SRT OUT: Program" value={toCallerUrl(prod.srtOutputUri)} displayUrl={prod.srtOutputUri} />
                   )}

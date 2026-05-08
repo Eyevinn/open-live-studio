@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { BASE } from '@/lib/api'
 import { authenticateWithOpenLive, getApiToken } from '@/lib/sat'
-import { useProgramStartMs, getProgramMode, COUNTDOWN_WINDOW_MS, PROGRAM_WINDOW_MS } from '@/store/programClock.store'
+import { useProgramStartMs, getProgramMode, COUNTDOWN_WINDOW_MS } from '@/store/programClock.store'
 import { useProductionStore } from '@/store/production.store'
 import { useProductionsStore } from '@/store/productions.store'
 
@@ -54,7 +54,8 @@ export function TimerBar() {
 
   // Popover
   const [popoverOpen, setPopoverOpen] = useState(false)
-  const [inputHHMM, setInputHHMM]     = useState('')
+  const [inputDefaultValue, setInputDefaultValue] = useState('')
+  const [popoverKey, setPopoverKey] = useState(0)
   const popoverRef  = useRef<HTMLDivElement>(null)
   const inputRef    = useRef<HTMLInputElement>(null)
 
@@ -122,28 +123,24 @@ export function TimerBar() {
 
   // ── Popover helpers ──────────────────────────────────────────────────────
   const openPopover = useCallback(() => {
-    if (programStartMs !== null) {
-      const d = new Date(programStartMs)
-      setInputHHMM(`${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`)
-    } else {
-      setInputHHMM('')
-    }
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const defaultVal = programStartMs !== null
+      ? (() => { const d = new Date(programStartMs); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}` })()
+      : ''
+    setInputDefaultValue(defaultVal)
+    setPopoverKey((k) => k + 1)
     setPopoverOpen(true)
   }, [programStartMs])
 
   const commitStartTime = useCallback(() => {
     if (!activeProductionId) { setPopoverOpen(false); return }
-    const match = /^(\d{1,2}):(\d{2})$/.exec(inputHHMM.trim())
-    if (!match) { setPopoverOpen(false); return }
-    const hh = parseInt(match[1]!, 10)
-    const mm = parseInt(match[2]!, 10)
-    if (hh > 23 || mm > 59) { setPopoverOpen(false); return }
-    const t = new Date(serverNow)
-    t.setHours(hh, mm, 0, 0)
-    if (serverNow - t.getTime() > PROGRAM_WINDOW_MS) t.setDate(t.getDate() + 1)
+    const val = inputRef.current?.value ?? ''
+    if (!val) { setPopoverOpen(false); return }
+    const t = new Date(val)
+    if (isNaN(t.getTime())) { setPopoverOpen(false); return }
     void updateAirTime(activeProductionId, t.toISOString())
     setPopoverOpen(false)
-  }, [inputHHMM, serverNow, activeProductionId, updateAirTime])
+  }, [activeProductionId, updateAirTime])
 
   const clearStartTime = useCallback(() => {
     if (activeProductionId) void updateAirTime(activeProductionId, null)
@@ -176,20 +173,18 @@ export function TimerBar() {
         </button>
 
         {popoverOpen && (
-          <div className="absolute top-full right-0 mt-1 z-50 bg-zinc-900 border border-zinc-700 shadow-xl p-3 flex flex-col gap-2" style={{ minWidth: 180 }}>
-            <span className="text-[9px] uppercase tracking-widest text-zinc-500">Program start time ({tz})</span>
+          <div className="absolute top-full right-0 mt-1 z-50 bg-zinc-900 border border-zinc-700 shadow-xl p-3 flex flex-col gap-2" style={{ minWidth: 220 }}>
+            <span className="text-[9px] uppercase tracking-widest text-zinc-500">Program start time</span>
             <input
+              key={popoverKey}
               ref={inputRef}
-              type="text"
-              placeholder="HH:MM"
-              value={inputHHMM}
-              maxLength={5}
-              onChange={(e) => setInputHHMM(e.target.value)}
+              type="datetime-local"
+              defaultValue={inputDefaultValue}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') commitStartTime()
                 if (e.key === 'Escape') setPopoverOpen(false)
               }}
-              className="bg-zinc-800 border border-zinc-600 px-2 py-1 text-[11px] font-mono text-zinc-200 focus:outline-none focus:border-orange-500 w-full"
+              className="bg-zinc-800 border border-zinc-600 px-2 py-1 text-[11px] text-zinc-200 focus:outline-none focus:border-orange-500 w-full"
             />
             <div className="flex gap-1">
               <button

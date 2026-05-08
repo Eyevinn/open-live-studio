@@ -4,10 +4,11 @@ import { createPortal } from 'react-dom'
 interface TooltipProps {
   content: React.ReactNode
   children: React.ReactNode
+  title?: string
   className?: string
 }
 
-export function Tooltip({ content, children, className }: TooltipProps) {
+export function Tooltip({ content, children, title, className }: TooltipProps) {
   const [visible, setVisible] = useState(false)
   const [pos, setPos] = useState({ top: 0, left: 0 })
   const triggerRef = useRef<HTMLSpanElement>(null)
@@ -32,7 +33,16 @@ export function Tooltip({ content, children, className }: TooltipProps) {
           style={{ top: pos.top, left: pos.left, transform: 'translate(-50%, -100%)' }}
         >
           <div className="mb-2">
-            {content}
+            <div className="bg-zinc-800 border border-zinc-600 rounded shadow-lg overflow-hidden">
+              {title && (
+                <div className="px-2.5 py-1 border-b border-zinc-700 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
+                  {title}
+                </div>
+              )}
+              <div className="px-2.5 py-1.5">
+                {content}
+              </div>
+            </div>
           </div>
           <div className="flex justify-center">
             <div className="w-2 h-2 bg-zinc-800 border-r border-b border-zinc-600 rotate-45 -mt-3" />

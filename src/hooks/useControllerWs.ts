@@ -6,9 +6,9 @@ import { BASE } from '@/lib/base'
 const WS_BASE = BASE.replace(/^http/, 'ws')
 
 export type OutboundMessage =
-  | { type: 'CUT'; mixerInput: string }
-  | { type: 'TRANSITION'; mixerInput: string; transitionType: string; durationMs?: number }
-  | { type: 'TAKE' }
+  | { type: 'CUT'; mixerInput: string; afvRampMs?: number }
+  | { type: 'TRANSITION'; mixerInput: string; transitionType: string; durationMs?: number; afvRampMs?: number }
+  | { type: 'TAKE'; afvRampMs?: number }
   | { type: 'SET_PVW'; mixerInput: string }
   | { type: 'FTB'; active?: boolean; durationMs?: number }
   | { type: 'SET_OVL'; alpha: number }

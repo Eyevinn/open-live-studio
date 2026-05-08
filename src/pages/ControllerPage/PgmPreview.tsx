@@ -8,6 +8,7 @@ import { BASE as API_BASE } from '@/lib/base'
 
 interface PgmPreviewProps {
   whepEndpoint: string
+  muted?: boolean
 }
 
 /**
@@ -15,7 +16,7 @@ interface PgmPreviewProps {
  * independently of the multiviewer — does NOT use the shared viewer store,
  * so the two streams can coexist in the same page without conflicting.
  */
-export function PgmPreview({ whepEndpoint }: PgmPreviewProps) {
+export function PgmPreview({ whepEndpoint, muted = true }: PgmPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [connectionState, setConnectionState] = useState<ViewerConnectionState>('disconnected')
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null)
@@ -92,7 +93,7 @@ export function PgmPreview({ whepEndpoint }: PgmPreviewProps) {
         ref={videoRef}
         autoPlay
         playsInline
-        muted
+        muted={muted}
         className="h-full w-full object-contain"
       />
       <div className="absolute bottom-2 right-2 pointer-events-none">

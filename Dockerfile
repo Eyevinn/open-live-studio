@@ -24,6 +24,7 @@ RUN printf 'server {\n\
     listen %PORT%;\n\
     root /usr/share/nginx/html;\n\
     index index.html;\n\
+    add_header X-Frame-Options "SAMEORIGIN" always;\n\
     location / {\n\
         try_files $uri $uri/ /index.html;\n\
     }\n\

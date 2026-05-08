@@ -115,6 +115,11 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
             prod.stromFlowId = updated.stromFlowId
             prod.whepEndpoint = updated.whepEndpoint
             prod.pgmWhepEndpoint = updated.pgmWhepEndpoint
+            if (updated.status === 'inactive') {
+              prod.whipEndpoints = undefined
+              prod.srtOutputUri = undefined
+              prod.whepOutputUrls = undefined
+            }
           }
         })
 

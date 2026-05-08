@@ -5,7 +5,15 @@ import { cn } from '@/lib/cn'
 import { useRef, useCallback, useState, useEffect } from 'react'
 
 const DURATION_PRESETS_MS = [500, 1000, 2000]
-const TRANSITION_TYPES: TransitionType[] = ['mix', 'dip', 'push']
+const TRANSITION_TYPES: TransitionType[] = ['fade', 'slide_left', 'slide_right', 'slide_up', 'slide_down']
+
+const TRANSITION_LABELS: Record<TransitionType, string> = {
+  fade:        'FADE',
+  slide_left:  '← PUSH',
+  slide_right: 'PUSH →',
+  slide_up:    '↑ PUSH',
+  slide_down:  '↓ PUSH',
+}
 
 interface TransitionPanelProps {
   onCut: () => void
@@ -14,9 +22,10 @@ interface TransitionPanelProps {
   onSelectPvw: (mixerInput: string) => void
   onSetOvl: (alpha: number) => void
   className?: string
+  visibleTransitions?: string[]
 }
 
-export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, className }: TransitionPanelProps) {
+export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, className, visibleTransitions }: TransitionPanelProps) {
   const ovlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const debouncedSetOvl = useCallback((alpha: number) => {
     if (ovlTimerRef.current) clearTimeout(ovlTimerRef.current)
@@ -188,7 +197,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, c
 
         {/* Transition type selector */}
         <div className="flex items-stretch shrink-0 border-l border-zinc-800 p-1 gap-px" style={{ width: 224 }}>
-          {TRANSITION_TYPES.map((type) => (
+          {TRANSITION_TYPES.filter((t) => !visibleTransitions || visibleTransitions.includes(t)).map((type) => (
             <button
               key={type}
               onClick={() => setTransitionType(type)}
@@ -199,7 +208,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, c
                   : 'text-zinc-500 bg-zinc-900 border-zinc-700 hover:text-zinc-300 hover:bg-zinc-800',
               )}
             >
-              {type.toUpperCase()}
+              {TRANSITION_LABELS[type]}
             </button>
           ))}
         </div>
