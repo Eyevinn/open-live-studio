@@ -19,7 +19,7 @@ import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { useGraphicsStore } from '@/store/graphics.store'
 import { useAudioStore } from '@/store/audio.store'
-import { audioApi } from '@/lib/api'
+import { audioApi, type ApiProduction } from '@/lib/api'
 
 // ─── Panel layout persistence ─────────────────────────────────────────────────
 
@@ -227,6 +227,165 @@ function AudioIcon() {
       <path d="M3 9v6h4l5 5V4L7 9H3Z" />
       <path d="M17.5 8.5a6 6 0 0 1 0 7" />
     </svg>
+  )
+}
+
+// ─── Source offset input ───────────────────────────────────────────────────────
+// Owns local string state so the field can be freely edited (cleared, typed into)
+// without the controlled-value snapping back. Fires the WS message on every valid
+// parse. On blur, resets to the last server-confirmed value if the field is blank/invalid.
+
+// Simple draft offset input — no live WS send, just local string state to
+// prevent "0 stuck" on controlled inputs. Parent owns the numeric draft value.
+function SourceOffsetInput({
+  label,
+  draftValue,
+  onChange,
+}: {
+  label: string
+  draftValue: number
+  onChange: (val: number) => void
+}) {
+  const [text, setText] = useState(() => String(draftValue))
+
+  // Keep text in sync when the parent resets draft (e.g. modal re-opens)
+  // but never clobber what the user is actively typing.
+  const isFocusedRef = useRef(false)
+  useEffect(() => {
+    if (!isFocusedRef.current) setText(String(draftValue))
+  }, [draftValue])
+
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      value={text}
+      onFocus={() => { isFocusedRef.current = true }}
+      onBlur={() => {
+        isFocusedRef.current = false
+        const parsed = parseFloat(text)
+        if (!Number.isFinite(parsed)) setText(String(draftValue))
+      }}
+      onChange={(e) => {
+        const raw = e.target.value
+        setText(raw)
+        const val = parseFloat(raw)
+        if (Number.isFinite(val)) onChange(val)
+      }}
+      className="w-20 text-right text-[11px] bg-[--color-surface-2] border border-[--color-border] rounded px-2 py-0.5 text-[--color-text-primary] focus:outline-none focus:border-orange-500"
+      aria-label={`${label} time offset ms`}
+    />
+  )
+}
+
+// ─── Controller options modal content ─────────────────────────────────────────
+
+function ControllerOptionsContent({
+  controllerOptions,
+  setControllerOptions,
+  activeProduction,
+  send,
+  onClose,
+}: {
+  controllerOptions: ControllerOptions
+  setControllerOptions: (opts: ControllerOptions) => void
+  activeProduction: ApiProduction | undefined
+  send: (msg: import('@/hooks/useControllerWs').OutboundMessage) => void
+  onClose: () => void
+}) {
+  const sources = useSourcesStore((s) => s.sources)
+  const sourceOffsets = useProductionStore((s) => s.sourceOffsets)
+
+  // All edits are local until Done is pressed.
+  const [draftTransitions, setDraftTransitions] = useState<string[]>(
+    () => controllerOptions.visibleTransitions,
+  )
+  const [draftOffsets, setDraftOffsets] = useState<Record<string, number>>(
+    () => ({ ...sourceOffsets }),
+  )
+
+  // Sort assignments by mixerInput for stable display order
+  const assignments = [...(activeProduction?.sources ?? [])].sort((a, b) =>
+    a.mixerInput.localeCompare(b.mixerInput),
+  )
+
+  function handleDone() {
+    // Commit transitions
+    const opts = { ...controllerOptions, visibleTransitions: draftTransitions }
+    setControllerOptions(opts)
+    try { localStorage.setItem(CONTROLLER_OPTIONS_KEY, JSON.stringify(opts)) } catch {}
+
+    // Send changed offsets via WS
+    for (const { mixerInput } of assignments) {
+      const current = sourceOffsets[mixerInput] ?? 0
+      const draft   = draftOffsets[mixerInput] ?? 0
+      if (draft !== current) {
+        send({ type: 'SOURCE_OFFSET_SET', mixerInput, offsetMs: draft })
+      }
+    }
+
+    onClose()
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      {/* Visible transitions */}
+      <div className="flex flex-col gap-2">
+        <span className="text-xs text-[--color-text-muted]">Visible transitions</span>
+        {ALL_TRANSITIONS.map((t) => {
+          const checked = draftTransitions.includes(t)
+          const isLast  = draftTransitions.length === 1 && checked
+          return (
+            <label key={t} className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={checked}
+                disabled={isLast}
+                onChange={() => {
+                  setDraftTransitions(checked
+                    ? draftTransitions.filter((x) => x !== t)
+                    : [...draftTransitions, t])
+                }}
+                className="accent-orange-500"
+              />
+              <span className="text-sm text-[--color-text-primary] text-[11px]">{TRANSITION_LABELS[t] ?? t}</span>
+            </label>
+          )
+        })}
+      </div>
+
+      {/* Source time offsets — only shown when a production with sources is active */}
+      {assignments.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <span className="text-xs text-[--color-text-muted]">Source timing (ms)</span>
+          <p className="text-[10px] text-[--color-text-muted] leading-snug">
+            Positive values delay the source to align with slower cameras.
+          </p>
+          {assignments.map((assignment) => {
+            const src = sources.find((s) => s.id === assignment.sourceId)
+            const name = src?.name ?? assignment.mixerInput
+            return (
+              <div key={assignment.mixerInput} className="flex items-center gap-2">
+                <span className="text-[11px] text-[--color-text-primary] flex-1 truncate" title={name}>
+                  {name}
+                </span>
+                <SourceOffsetInput
+                  label={name}
+                  draftValue={draftOffsets[assignment.mixerInput] ?? 0}
+                  onChange={(val) =>
+                    setDraftOffsets((prev) => ({ ...prev, [assignment.mixerInput]: val }))
+                  }
+                />
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      <div className="flex justify-end">
+        <Button variant="active" size="sm" onClick={handleDone}>Done</Button>
+      </div>
+    </div>
   )
 }
 
@@ -590,37 +749,13 @@ export function ControllerPage() {
 
     {/* ── Controller options modal ─────────────────────────────────────────── */}
     <Modal open={controllerOptionsOpen} title="Controller Options" onClose={() => setControllerOptionsOpen(false)} className="max-w-xs">
-      <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-2">
-          <span className="text-xs text-[--color-text-muted]">Visible transitions</span>
-          {ALL_TRANSITIONS.map((t) => {
-            const checked = controllerOptions.visibleTransitions.includes(t)
-            const isLast  = controllerOptions.visibleTransitions.length === 1 && checked
-            return (
-              <label key={t} className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={checked}
-                  disabled={isLast}
-                  onChange={() => {
-                    const next = checked
-                      ? controllerOptions.visibleTransitions.filter((x) => x !== t)
-                      : [...controllerOptions.visibleTransitions, t]
-                    const opts = { ...controllerOptions, visibleTransitions: next }
-                    setControllerOptions(opts)
-                    try { localStorage.setItem(CONTROLLER_OPTIONS_KEY, JSON.stringify(opts)) } catch {}
-                  }}
-                  className="accent-orange-500"
-                />
-                <span className="text-sm text-[--color-text-primary] text-[11px]">{TRANSITION_LABELS[t] ?? t}</span>
-              </label>
-            )
-          })}
-        </div>
-        <div className="flex justify-end">
-          <Button variant="active" size="sm" onClick={() => setControllerOptionsOpen(false)}>Done</Button>
-        </div>
-      </div>
+      <ControllerOptionsContent
+        controllerOptions={controllerOptions}
+        setControllerOptions={setControllerOptions}
+        activeProduction={activeProduction}
+        send={send}
+        onClose={() => setControllerOptionsOpen(false)}
+      />
     </Modal>
     </>
   )

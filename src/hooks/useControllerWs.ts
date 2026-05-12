@@ -20,6 +20,12 @@ export type OutboundMessage =
   | { type: 'MACRO_EXEC'; macroId: string }
   | { type: 'AUDIO_SET'; elementId: string; property: 'volume' | 'mute'; value: number | boolean; ramp_ms?: number }
   | { type: 'AFV_SET'; mixerInput: string; enabled: boolean }
+  | { type: 'PFL_SET'; elementId: string; enabled: boolean; volume?: number }
+  | { type: 'AUX_SEND_SET'; elementId: string; auxBus: number; level: number; enabled: boolean }
+  | { type: 'AUX_MASTER_SET'; auxBus: number; volume: number; muted: boolean }
+  | { type: 'GRP_SEND_SET'; elementId: string; grpBus: number; level: number; enabled: boolean }
+  | { type: 'GRP_MASTER_SET'; grpBus: number; volume: number; muted: boolean }
+  | { type: 'SOURCE_OFFSET_SET'; mixerInput: string; offsetMs: number }
 
 /**
  * Opens a WebSocket connection to /ws/productions/:id/controller.
@@ -35,7 +41,13 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   const applyLevel           = useAudioStore((s) => s.applyLevel)
   const applyMuted           = useAudioStore((s) => s.applyMuted)
   const applyAfvByMixerInput = useAudioStore((s) => s.applyAfvByMixerInput)
+  const applyPfl             = useAudioStore((s) => s.applyPfl)
+  const applyAuxSend         = useAudioStore((s) => s.applyAuxSend)
+  const applyAuxMaster       = useAudioStore((s) => s.applyAuxMaster)
+  const applyGrpSend         = useAudioStore((s) => s.applyGrpSend)
+  const applyGrpMaster       = useAudioStore((s) => s.applyGrpMaster)
   const applyMeter           = useAudioStore((s) => s.applyMeter)
+  const applySourceOffset    = useProductionStore((s) => s.applySourceOffset)
 
   useEffect(() => {
     if (!productionId) return
@@ -82,6 +94,42 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
             }
             break
           }
+          case 'PFL_STATE': {
+            if (typeof msg['elementId'] === 'string' && typeof msg['enabled'] === 'boolean') {
+              applyPfl(msg['elementId'] as string, msg['enabled'] as boolean)
+            }
+            break
+          }
+          case 'AUX_SEND_STATE': {
+            if (typeof msg['elementId'] === 'string' && typeof msg['auxBus'] === 'number' && typeof msg['level'] === 'number' && typeof msg['enabled'] === 'boolean') {
+              applyAuxSend(msg['elementId'] as string, msg['auxBus'] as number, msg['level'] as number, msg['enabled'] as boolean)
+            }
+            break
+          }
+          case 'AUX_MASTER_STATE': {
+            if (typeof msg['auxBus'] === 'number' && typeof msg['volume'] === 'number' && typeof msg['muted'] === 'boolean') {
+              applyAuxMaster(msg['auxBus'] as number, msg['volume'] as number, msg['muted'] as boolean)
+            }
+            break
+          }
+          case 'GRP_SEND_STATE': {
+            if (typeof msg['elementId'] === 'string' && typeof msg['grpBus'] === 'number' && typeof msg['level'] === 'number' && typeof msg['enabled'] === 'boolean') {
+              applyGrpSend(msg['elementId'] as string, msg['grpBus'] as number, msg['level'] as number, msg['enabled'] as boolean)
+            }
+            break
+          }
+          case 'GRP_MASTER_STATE': {
+            if (typeof msg['grpBus'] === 'number' && typeof msg['volume'] === 'number' && typeof msg['muted'] === 'boolean') {
+              applyGrpMaster(msg['grpBus'] as number, msg['volume'] as number, msg['muted'] as boolean)
+            }
+            break
+          }
+          case 'SOURCE_OFFSET_STATE': {
+            if (typeof msg['mixerInput'] === 'string' && typeof msg['offsetMs'] === 'number') {
+              applySourceOffset(msg['mixerInput'] as string, msg['offsetMs'] as number)
+            }
+            break
+          }
           case 'METER_DATA':
             if (typeof msg['elementId'] === 'string' && Array.isArray(msg['peak']) && Array.isArray(msg['rms'])) {
               applyMeter(msg['elementId'] as string, msg['peak'] as number[], msg['rms'] as number[])
@@ -101,7 +149,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
       ws.close()
       wsRef.current = null
     }
-  }, [productionId, setPgm, setPvw, setTBarPosition, setDskState, applyLevel, applyMuted, applyAfvByMixerInput, applyMeter])
+  }, [productionId, setPgm, setPvw, setTBarPosition, setDskState, applyLevel, applyMuted, applyAfvByMixerInput, applyPfl, applyAuxSend, applyAuxMaster, applyGrpSend, applyGrpMaster, applyMeter, applySourceOffset])
 
   const send = useCallback((msg: OutboundMessage) => {
     const ws = wsRef.current

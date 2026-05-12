@@ -18,6 +18,8 @@ interface ProductionState {
   activeProductionId: string | null
   /** Server-confirmed DSK layer visibility: layer index → visible */
   dskState: Record<number, boolean>
+  /** Runtime source time offsets: mixerInput → offsetMs. Synced via WS, reset on production change. */
+  sourceOffsets: Record<string, number>
 }
 
 interface ProductionActions {
@@ -31,6 +33,8 @@ interface ProductionActions {
   setTBarPosition: (pos: number) => void
   setActiveProduction: (id: string | null) => void
   setDskState: (layer: number, visible: boolean) => void
+  /** Server-authoritative offset setter — called by WS handler on SOURCE_OFFSET_STATE */
+  applySourceOffset: (mixerInput: string, offsetMs: number) => void
 }
 
 export const useProductionStore = create<ProductionState & ProductionActions>()(
@@ -45,6 +49,7 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
       tBarPosition: 1,
       activeProductionId: null,
       dskState: {},
+      sourceOffsets: {},
 
       // Actions
       cut: () =>
@@ -101,6 +106,7 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
           state.isFtb = false
           state.tBarPosition = 1
           state.dskState = {}
+          state.sourceOffsets = {}
         })
         // Clear audio strips synchronously so the new production never renders with
         // a previous production's elements. React 18 batches these two store updates
@@ -113,6 +119,11 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
       setDskState: (layer, visible) =>
         set((state) => {
           state.dskState[layer] = visible
+        }),
+
+      applySourceOffset: (mixerInput, offsetMs) =>
+        set((state) => {
+          state.sourceOffsets[mixerInput] = offsetMs
         }),
     })),
     { name: 'production' },
