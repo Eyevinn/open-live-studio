@@ -19,10 +19,9 @@ export function DskPanel({ onToggle }: DskPanelProps) {
   const graphics = useGraphicsStore((s) => s.graphics)
 
   const assignments = production?.graphicAssignments ?? []
-  if (assignments.length === 0) return null
 
   return (
-    <div className="flex items-stretch border border-zinc-800 bg-zinc-950">
+    <div className="flex items-stretch border border-zinc-800 bg-zinc-950" style={{ minHeight: 48 }}>
       {/* Section label */}
       <div className="flex items-center justify-center border-r border-zinc-800 shrink-0" style={{ width: 40 }}>
         <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-zinc-500">DSK</span>

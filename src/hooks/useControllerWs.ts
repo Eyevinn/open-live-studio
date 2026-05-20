@@ -21,6 +21,7 @@ export type OutboundMessage =
   | { type: 'AUDIO_SET'; elementId: string; property: 'volume' | 'mute'; value: number | boolean; ramp_ms?: number }
   | { type: 'AFV_SET'; mixerInput: string; enabled: boolean }
   | { type: 'PFL_SET'; elementId: string; enabled: boolean; volume?: number }
+  | { type: 'AFL_SET'; elementId: string; enabled: boolean }
   | { type: 'AUX_SEND_SET'; elementId: string; auxBus: number; level: number; enabled: boolean }
   | { type: 'AUX_MASTER_SET'; auxBus: number; volume: number; muted: boolean }
   | { type: 'GRP_SEND_SET'; elementId: string; grpBus: number; level: number; enabled: boolean }
@@ -42,11 +43,13 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   const applyMuted           = useAudioStore((s) => s.applyMuted)
   const applyAfvByMixerInput = useAudioStore((s) => s.applyAfvByMixerInput)
   const applyPfl             = useAudioStore((s) => s.applyPfl)
+  const applyAfl             = useAudioStore((s) => s.applyAfl)
   const applyAuxSend         = useAudioStore((s) => s.applyAuxSend)
   const applyAuxMaster       = useAudioStore((s) => s.applyAuxMaster)
   const applyGrpSend         = useAudioStore((s) => s.applyGrpSend)
   const applyGrpMaster       = useAudioStore((s) => s.applyGrpMaster)
   const applyMeter           = useAudioStore((s) => s.applyMeter)
+  const applyLoudness        = useAudioStore((s) => s.applyLoudness)
   const applySourceOffset    = useProductionStore((s) => s.applySourceOffset)
 
   useEffect(() => {
@@ -100,6 +103,12 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
             }
             break
           }
+          case 'AFL_STATE': {
+            if (typeof msg['elementId'] === 'string' && typeof msg['enabled'] === 'boolean') {
+              applyAfl(msg['elementId'] as string, msg['enabled'] as boolean)
+            }
+            break
+          }
           case 'AUX_SEND_STATE': {
             if (typeof msg['elementId'] === 'string' && typeof msg['auxBus'] === 'number' && typeof msg['level'] === 'number' && typeof msg['enabled'] === 'boolean') {
               applyAuxSend(msg['elementId'] as string, msg['auxBus'] as number, msg['level'] as number, msg['enabled'] as boolean)
@@ -135,6 +144,17 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
               applyMeter(msg['elementId'] as string, msg['peak'] as number[], msg['rms'] as number[])
             }
             break
+          case 'LOUDNESS_DATA':
+            if (typeof msg['elementId'] === 'string' && typeof msg['momentary'] === 'number') {
+              applyLoudness(
+                msg['elementId'] as string,
+                msg['momentary'] as number,
+                typeof msg['shortterm'] === 'number' ? msg['shortterm'] as number : null,
+                typeof msg['integrated'] === 'number' ? msg['integrated'] as number : null,
+                Array.isArray(msg['true_peak']) ? msg['true_peak'] as number[] : [],
+              )
+            }
+            break
         }
       } catch {
         // ignore malformed frames
@@ -149,7 +169,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
       ws.close()
       wsRef.current = null
     }
-  }, [productionId, setPgm, setPvw, setTBarPosition, setDskState, applyLevel, applyMuted, applyAfvByMixerInput, applyPfl, applyAuxSend, applyAuxMaster, applyGrpSend, applyGrpMaster, applyMeter, applySourceOffset])
+  }, [productionId, setPgm, setPvw, setTBarPosition, setDskState, applyLevel, applyMuted, applyAfvByMixerInput, applyPfl, applyAfl, applyAuxSend, applyAuxMaster, applyGrpSend, applyGrpMaster, applyMeter, applyLoudness, applySourceOffset])
 
   const send = useCallback((msg: OutboundMessage) => {
     const ws = wsRef.current

@@ -19,6 +19,7 @@ export function useWebRTC(whepEndpoint?: string | null): void {
   const setProgramStream = useViewerStore((s) => s.setProgramStream)
   const setConnectionState = useViewerStore((s) => s.setConnectionState)
   const setRetryCountdown = useViewerStore((s) => s.setRetryCountdown)
+  const setAudioTrackCount = useViewerStore((s) => s.setAudioTrackCount)
   const disconnect = useViewerStore((s) => s.disconnect)
   const clientRef = useRef<WhepClient | null>(null)
 
@@ -56,7 +57,14 @@ export function useWebRTC(whepEndpoint?: string | null): void {
       setConnectionState('connecting')
       const client = new WhepClient(whepEndpoint, {
         onVideoTrack: (stream) => {
-          if (!cancelled) setProgramStream(stream, false)
+          if (cancelled) return
+          setProgramStream(stream, false)
+          setAudioTrackCount(stream.getAudioTracks().length)
+          stream.onaddtrack = (e) => {
+            if (e.track.kind === 'audio' && !cancelled) {
+              setAudioTrackCount(stream.getAudioTracks().length)
+            }
+          }
         },
         onConnected: () => {
           if (!cancelled) setConnectionState('connected')
@@ -96,5 +104,5 @@ export function useWebRTC(whepEndpoint?: string | null): void {
         disconnect()
       }
     }
-  }, [whepEndpoint, setProgramStream, setConnectionState, setRetryCountdown, disconnect])
+  }, [whepEndpoint, setProgramStream, setConnectionState, setRetryCountdown, setAudioTrackCount, disconnect])
 }

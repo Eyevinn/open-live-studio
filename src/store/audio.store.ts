@@ -3,7 +3,17 @@ import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
 import type { ApiAudioElement } from '@/lib/api'
 
-interface MeterReading { peak: number[]; rms: number[]; decay?: number[] }
+interface MeterReading {
+  peak: number[];
+  rms: number[];
+  decay?: number[];
+  // EBU R128 loudness (LUFS) — populated from LoudnessData events when available
+  lufs_m?: number;        // momentary, 400ms window
+  lufs_s?: number;        // short-term, 3s window
+  lufs_i?: number;        // integrated (programme loudness)
+  true_peak?: number[];   // per-channel dBTP
+  tp_latched?: boolean;   // latched red if any channel ever exceeded −1 dBTP
+}
 
 interface AudioState {
   elements: ApiAudioElement[]
@@ -11,6 +21,7 @@ interface AudioState {
   muted: Record<string, boolean>                       // elementId → boolean
   afv: Record<string, boolean>                         // elementId → AFV enabled (input channels only)
   pfl: Record<string, boolean>                         // elementId → PFL send enabled (input channels only)
+  afl: Record<string, boolean>                         // elementId → AFL send enabled (input channels only)
   auxSend: Record<string, Record<number, number>>      // elementId → auxBus(1-indexed) → fader level (0–10); preserved across ON/OFF
   auxSendEnabled: Record<string, Record<number, boolean>> // elementId → auxBus(1-indexed) → send routed to bus
   auxMasterLevel: Record<number, number>               // auxBus(1-indexed) → fader level (0–10); 1.0 = 0 dB default
@@ -34,6 +45,8 @@ interface AudioActions {
   applyAfvByMixerInput: (mixerInput: string, enabled: boolean) => void
   /** Server-authoritative PFL setter — syncs across all connected operator clients. */
   applyPfl: (elementId: string, enabled: boolean) => void
+  /** Server-authoritative AFL setter — syncs across all connected operator clients. */
+  applyAfl: (elementId: string, enabled: boolean) => void
   /** Server-authoritative AUX per-channel send setter.
    *  level = fader position (0–10); enabled = whether send is routed. */
   applyAuxSend: (elementId: string, auxBus: number, level: number, enabled: boolean) => void
@@ -47,6 +60,8 @@ interface AudioActions {
    *  volume = fader level (0–10); muted = whether output is silenced. */
   applyGrpMaster: (grpBus: number, volume: number, muted: boolean) => void
   applyMeter: (elementId: string, peak: number[], rms: number[]) => void
+  applyLoudness: (elementId: string, lufs_m: number, lufs_s: number | null, lufs_i: number | null, true_peak: number[]) => void
+  resetTruePeakLatch: (elementId: string) => void
   // Optimistic local-only updates called by the UI before sending via WS
   setLevel: (elementId: string, value: number) => void
   /** Update the fader level for an aux send (does not change enabled state). */
@@ -78,6 +93,7 @@ export const useAudioStore = create<AudioState & AudioActions>()(
       muted: {},
       afv: {},
       pfl: {},
+      afl: {},
       auxSend: {},
       auxSendEnabled: {},
       auxMasterLevel: {},
@@ -97,6 +113,7 @@ export const useAudioStore = create<AudioState & AudioActions>()(
             s.muted = {}
             s.afv = {}
             s.pfl = {}
+            s.afl = {}
             s.auxSend = {}
             s.auxSendEnabled = {}
             s.auxMasterLevel = {}
@@ -114,6 +131,7 @@ export const useAudioStore = create<AudioState & AudioActions>()(
             if (s.levels[el.elementId] === undefined) s.levels[el.elementId] = 1.0
             if (s.muted[el.elementId] === undefined) s.muted[el.elementId] = false
             if (s.pfl[el.elementId] === undefined) s.pfl[el.elementId] = false
+            if (s.afl[el.elementId] === undefined) s.afl[el.elementId] = false
             // Always reset AFV from the pending queue or to false.
             // No `=== undefined` guard — this ensures stale AFV state from a
             // previous session is cleared when the backend resets its registry
@@ -147,7 +165,33 @@ export const useAudioStore = create<AudioState & AudioActions>()(
       },
 
       applyMeter: (elementId, peak, rms) =>
-        _set((s) => { s.meters[elementId] = { peak, rms } }),
+        _set((s) => {
+          const prev = s.meters[elementId]
+          s.meters[elementId] = {
+            peak, rms,
+            lufs_m: prev?.lufs_m, lufs_s: prev?.lufs_s, lufs_i: prev?.lufs_i,
+            true_peak: prev?.true_peak, tp_latched: prev?.tp_latched,
+          }
+        }),
+
+      applyLoudness: (elementId, lufs_m, lufs_s, lufs_i, true_peak) =>
+        _set((s) => {
+          const prev = s.meters[elementId] ?? { peak: [], rms: [] }
+          const exceeded = true_peak.some((tp) => tp > -1)
+          s.meters[elementId] = {
+            ...prev,
+            lufs_m,
+            ...(lufs_s !== null && { lufs_s }),
+            ...(lufs_i !== null && { lufs_i }),
+            true_peak,
+            tp_latched: prev.tp_latched || exceeded,
+          }
+        }),
+
+      resetTruePeakLatch: (elementId) =>
+        _set((s) => {
+          if (s.meters[elementId]) s.meters[elementId].tp_latched = false
+        }),
 
       setLevel: (elementId, value) =>
         _set((s) => { s.levels[elementId] = Math.max(0, Math.min(10, value)) }),
@@ -162,6 +206,9 @@ export const useAudioStore = create<AudioState & AudioActions>()(
 
       applyPfl: (elementId, enabled) =>
         _set((s) => { s.pfl[elementId] = enabled }),
+
+      applyAfl: (elementId, enabled) =>
+        _set((s) => { s.afl[elementId] = enabled }),
 
       applyAuxSend: (elementId, auxBus, level, enabled) =>
         _set((s) => {

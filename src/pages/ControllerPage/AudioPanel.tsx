@@ -4,9 +4,100 @@ import { useProductionStore } from '@/store/production.store'
 import { cn } from '@/lib/cn'
 import type { OutboundMessage } from '@/hooks/useControllerWs'
 
+// ── EBU R128 Meter ────────────────────────────────────────────────────────────
+// Displays momentary LUFS bar + integrated LUFS readout + latching True Peak indicator.
+// Scale: −60 to 0 LUFS. Target: −23 LUFS (EBU R128 broadcast standard).
+
+const LUFS_MIN    = -60
+const LUFS_MAX    = 0
+const LUFS_TARGET = -23
+
+function lufsToRatio(lufs: number): number {
+  return Math.max(0, Math.min(1, (lufs - LUFS_MIN) / (LUFS_MAX - LUFS_MIN)))
+}
+
+// EBU R128 compliance zone gradient — bottom to top: red → amber → green → amber → red.
+// Zone boundaries on the −60 to 0 LUFS scale:
+//   −36 LUFS = 40%   (24 / 60)  — very quiet threshold
+//   −26 LUFS = 56.7% (34 / 60)  — lower green boundary
+//   −20 LUFS = 66.7% (40 / 60)  — upper green boundary
+//    −9 LUFS = 85%   (51 / 60)  — too loud threshold
+// The bar's height% clips the gradient so only levels actually reached are shown.
+const EBU_GRADIENT = [
+  '#ff2020 0%',   '#ff2020 40%',    // red:   −60 to −36 LUFS (below threshold)
+  '#ffcc00 40%',  '#ffcc00 56.7%',  // amber: −36 to −26 LUFS (below target)
+  '#00bb44 56.7%','#00bb44 66.7%',  // green: −26 to −20 LUFS (target zone)
+  '#ffcc00 66.7%','#ffcc00 85%',    // amber: −20 to  −9 LUFS (above target)
+  '#ff2020 85%',  '#ff2020 100%',   // red:    −9 to   0 LUFS (too loud)
+].join(', ')
+const EBU_BAR_GRADIENT = `linear-gradient(to top, ${EBU_GRADIENT})`
+
+function EbuMeter({ elementId, height }: { elementId: string; height: number }) {
+  const meter              = useAudioStore((s) => s.meters[elementId])
+  const resetTruePeakLatch = useAudioStore((s) => s.resetTruePeakLatch)
+
+  const lufs_m  = meter?.lufs_m
+  const lufs_i  = meter?.lufs_i
+  const tpLatch = meter?.tp_latched ?? false
+
+  const barRatio    = lufs_m !== undefined ? lufsToRatio(lufs_m) : 0
+  const targetRatio = lufsToRatio(LUFS_TARGET)
+
+  const iStr = lufs_i !== undefined ? lufs_i.toFixed(1) : '---'
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: 28, flexShrink: 0, marginTop: Math.round(THUMB_CSS_W / 2) }}>
+      {/* EBU bar — same height as VU meter.
+          True Peak latch shown as a red border; click bar to reset. */}
+      <div
+        onClick={() => tpLatch && resetTruePeakLatch(elementId)}
+        title={tpLatch ? 'True Peak exceeded −1 dBTP — click to reset' : 'EBU R128 momentary loudness'}
+        style={{
+          width: 10, height,
+          position: 'relative',
+          background: EBU_BAR_GRADIENT,
+          border: tpLatch ? '1px solid #ff4040' : '1px solid #222',
+          flexShrink: 0,
+          cursor: tpLatch ? 'pointer' : 'default',
+        }}
+      >
+        {/* Dark mask — shrinks from top to reveal the gradient up to current level */}
+        <div style={{
+          position: 'absolute', top: 0, left: 0, right: 0,
+          height: `${(1 - barRatio) * 100}%`,
+          background: '#0a0a0a',
+          transition: 'height 80ms linear',
+          pointerEvents: 'none',
+        }} />
+        {/* Target line at −23 LUFS */}
+        <div style={{
+          position: 'absolute', left: 0, right: 0,
+          bottom: `${targetRatio * 100}%`,
+          height: 1,
+          background: '#ffffff44',
+          pointerEvents: 'none',
+        }} />
+      </div>
+
+      {/* Integrated LUFS — fixed width prevents layout shift across different number widths */}
+      <div style={{
+        fontSize: 8, fontFamily: 'monospace', whiteSpace: 'nowrap', textAlign: 'center',
+        width: 28,
+        color: lufs_i === undefined ? '#383838'
+          : lufs_i > -20 ? '#ff4040'
+          : lufs_i >= -26 ? '#00cc55'
+          : lufs_i >= -36 ? '#ffaa00'
+          : '#ff6666',
+      }}>
+        {iStr}
+      </div>
+    </div>
+  )
+}
+
 type SendFn = (msg: OutboundMessage) => void
 
-const FADER_H = 160
+const FADER_H = 220
 // Width of the fader container. The range input CSS height is set to this value so that
 // after rotate(-90deg) it fills the container exactly — this is what centres the handle.
 // Must be ≥ the widest thumb (CSS height in index.css) so the handle isn't clipped.
@@ -32,11 +123,10 @@ function dbToRatio(db: number): number {
   return Math.max(0, Math.min(1, (db - DB_MIN) / (DB_MAX - DB_MIN)))
 }
 
-function barColor(ratio: number): string {
-  if (ratio > 0.9) return '#ff2020'   // clip zone — red
-  if (ratio > 0.7) return '#ffcc00'   // above nominal — amber
-  return '#00bb44'                     // nominal — green
-}
+// Fixed PPM gradient: green 0→−18 dB (70%), amber −18→−6 dB (70→90%), red −6→0 dB (90→100%).
+// Applied to the full bar height; the bar's height% clips it so only the segment
+// above each threshold ever renders in amber/red.
+const PPM_GRADIENT = 'linear-gradient(to top, #00bb44 0%, #00bb44 70%, #ffcc00 70%, #ffcc00 90%, #ff2020 90%, #ff2020 100%)'
 
 function VuMeter({ elementId }: { elementId: string }) {
   const meter = useAudioStore((s) => s.meters[elementId])
@@ -45,41 +135,44 @@ function VuMeter({ elementId }: { elementId: string }) {
     : [{ bar: DB_MIN, hold: DB_MIN }]
 
   return (
-    <div style={{ width: channels.length > 1 ? 14 : 7, height: FADER_H, display: 'flex', gap: 2, flexShrink: 0 }}>
+    <div style={{ width: channels.length > 1 ? 14 : 7, height: FADER_H, display: 'flex', gap: 2, flexShrink: 0, marginTop: Math.round(THUMB_CSS_W / 2) }}>
       {channels.map(({ bar, hold }, i) => {
         const barR  = dbToRatio(bar)
         const holdR = dbToRatio(hold)
-        const color = barColor(barR)
         return (
-          <div key={i} style={{ flex: 1, position: 'relative', background: '#0a0a0a', border: '1px solid #222' }}>
-            {/* PPM bar — classic segmented appearance */}
-            <div
-              style={{
-                position: 'absolute',
-                bottom: 0,
-                left: 0,
-                right: 0,
-                height: `${barR * 100}%`,
-                background: `linear-gradient(to top, ${color} 0%, ${color} 60%, ${barR > 0.9 ? '#ff5050' : barR > 0.7 ? '#ffe050' : '#22ee66'} 100%)`,
-                transition: 'height 80ms linear',
-              }}
-            />
-            {/* Segment dividers — PPM tick lines */}
-            <div
-              className="vu-segment-bar"
-            />
-            {/* Peak hold indicator */}
+          <div key={i} style={{ flex: 1, position: 'relative', background: PPM_GRADIENT, border: '1px solid #222' }}>
+            <div style={{
+              position: 'absolute', top: 0, left: 0, right: 0,
+              height: `${(1 - barR) * 100}%`,
+              background: '#0a0a0a',
+              transition: 'height 80ms linear',
+            }} />
+            <div className="vu-segment-bar" />
             <div style={{
               position: 'absolute',
               bottom: `${holdR * 100}%`,
-              left: 0,
-              right: 0,
-              height: 2,
-              background: holdR > 0.9 ? '#ff4040' : '#ffffff88',
+              left: 0, right: 0, height: 2,
+              background: holdR > 0.9 ? '#ff4040' : holdR > 0.7 ? '#ffe050' : '#ffffff88',
             }} />
           </div>
         )
       })}
+    </div>
+  )
+}
+
+function PeakReadout({ elementId }: { elementId: string }) {
+  const meter = useAudioStore((s) => s.meters[elementId])
+  const peakDb = meter ? Math.max(...meter.peak) : null
+  const silent = peakDb === null || !isFinite(peakDb) || peakDb < DB_MIN
+  const peakStr = silent ? '−∞' : peakDb!.toFixed(1)
+  const peakColor = silent ? '#383838'
+    : peakDb! > -6  ? '#ff4040'
+    : peakDb! > -18 ? '#ffaa00'
+    : '#00cc55'
+  return (
+    <div style={{ fontSize: 8, fontFamily: 'monospace', whiteSpace: 'nowrap', textAlign: 'center', color: peakColor }}>
+      {peakStr}
     </div>
   )
 }
@@ -104,7 +197,11 @@ const UNITY_POS  = 0.875  // fader position that maps to 0 dB (1.0 amplitude)
 // WebKit keeps the thumb fully inside the track, so its centre travels from
 // THUMB_CSS_W/2 to FADER_H − THUMB_CSS_W/2, not the full 0…FADER_H.
 // Tick mark y positions use the same inset formula so they align with the thumb centre.
-const THUMB_CSS_W = 9   // matches .fader-handle-a::-webkit-slider-thumb { width: 9px }
+const THUMB_CSS_W = 23  // matches .fader-handle-a::-webkit-slider-thumb { width: 23px }
+// Fader container height = meter bar height + thumb CSS width.
+// The thumb is inset by THUMB_CSS_W/2 on each end, so its travel zone is exactly
+// FADER_H px — matching the meter bar height — with no overshoot at either extreme.
+const FADER_CONTAINER_H = FADER_H + THUMB_CSS_W   // 243 px
 
 // dB-calibrated tick marks; pixel y = (1 − pos) × FADER_H.
 // Above unity: pos = UNITY_POS + log10(vol) × (1 − UNITY_POS), so:
@@ -146,12 +243,15 @@ function volumeToFader(vol: number): number {
 
 // ── Channel strip ─────────────────────────────────────────────────────────────
 
-function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false, mixerInput = null, isPgm = false, isPvw = false, busColor = C_MAIN }: {
+function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false, showAfl = false, showEbu = false, mixerInput = null, isPgm = false, isPvw = false, busColor = C_MAIN }: {
   elementId: string
   label: string
   send: SendFn
   showAfv?: boolean
   showPfl?: boolean
+  showAfl?: boolean
+  /** Show EBU R128 meter column — only meaningful when LoudnessData flows for this elementId (i.e. MAIN bus) */
+  showEbu?: boolean
   mixerInput?: string | null
   isPgm?: boolean
   isPvw?: boolean
@@ -161,10 +261,12 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
   const muted = useAudioStore((s) => s.muted[elementId] ?? false)
   const afv   = useAudioStore((s) => s.afv[elementId] ?? false)
   const pfl   = useAudioStore((s) => s.pfl[elementId] ?? false)
+  const afl   = useAudioStore((s) => s.afl[elementId] ?? false)
   const setLevel   = useAudioStore((s) => s.setLevel)
   const applyMuted = useAudioStore((s) => s.applyMuted)
   const toggleAfv  = useAudioStore((s) => s.toggleAfv)
-  const togglePfl  = useAudioStore((s) => s.togglePfl)
+  const applyPfl   = useAudioStore((s) => s.applyPfl)
+  const applyAfl   = useAudioStore((s) => s.applyAfl)
 
   // Derived 3-state mode: afv wins if set, otherwise on/off from mute flag
   const mode: 'off' | 'on' | 'afv' = afv ? 'afv' : muted ? 'off' : 'on'
@@ -218,11 +320,9 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
     const timer = setTimeout(() => {
       throttleRef.current = null
       send({ type: 'AUDIO_SET', elementId, property: 'volume', value: volume })
-      // Mirror fader level to PFL bus so PFL volume tracks the channel fader
-      if (pfl) send({ type: 'PFL_SET', elementId, enabled: true, volume })
     }, 80)
     throttleRef.current = { timer, last: volume }
-  }, [elementId, muted, pfl, send, setLevel, applyMuted])
+  }, [elementId, muted, send, setLevel, applyMuted])
 
   /**
    * ON button — toggles the channel routing mute.
@@ -281,13 +381,27 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
 
   const handlePflClick = useCallback(() => {
     const next = !pfl
-    togglePfl(elementId)
-    // Pass current fader level when enabling so PFL comes in at the right level
-    send({ type: 'PFL_SET', elementId, enabled: next, ...(next && { volume: level }) })
-  }, [pfl, level, elementId, send, togglePfl])
+    applyPfl(elementId, next)
+    send({ type: 'PFL_SET', elementId, enabled: next, volume: level })
+    // Mutually exclusive per strip — enabling PFL cancels AFL on same channel
+    if (next && afl) {
+      applyAfl(elementId, false)
+      send({ type: 'AFL_SET', elementId, enabled: false })
+    }
+  }, [pfl, afl, elementId, level, send, applyPfl, applyAfl])
 
-  // Strip width is fixed — tight broadcast layout
-  const STRIP_W = 68
+  const handleAflClick = useCallback(() => {
+    const next = !afl
+    applyAfl(elementId, next)
+    send({ type: 'AFL_SET', elementId, enabled: next })
+    // Mutually exclusive per strip — enabling AFL cancels PFL on same channel
+    if (next && pfl) {
+      applyPfl(elementId, false)
+      send({ type: 'PFL_SET', elementId, enabled: false })
+    }
+  }, [afl, pfl, elementId, level, send, applyAfl, applyPfl])
+
+  const STRIP_W = showEbu ? 124 : 92
 
   // A strip is "active" — contributing audio to the main mix — when:
   //   • mode is ON (manual, always routes to main), OR
@@ -300,18 +414,6 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
       className="flex flex-col shrink-0 select-none border-r border-zinc-800 relative"
       style={{ width: STRIP_W, background: '#0d0d0d' }}
     >
-      {/* PGM/PVW tally ring — rendered as an overlay so it always paints above children
-          (including the header's border-b, which would otherwise visually cut through it) */}
-      {(isPgm || isPvw) && (
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            border: `1px solid ${isPgm ? '#dc2626' : '#16a34a'}`,
-            zIndex: 10,
-          }}
-        />
-      )}
-
       {/* Channel label header */}
       <div
         className="px-1 py-0.5 text-center border-b border-zinc-900 shrink-0"
@@ -329,111 +431,127 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
         </span>
       </div>
 
-      {/* Main body — meter | fader, pulled towards each other */}
-      <div className="flex gap-0 px-0.5 py-1 flex-1 justify-center">
+      {/* Main body */}
+      <div className="flex flex-1">
 
-        {/* VU meter */}
-        <VuMeter elementId={elementId} />
+        {/* EBU sub-column — separated by border when visible */}
+        {showEbu && (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', borderRight: '1px solid #27272a', padding: '2px 4px 2px 2px', flexShrink: 0, opacity: isActive ? 1 : 0.25, transition: 'opacity 0.2s' }}>
+            <EbuMeter elementId={elementId} height={FADER_H} />
+          </div>
+        )}
 
-        {/* Fader + tick marks
-            DOM order = paint order (no explicit z-index on track/ticks needed):
-              1. Track bar   — bottommost (DOM first)
-              2. Tick marks  — above track (DOM second)
-              3. Range input — topmost, z-index:2 ensures it's above tick wrappers */}
-        <div className="flex items-center justify-center">
-          <div className="flex flex-col items-center">
-            <div className="relative" style={{ width: FADER_W, height: FADER_H }}>
+        {/* VU + fader sub-column */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 8px', flex: 1 }}>
 
-              {/* 1. Track bar — rendered first so it's behind everything */}
-              <div
-                className="absolute pointer-events-none"
-                style={{
-                  width: 4,
-                  height: FADER_H,
-                  top: 0,
-                  left: '50%',
-                  transform: 'translateX(-50%)',
-                  background: '#181818',
-                  border: '1px solid #2a2a2a',
-                }}
-              />
+          {/* VU meter + peak readout — wider container centers the text under the bars */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 28, gap: 2, opacity: isActive ? 1 : 0.25, transition: 'opacity 0.2s' }}>
+            <VuMeter elementId={elementId} />
+            <PeakReadout elementId={elementId} />
+          </div>
 
-              {/* 2. Tick marks — rendered second, above the track bar.
-                  Each tick is two sibling elements (line + label) anchored to the same y.
-                  Both use translateY(-50%) so their visual centres sit exactly at y,
-                  matching the thumb centre formula used to compute y. */}
-              {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
-                // Inset the tick to match where the thumb centre actually sits.
-                // WebKit thumb centre = THUMB_CSS_W/2 + pos_in_track * (FADER_H − THUMB_CSS_W)
-                const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_H - THUMB_CSS_W))
-                return (
-                  <Fragment key={db}>
-                    {/* Horizontal tick line — centred on y */}
-                    <div
-                      className="absolute pointer-events-none"
-                      style={{
-                        top: y,
-                        left: '50%',
-                        transform: 'translate(-50%, -50%)',
-                        width: major ? 20 : 14,
-                        height: major ? 2 : 1,
-                        background: major ? '#505050' : '#383838',
-                      }}
-                    />
-                    {/* dB label — vertically centred on same y */}
-                    <span
-                      className="absolute pointer-events-none"
-                      style={{
-                        top: y,
-                        left: 'calc(50% + 12px)',
-                        transform: 'translateY(-50%)',
-                        fontSize: isInfinity ? 10 : 6,
-                        lineHeight: 1,
-                        fontFamily: isInfinity ? 'sans-serif' : 'monospace',
-                        color: major ? '#505050' : '#383838',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {db}
-                    </span>
-                  </Fragment>
-                )
-              })}
+          {/* Fader + tick marks */}
+          <div className="relative shrink-0" style={{ width: FADER_W, height: FADER_CONTAINER_H }}>
 
-              {/* 3. Range input — rendered last so the handle paints above everything.
-                  z-index:2 is belt-and-braces in case any parent creates a stacking context.
-                  Centering: CSS height = FADER_W so after rotate(-90deg) the input fills
-                  the container exactly. The handle thumb is centred via margin-top in CSS,
-                  which (after rotation) controls horizontal position on screen. */}
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.005}
-                value={volumeToFader(level)}
-                onChange={(e) => handleChange(parseFloat(e.target.value))}
-                onMouseDown={handleFaderMouseDown}
-                aria-label={`${label} fader`}
-                className="fader-rotated fader-handle-a"
-                style={{
-                  width: FADER_H,
-                  height: FADER_W,
-                  left: -(FADER_H - FADER_W) / 2,
-                  top:  (FADER_H - FADER_W) / 2,
-                  cursor: mode === 'off' ? 'not-allowed' : 'pointer',
-                  zIndex: 2,
-                }}
-              />
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                width: 4,
+                height: FADER_CONTAINER_H - THUMB_CSS_W,
+                top: Math.round(THUMB_CSS_W / 2),
+                left: '50%',
+                transform: 'translateX(-50%)',
+                background: '#181818',
+                border: '1px solid #2a2a2a',
+              }}
+            />
 
-            </div>
+            {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
+              const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_CONTAINER_H - THUMB_CSS_W))
+              return (
+                <Fragment key={db}>
+                  <div
+                    className="absolute pointer-events-none"
+                    style={{
+                      top: y, left: '50%', transform: 'translate(-50%, -50%)',
+                      width: major ? 20 : 14, height: major ? 2 : 1,
+                      background: major ? '#505050' : '#383838',
+                    }}
+                  />
+                  <span
+                    className="absolute pointer-events-none"
+                    style={{
+                      top: y, left: 'calc(50% + 10px)', transform: 'translateY(-50%)',
+                      fontSize: isInfinity ? 10 : 6, lineHeight: 1,
+                      fontFamily: isInfinity ? 'sans-serif' : 'monospace',
+                      color: major ? '#505050' : '#383838', whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {db}
+                  </span>
+                </Fragment>
+              )
+            })}
+
+            <input
+              type="range"
+              min={0} max={1} step={0.005}
+              value={volumeToFader(level)}
+              onChange={(e) => handleChange(parseFloat(e.target.value))}
+              onMouseDown={handleFaderMouseDown}
+              aria-label={`${label} fader`}
+              className="fader-rotated fader-handle-a"
+              style={{
+                width: FADER_CONTAINER_H, height: FADER_W,
+                left: -(FADER_CONTAINER_H - FADER_W) / 2,
+                top:  (FADER_CONTAINER_H - FADER_W) / 2,
+                cursor: mode === 'off' ? 'not-allowed' : 'pointer',
+                zIndex: 2,
+              }}
+            />
           </div>
         </div>
       </div>
 
       {/* Bottom buttons */}
-      <div className="border-t border-zinc-800 px-1 pt-1 pb-0.5 shrink-0 flex flex-col gap-0.5">
-        {/* ON + AFV row */}
-        <div className="flex gap-1">
+      <div className="border-t border-zinc-800 shrink-0 flex flex-col">
+        {/* PFL / AFL row — only rendered when at least one is shown */}
+        {(showPfl || showAfl) && (
+          <div className="flex gap-px border-b border-zinc-800">
+            {showPfl && (
+              <button
+                onClick={handlePflClick}
+                title={pfl ? 'PFL active — hearing this channel pre-fader on MON. Click to cancel.' : 'PFL — route channel pre-fader to MON bus for monitoring'}
+                className={cn(
+                  'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
+                  pfl
+                    ? 'text-yellow-200'
+                    : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
+                )}
+                style={pfl ? { background: 'rgba(202,138,4,0.35)' } : {}}
+              >
+                PFL
+              </button>
+            )}
+            {showAfl && (
+              <button
+                onClick={handleAflClick}
+                title={afl ? 'AFL active — hearing this channel post-fader on MON. Click to cancel.' : 'AFL — route channel post-fader to MON bus for monitoring'}
+                className={cn(
+                  'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
+                  afl
+                    ? 'text-yellow-200'
+                    : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
+                )}
+                style={afl ? { background: 'rgba(202,138,4,0.35)' } : {}}
+              >
+                AFL
+              </button>
+            )}
+          </div>
+        )}
+        {/* ON / AFV row */}
+        <div className="flex gap-px">
           <button
             onClick={handleOnClick}
             title={
@@ -442,12 +560,12 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
               : 'Channel muted — click to turn on'
             }
             className={cn(
-              'btn-hardware flex-1 py-0.5 text-[9px] font-bold uppercase tracking-widest border transition-colors',
+              'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
               mode === 'on'
                 ? 'text-white'
-                : 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:text-zinc-300',
+                : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
             )}
-            style={mode === 'on' ? { background: busColor.active, borderColor: busColor.hex } : {}}
+            style={mode === 'on' ? { background: busColor.active } : {}}
           >
             ON
           </button>
@@ -456,10 +574,10 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
               onClick={handleAfvClick}
               title={mode === 'afv' ? 'AFV — audio follows video. Click to mute.' : 'Click to enable AFV'}
               className={cn(
-                'btn-hardware flex-1 py-0.5 text-[9px] font-bold uppercase tracking-widest border transition-colors',
+                'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
                 mode === 'afv'
-                  ? 'border-orange-600 text-orange-300'
-                  : 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:text-zinc-300',
+                  ? 'text-orange-300'
+                  : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
               )}
               style={mode === 'afv' ? { background: 'rgba(200,100,0,0.2)' } : {}}
             >
@@ -467,22 +585,6 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
             </button>
           )}
         </div>
-        {/* PFL row — input channels only */}
-        {showPfl && (
-          <button
-            onClick={handlePflClick}
-            title={pfl ? 'PFL — solo to monitor bus. Click to remove.' : 'Click to send to PFL monitor bus'}
-            className={cn(
-              'btn-hardware w-full py-0.5 text-[9px] font-bold uppercase tracking-widest border transition-colors',
-              pfl
-                ? 'border-yellow-500 text-yellow-300'
-                : 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:text-zinc-300',
-            )}
-            style={pfl ? { background: 'rgba(180,140,0,0.25)' } : {}}
-          >
-            PFL
-          </button>
-        )}
       </div>
     </div>
   )
@@ -522,7 +624,7 @@ function AuxChannelStrip({ elementId, label, auxBus, send }: {
     send({ type: 'AUX_SEND_SET', elementId, auxBus, level, enabled: next })
   }, [enabled, level, elementId, auxBus, send, setAuxEnabled])
 
-  const STRIP_W = 68
+  const STRIP_W = 92
 
   return (
     <div
@@ -543,46 +645,45 @@ function AuxChannelStrip({ elementId, label, auxBus, send }: {
       </div>
 
       {/* Main body — meter | fader */}
-      <div className="flex gap-0 px-0.5 py-1 flex-1 justify-center">
-        <VuMeter elementId={elementId} />
-        <div className="flex items-center justify-center">
-          <div className="flex flex-col items-center">
-            <div className="relative" style={{ width: FADER_W, height: FADER_H }}>
-              <div className="absolute pointer-events-none" style={{ width: 4, height: FADER_H, top: 0, left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
-              {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
-                const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_H - THUMB_CSS_W))
-                return (
-                  <Fragment key={db}>
-                    <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
-                    <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 12px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 10 : 6, lineHeight: 1, fontFamily: isInfinity ? 'sans-serif' : 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
-                  </Fragment>
-                )
-              })}
-              <input
-                type="range" min={0} max={1} step={0.005}
-                value={volumeToFader(level)}
-                onChange={(e) => handleChange(parseFloat(e.target.value))}
-                aria-label={`${label} AUX ${auxBus} send`}
-                className="fader-rotated fader-handle-a"
-                style={{ width: FADER_H, height: FADER_W, left: -(FADER_H - FADER_W) / 2, top: (FADER_H - FADER_W) / 2, cursor: 'pointer', zIndex: 2 }}
-              />
-            </div>
-          </div>
+      <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 8px', flex: 1 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 28, gap: 2 }}>
+          <VuMeter elementId={elementId} />
+          <PeakReadout elementId={elementId} />
+        </div>
+        <div className="relative shrink-0" style={{ width: FADER_W, height: FADER_CONTAINER_H }}>
+          <div className="absolute pointer-events-none" style={{ width: 4, height: FADER_CONTAINER_H - THUMB_CSS_W, top: Math.round(THUMB_CSS_W / 2), left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
+          {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
+            const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_CONTAINER_H - THUMB_CSS_W))
+            return (
+              <Fragment key={db}>
+                <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
+                <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 10px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 10 : 6, lineHeight: 1, fontFamily: isInfinity ? 'sans-serif' : 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
+              </Fragment>
+            )
+          })}
+          <input
+            type="range" min={0} max={1} step={0.005}
+            value={volumeToFader(level)}
+            onChange={(e) => handleChange(parseFloat(e.target.value))}
+            aria-label={`${label} AUX ${auxBus} send`}
+            className="fader-rotated fader-handle-a"
+            style={{ width: FADER_CONTAINER_H, height: FADER_W, left: -(FADER_CONTAINER_H - FADER_W) / 2, top: (FADER_CONTAINER_H - FADER_W) / 2, cursor: 'pointer', zIndex: 2 }}
+          />
         </div>
       </div>
 
       {/* Bottom — ON button */}
-      <div className="border-t border-zinc-800 px-1 pt-1 pb-0.5 shrink-0 flex flex-col gap-0.5">
+      <div className="border-t border-zinc-800 shrink-0 flex overflow-hidden">
         <button
           onClick={handleOnClick}
           title={enabled ? 'Send active — click to remove from mix' : 'Send silent — click to route to mix'}
           className={cn(
-            'btn-hardware w-full py-0.5 text-[9px] font-bold uppercase tracking-widest border transition-colors',
+            'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
             enabled
               ? 'text-white'
-              : 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:text-zinc-300',
+              : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
           )}
-          style={enabled ? { background: C_AUX.active, borderColor: C_AUX.hex } : {}}
+          style={enabled ? { background: C_AUX.active } : {}}
         >
           ON
         </button>
@@ -637,7 +738,7 @@ function AuxMasterStrip({ auxBus, label, send, onSelect }: {
   }, [muted, level, auxBus, send, setMasterMuted])
 
   const isActive = !muted
-  const STRIP_W = 68
+  const STRIP_W = 92
 
   return (
     <div
@@ -660,47 +761,46 @@ function AuxMasterStrip({ auxBus, label, send, onSelect }: {
       </div>
 
       {/* Main body — meter | fader */}
-      <div className="flex gap-0 px-0.5 py-1 flex-1 justify-center">
-        <VuMeter elementId={meterId} />
-        <div className="flex items-center justify-center">
-          <div className="flex flex-col items-center">
-            <div className="relative" style={{ width: FADER_W, height: FADER_H }}>
-              <div className="absolute pointer-events-none" style={{ width: 4, height: FADER_H, top: 0, left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
-              {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
-                const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_H - THUMB_CSS_W))
-                return (
-                  <Fragment key={db}>
-                    <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
-                    <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 12px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 10 : 6, lineHeight: 1, fontFamily: isInfinity ? 'sans-serif' : 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
-                  </Fragment>
-                )
-              })}
-              <input
-                type="range" min={0} max={1} step={0.005}
-                value={volumeToFader(level)}
-                onChange={(e) => handleChange(parseFloat(e.target.value))}
-                onMouseDown={handleFaderMouseDown}
-                aria-label={`${label} master fader`}
-                className="fader-rotated fader-handle-a"
-                style={{ width: FADER_H, height: FADER_W, left: -(FADER_H - FADER_W) / 2, top: (FADER_H - FADER_W) / 2, cursor: muted ? 'not-allowed' : 'pointer', zIndex: 2 }}
-              />
-            </div>
-          </div>
+      <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 8px', flex: 1 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 28, gap: 2, opacity: isActive ? 1 : 0.25, transition: 'opacity 0.2s' }}>
+          <VuMeter elementId={meterId} />
+          <PeakReadout elementId={meterId} />
+        </div>
+        <div className="relative shrink-0" style={{ width: FADER_W, height: FADER_CONTAINER_H }}>
+          <div className="absolute pointer-events-none" style={{ width: 4, height: FADER_CONTAINER_H - THUMB_CSS_W, top: Math.round(THUMB_CSS_W / 2), left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
+          {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
+            const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_CONTAINER_H - THUMB_CSS_W))
+            return (
+              <Fragment key={db}>
+                <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
+                <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 10px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 10 : 6, lineHeight: 1, fontFamily: isInfinity ? 'sans-serif' : 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
+              </Fragment>
+            )
+          })}
+          <input
+            type="range" min={0} max={1} step={0.005}
+            value={volumeToFader(level)}
+            onChange={(e) => handleChange(parseFloat(e.target.value))}
+            onMouseDown={handleFaderMouseDown}
+            aria-label={`${label} master fader`}
+            className="fader-rotated fader-handle-a"
+            style={{ width: FADER_CONTAINER_H, height: FADER_W, left: -(FADER_CONTAINER_H - FADER_W) / 2, top: (FADER_CONTAINER_H - FADER_W) / 2, cursor: muted ? 'not-allowed' : 'pointer', zIndex: 2 }}
+          />
         </div>
       </div>
 
-      {/* Bottom — matches ChannelStrip (showAfv=false) layout for stable panel height */}
-      <div className="border-t border-zinc-800 px-1 pt-1 pb-0.5 shrink-0 flex flex-col gap-0.5">
+      {/* Bottom */}
+      <div className="border-t border-zinc-800 shrink-0 flex overflow-hidden">
         <button
           onClick={handleOnClick}
           title={muted ? 'AUX bus muted — click to unmute' : 'AUX bus active — click to mute'}
           className={cn(
-            'btn-hardware w-full py-0.5 text-[9px] font-bold uppercase tracking-widest border transition-colors',
+            'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
             isActive
               ? 'text-white'
-              : 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:text-zinc-300',
+              : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
           )}
-          style={isActive ? { background: C_AUX.active, borderColor: C_AUX.hex } : {}}
+          style={isActive ? { background: C_AUX.active } : {}}
         >
           ON
         </button>
@@ -743,7 +843,7 @@ function GrpChannelStrip({ elementId, label, grpBus, send }: {
     send({ type: 'GRP_SEND_SET', elementId, grpBus, level, enabled: next })
   }, [enabled, level, elementId, grpBus, send, setGrpEnabled])
 
-  const STRIP_W = 68
+  const STRIP_W = 92
 
   return (
     <div
@@ -764,46 +864,45 @@ function GrpChannelStrip({ elementId, label, grpBus, send }: {
       </div>
 
       {/* Main body — meter | fader */}
-      <div className="flex gap-0 px-0.5 py-1 flex-1 justify-center">
-        <VuMeter elementId={elementId} />
-        <div className="flex items-center justify-center">
-          <div className="flex flex-col items-center">
-            <div className="relative" style={{ width: FADER_W, height: FADER_H }}>
-              <div className="absolute pointer-events-none" style={{ width: 4, height: FADER_H, top: 0, left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
-              {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
-                const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_H - THUMB_CSS_W))
-                return (
-                  <Fragment key={db}>
-                    <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
-                    <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 12px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 10 : 6, lineHeight: 1, fontFamily: isInfinity ? 'sans-serif' : 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
-                  </Fragment>
-                )
-              })}
-              <input
-                type="range" min={0} max={1} step={0.005}
-                value={volumeToFader(level)}
-                onChange={(e) => handleChange(parseFloat(e.target.value))}
-                aria-label={`${label} GRP ${grpBus} send`}
-                className="fader-rotated fader-handle-a"
-                style={{ width: FADER_H, height: FADER_W, left: -(FADER_H - FADER_W) / 2, top: (FADER_H - FADER_W) / 2, cursor: 'pointer', zIndex: 2 }}
-              />
-            </div>
-          </div>
+      <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 8px', flex: 1 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 28, gap: 2 }}>
+          <VuMeter elementId={elementId} />
+          <PeakReadout elementId={elementId} />
+        </div>
+        <div className="relative shrink-0" style={{ width: FADER_W, height: FADER_CONTAINER_H }}>
+          <div className="absolute pointer-events-none" style={{ width: 4, height: FADER_CONTAINER_H - THUMB_CSS_W, top: Math.round(THUMB_CSS_W / 2), left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
+          {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
+            const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_CONTAINER_H - THUMB_CSS_W))
+            return (
+              <Fragment key={db}>
+                <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
+                <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 10px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 10 : 6, lineHeight: 1, fontFamily: isInfinity ? 'sans-serif' : 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
+              </Fragment>
+            )
+          })}
+          <input
+            type="range" min={0} max={1} step={0.005}
+            value={volumeToFader(level)}
+            onChange={(e) => handleChange(parseFloat(e.target.value))}
+            aria-label={`${label} GRP ${grpBus} send`}
+            className="fader-rotated fader-handle-a"
+            style={{ width: FADER_CONTAINER_H, height: FADER_W, left: -(FADER_CONTAINER_H - FADER_W) / 2, top: (FADER_CONTAINER_H - FADER_W) / 2, cursor: 'pointer', zIndex: 2 }}
+          />
         </div>
       </div>
 
       {/* Bottom — ON button */}
-      <div className="border-t border-zinc-800 px-1 pt-1 pb-0.5 shrink-0 flex flex-col gap-0.5">
+      <div className="border-t border-zinc-800 shrink-0 flex overflow-hidden">
         <button
           onClick={handleOnClick}
           title={enabled ? 'Send active — click to remove from group' : 'Send silent — click to route to group'}
           className={cn(
-            'btn-hardware w-full py-0.5 text-[9px] font-bold uppercase tracking-widest border transition-colors',
+            'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
             enabled
               ? 'text-white'
-              : 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:text-zinc-300',
+              : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
           )}
-          style={enabled ? { background: C_GRP.active, borderColor: C_GRP.hex } : {}}
+          style={enabled ? { background: C_GRP.active } : {}}
         >
           ON
         </button>
@@ -855,7 +954,7 @@ function GrpMasterStrip({ grpBus, label, send, onSelect }: {
   }, [muted, level, grpBus, send, setMasterMuted])
 
   const isActive = !muted
-  const STRIP_W = 68
+  const STRIP_W = 92
 
   return (
     <div
@@ -881,47 +980,46 @@ function GrpMasterStrip({ grpBus, label, send, onSelect }: {
       </div>
 
       {/* Main body — meter | fader */}
-      <div className="flex gap-0 px-0.5 py-1 flex-1 justify-center">
-        <VuMeter elementId={meterId} />
-        <div className="flex items-center justify-center">
-          <div className="flex flex-col items-center">
-            <div className="relative" style={{ width: FADER_W, height: FADER_H }}>
-              <div className="absolute pointer-events-none" style={{ width: 4, height: FADER_H, top: 0, left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
-              {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
-                const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_H - THUMB_CSS_W))
-                return (
-                  <Fragment key={db}>
-                    <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
-                    <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 12px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 10 : 6, lineHeight: 1, fontFamily: isInfinity ? 'sans-serif' : 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
-                  </Fragment>
-                )
-              })}
-              <input
-                type="range" min={0} max={1} step={0.005}
-                value={volumeToFader(level)}
-                onChange={(e) => handleChange(parseFloat(e.target.value))}
-                onMouseDown={handleFaderMouseDown}
-                aria-label={`${label} master fader`}
-                className="fader-rotated fader-handle-a"
-                style={{ width: FADER_H, height: FADER_W, left: -(FADER_H - FADER_W) / 2, top: (FADER_H - FADER_W) / 2, cursor: muted ? 'not-allowed' : 'pointer', zIndex: 2 }}
-              />
-            </div>
-          </div>
+      <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 8px', flex: 1 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 28, gap: 2, opacity: isActive ? 1 : 0.25, transition: 'opacity 0.2s' }}>
+          <VuMeter elementId={meterId} />
+          <PeakReadout elementId={meterId} />
+        </div>
+        <div className="relative shrink-0" style={{ width: FADER_W, height: FADER_CONTAINER_H }}>
+          <div className="absolute pointer-events-none" style={{ width: 4, height: FADER_CONTAINER_H - THUMB_CSS_W, top: Math.round(THUMB_CSS_W / 2), left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
+          {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
+            const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_CONTAINER_H - THUMB_CSS_W))
+            return (
+              <Fragment key={db}>
+                <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
+                <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 10px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 10 : 6, lineHeight: 1, fontFamily: isInfinity ? 'sans-serif' : 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
+              </Fragment>
+            )
+          })}
+          <input
+            type="range" min={0} max={1} step={0.005}
+            value={volumeToFader(level)}
+            onChange={(e) => handleChange(parseFloat(e.target.value))}
+            onMouseDown={handleFaderMouseDown}
+            aria-label={`${label} master fader`}
+            className="fader-rotated fader-handle-a"
+            style={{ width: FADER_CONTAINER_H, height: FADER_W, left: -(FADER_CONTAINER_H - FADER_W) / 2, top: (FADER_CONTAINER_H - FADER_W) / 2, cursor: muted ? 'not-allowed' : 'pointer', zIndex: 2 }}
+          />
         </div>
       </div>
 
-      {/* Bottom — matches AuxMasterStrip layout for stable panel height */}
-      <div className="border-t border-zinc-800 px-1 pt-1 pb-0.5 shrink-0 flex flex-col gap-0.5">
+      {/* Bottom */}
+      <div className="border-t border-zinc-800 shrink-0 flex overflow-hidden">
         <button
           onClick={handleOnClick}
           title={muted ? 'GRP bus muted — click to unmute' : 'GRP bus active — click to mute'}
           className={cn(
-            'btn-hardware w-full py-0.5 text-[9px] font-bold uppercase tracking-widest border transition-colors',
+            'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
             isActive
               ? 'text-white'
-              : 'bg-zinc-900 text-zinc-500 border-zinc-700 hover:text-zinc-300',
+              : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
           )}
-          style={isActive ? { background: C_GRP.active, borderColor: C_GRP.hex } : {}}
+          style={isActive ? { background: C_GRP.active } : {}}
         >
           ON
         </button>
@@ -984,7 +1082,7 @@ export function AudioPanel({ send }: { send: SendFn }) {
 
   const [activeTab, setActiveTab] = useState<AudioTab>('main')
   // MAIN tab — per-section collapsed state; all expanded by default
-  const [collapsed, setCollapsed] = useState({ out: false, aux: false, groups: false, in: false })
+  const [collapsed, setCollapsed] = useState({ out: false, groups: false, in: false })
   const toggleSection = (k: keyof typeof collapsed) => setCollapsed((c) => ({ ...c, [k]: !c[k] }))
   // AUX tab drill-down — null = list view, number = selected bus
   const [selectedAux, setSelectedAux] = useState<number | null>(null)
@@ -1011,7 +1109,7 @@ export function AudioPanel({ send }: { send: SendFn }) {
   return (
     <div
       className="border border-zinc-800 overflow-hidden flex items-stretch w-full"
-      style={{ background: '#0d0d0d', minHeight: 231 }}
+      style={{ background: '#0d0d0d', minHeight: 300 }}
     >
       {/* Tab selector — vertical, left edge */}
       <div className="flex flex-col shrink-0 border-r border-zinc-800" style={{ width: 20 }}>
@@ -1054,19 +1152,10 @@ export function AudioPanel({ send }: { send: SendFn }) {
               {!collapsed.out && (
                 <div className="flex items-stretch shrink-0">
                   {mainElement ? (
-                    <ChannelStrip elementId="main" label="MAIN" send={send} showAfv={false} busColor={C_MAIN} />
+                    <ChannelStrip elementId="main" label="MAIN" send={send} showAfv={false} showEbu busColor={C_MAIN} />
                   ) : (
                     <NoContent label="NO OUT" />
                   )}
-                </div>
-              )}
-
-              {/* AUX section */}
-              <SectionBar label="AUX" collapsed={collapsed.aux} onToggle={() => toggleSection('aux')} color={C_AUX.hex} />
-              {!collapsed.aux && (
-                <div className="flex items-stretch shrink-0">
-                  <AuxMasterStrip auxBus={1} label="AUX 1" send={send} />
-                  <AuxMasterStrip auxBus={2} label="AUX 2" send={send} />
                 </div>
               )}
 
@@ -1095,6 +1184,7 @@ export function AudioPanel({ send }: { send: SendFn }) {
                           send={send}
                           showAfv
                           showPfl
+                          showAfl
                           mixerInput={el.mixerInput}
                           isPgm={!!pgmInput && el.mixerInput === pgmInput}
                           isPvw={!!pvwInput && el.mixerInput === pvwInput}
@@ -1111,13 +1201,14 @@ export function AudioPanel({ send }: { send: SendFn }) {
           {/* ── AUX tab ──────────────────────────────────────────────────── */}
           {activeTab === 'aux' && (
             selectedAux === null ? (
-              // List view — both AUX masters, headers are clickable
+              // List view — MAIN output + both AUX masters (headers clickable)
               <div className="flex items-stretch">
+                {mainElement && <ChannelStrip elementId="main" label="MAIN" send={send} showAfv={false} showEbu busColor={C_MAIN} />}
                 <AuxMasterStrip auxBus={1} label="AUX 1" send={send} onSelect={() => setSelectedAux(1)} />
                 <AuxMasterStrip auxBus={2} label="AUX 2" send={send} onSelect={() => setSelectedAux(2)} />
               </div>
             ) : (
-              // Detail view — per-channel sends + pinned master
+              // Detail view — MAIN + pinned AUX master + per-channel sends
               <div className="flex items-stretch overflow-x-auto">
                 {/* Back button */}
                 <button
@@ -1127,7 +1218,9 @@ export function AudioPanel({ send }: { send: SendFn }) {
                 >
                   ← Back
                 </button>
-                {/* Pinned master */}
+                {/* Pinned MAIN output */}
+                {mainElement && <ChannelStrip elementId="main" label="MAIN" send={send} showAfv={false} showEbu busColor={C_MAIN} />}
+                {/* Pinned AUX master */}
                 <AuxMasterStrip auxBus={selectedAux} label={`AUX ${selectedAux}`} send={send} />
                 {/* Per-channel sends */}
                 <div className="flex">

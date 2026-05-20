@@ -1,10 +1,11 @@
 import { useEffect, useCallback, useState, useRef, type ReactNode } from 'react'
+import { cn } from '@/lib/cn'
 import { useSearchParams } from 'react-router'
 import { useWebRTC } from '@/hooks/useWebRTC'
 import { useControllerWs } from '@/hooks/useControllerWs'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { ProgramPreview, type ProgramPreviewHandle } from './ProgramPreview'
-import { PgmPreview } from './PgmPreview'
+import { PgmPreview, type PgmPreviewHandle } from './PgmPreview'
 import { TransitionPanel } from './TransitionPanel'
 import { DskPanel } from './DskPanel'
 import { MacroBar } from './MacroBar'
@@ -18,7 +19,9 @@ import { useIsOnAir } from '@/store/programClock.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { useGraphicsStore } from '@/store/graphics.store'
+import { useOutputsStore } from '@/store/outputs.store'
 import { useAudioStore } from '@/store/audio.store'
+import { useViewerStore } from '@/store/viewer.store'
 import { audioApi, type ApiProduction } from '@/lib/api'
 
 // ─── Panel layout persistence ─────────────────────────────────────────────────
@@ -397,6 +400,7 @@ export function ControllerPage() {
   const fetchProductions = useProductionsStore((s) => s.fetchAll)
   const fetchSources = useSourcesStore((s) => s.fetchAll)
   const fetchGraphics = useGraphicsStore((s) => s.fetchAll)
+  const fetchOutputs = useOutputsStore((s) => s.fetchAll)
   const activeProduction = useProductionsStore((s) => s.productions.find((p) => p.id === activeProductionId))
   const whepEndpoint = useProductionsStore(
     (s) => s.productions.find((p) => p.id === activeProductionId)?.whepEndpoint,
@@ -404,18 +408,36 @@ export function ControllerPage() {
   const pgmWhepEndpoint = useProductionsStore(
     (s) => s.productions.find((p) => p.id === activeProductionId)?.pgmWhepEndpoint,
   )
+  const whepOutputUrls = useProductionsStore(
+    (s) => s.productions.find((p) => p.id === activeProductionId)?.whepOutputUrls,
+  )
+  const outputs = useOutputsStore((s) => s.outputs)
+  const pgmChannels = [
+    ...(pgmWhepEndpoint ? [{ label: 'PGM', url: pgmWhepEndpoint }] : []),
+    ...(whepOutputUrls ?? []).map(({ outputId, url }) => ({
+      label: outputs.find((o) => o.id === outputId)?.name ?? 'Output',
+      url,
+    })),
+  ]
+  const [selectedMvUrl, setSelectedMvUrl] = useState<string | undefined>(undefined)
+  const [selectedPgmUrl, setSelectedPgmUrl] = useState<string | undefined>(undefined)
+  const mvAudioTrackCount = useViewerStore((s) => s.audioTrackCount)
+  const [mvAudioOn, setMvAudioOn] = useState(false)
+  const [mvAudioTrack, setMvAudioTrack] = useState(1)
+  const [pgmAudioOn, setPgmAudioOn] = useState(false)
+  const [pgmAudioTrack, setPgmAudioTrack] = useState(0)
+  const [pgmAudioTrackCount, setPgmAudioTrackCount] = useState(0)
   const isOnAir = useIsOnAir()
 
   useEffect(() => {
     void fetchProductions()
     void fetchSources()
     void fetchGraphics()
-  }, [fetchProductions, fetchSources, fetchGraphics])
+    void fetchOutputs()
+  }, [fetchProductions, fetchSources, fetchGraphics, fetchOutputs])
 
   const [searchParams] = useSearchParams()
   const [panels, setPanels] = useState<Panels>(loadPanels)
-  const [multiviewerMuted, setMultiviewerMuted] = useState(true)
-  const [pgmMuted, setPgmMuted] = useState(true)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [isPgmFullscreen, setIsPgmFullscreen] = useState(false)
   const [audioOptions, setAudioOptions] = useState<AudioOptions>(loadAudioOptions)
@@ -427,6 +449,7 @@ export function ControllerPage() {
   const multiviewerRef = useRef<HTMLDivElement>(null)
   const pgmRef = useRef<HTMLDivElement>(null)
   const programPreviewRef = useRef<ProgramPreviewHandle>(null)
+  const pgmPreviewRef = useRef<PgmPreviewHandle>(null)
 
   const togglePanel = (key: keyof Panels) => {
     setPanels(prev => {
@@ -448,7 +471,7 @@ export function ControllerPage() {
   }, [productions, activeProductionId, setActiveProduction, searchParams])
 
   // WebRTC only when multiviewer is enabled — passing null triggers clean disconnect
-  useWebRTC(panels.multiviewer ? whepEndpoint : null)
+  useWebRTC(panels.multiviewer ? (selectedMvUrl ?? whepEndpoint ?? null) : null)
 
   // WebSocket stays connected regardless of panel visibility (syncs tally + audio state)
   const send = useControllerWs(activeProductionId)
@@ -586,7 +609,7 @@ export function ControllerPage() {
             Each panel is a flex-col: label on top, video fills remaining height.
             flex-1 min-w-0 splits horizontal space so max-w-full on the videos
             prevents overflow regardless of how many panels are visible. */}
-        {(panels.multiviewer || (panels.pgm && pgmWhepEndpoint)) && (
+        {(panels.multiviewer || panels.pgm) && (
           <div className="flex-1 min-h-0 px-4 pt-2 pb-1 overflow-hidden flex flex-row items-stretch gap-6">
 
             {/* Multiviewer — unmounts fully when disabled, killing the WebRTC connection */}
@@ -599,17 +622,41 @@ export function ControllerPage() {
                     onHide={() => togglePanel('multiviewer')}
                     actions={
                       <>
+                        {pgmChannels.length > 1 && pgmChannels.map((ch) => {
+                          const active = ch.url === (selectedMvUrl ?? pgmChannels[0]?.url)
+                          return (
+                            <button
+                              key={ch.url}
+                              type="button"
+                              onClick={() => setSelectedMvUrl(ch.url)}
+                              className={cn('text-[9px] font-bold uppercase tracking-widest cursor-pointer transition-colors px-1', active ? 'text-orange-500' : 'hover:text-[--color-text-primary]')}
+                            >
+                              {ch.label}
+                            </button>
+                          )
+                        })}
+                        {mvAudioTrackCount > 1 && (
+                          <select
+                            value={mvAudioTrack}
+                            onChange={(e) => setMvAudioTrack(parseInt(e.target.value, 10))}
+                            className="text-[9px] font-bold uppercase tracking-widest cursor-pointer bg-zinc-900 border border-zinc-700 text-zinc-400 px-1 py-0.5 focus:outline-none focus:border-orange-500"
+                          >
+                            {(['PGM', 'MON'] as const).slice(0, mvAudioTrackCount).map((label, i) => (
+                              <option key={i} value={i}>{label}</option>
+                            ))}
+                          </select>
+                        )}
                         <button
                           type="button"
                           onClick={() => {
-                            const next = !multiviewerMuted
-                            programPreviewRef.current?.setMuted(next)
-                            setMultiviewerMuted(next)
+                            const next = !mvAudioOn
+                            setMvAudioOn(next)
+                            programPreviewRef.current?.setVideoMuted(!next || mvAudioTrackCount > 1)
                           }}
-                          title={multiviewerMuted ? 'Unmute' : 'Mute'}
-                          className="cursor-pointer hover:text-[--color-text-primary] transition-colors"
+                          title={mvAudioOn ? 'Mute monitor' : 'Unmute monitor'}
+                          className={cn('cursor-pointer transition-colors', mvAudioOn ? 'text-orange-500' : 'text-[--color-text-muted] hover:text-[--color-text-primary]')}
                         >
-                          {multiviewerMuted ? <MutedIcon /> : <MuteIcon />}
+                          {mvAudioOn ? <MuteIcon /> : <MutedIcon />}
                         </button>
                         <button
                           type="button"
@@ -626,13 +673,19 @@ export function ControllerPage() {
                   </SectionLabel>
                 </div>
                 <div className="flex-1 min-h-0 flex items-center justify-center">
-                  <ProgramPreview ref={programPreviewRef} />
+                  <ProgramPreview
+                    ref={programPreviewRef}
+                    audioOn={mvAudioOn}
+                    onAudioOnChange={setMvAudioOn}
+                    audioTrack={mvAudioTrack}
+                    onAudioTrackChange={setMvAudioTrack}
+                  />
                 </div>
               </div>
             )}
 
             {/* PGM — self-contained WebRTC, independent of multiviewer stream */}
-            {panels.pgm && pgmWhepEndpoint && (
+            {panels.pgm && (
               <div className="flex-1 min-w-0 min-h-0 flex flex-col gap-1.5" ref={pgmRef}>
                 <div className="flex-none">
                   <SectionLabel
@@ -641,13 +694,41 @@ export function ControllerPage() {
                     onHide={() => togglePanel('pgm')}
                     actions={
                       <>
+                        {pgmChannels.length > 1 && pgmChannels.map((ch) => {
+                          const active = ch.url === (selectedPgmUrl ?? pgmChannels[0]?.url)
+                          return (
+                            <button
+                              key={ch.url}
+                              type="button"
+                              onClick={() => setSelectedPgmUrl(ch.url)}
+                              className={cn('text-[9px] font-bold uppercase tracking-widest cursor-pointer transition-colors px-1', active ? 'text-orange-500' : 'hover:text-[--color-text-primary]')}
+                            >
+                              {ch.label}
+                            </button>
+                          )
+                        })}
+                        {pgmAudioTrackCount > 1 && (
+                          <select
+                            value={pgmAudioTrack}
+                            onChange={(e) => setPgmAudioTrack(parseInt(e.target.value, 10))}
+                            className="text-[9px] font-bold uppercase tracking-widest cursor-pointer bg-zinc-900 border border-zinc-700 text-zinc-400 px-1 py-0.5 focus:outline-none focus:border-orange-500"
+                          >
+                            {(['PGM', 'MON'] as const).slice(0, pgmAudioTrackCount).map((label, i) => (
+                              <option key={i} value={i}>{label}</option>
+                            ))}
+                          </select>
+                        )}
                         <button
                           type="button"
-                          onClick={() => setPgmMuted((m) => !m)}
-                          title={pgmMuted ? 'Unmute PGM' : 'Mute PGM'}
-                          className="cursor-pointer hover:text-[--color-text-primary] transition-colors"
+                          onClick={() => {
+                            const next = !pgmAudioOn
+                            setPgmAudioOn(next)
+                            pgmPreviewRef.current?.setVideoMuted(!next || pgmAudioTrackCount > 1)
+                          }}
+                          title={pgmAudioOn ? 'Mute monitor' : 'Unmute monitor'}
+                          className={cn('cursor-pointer transition-colors', pgmAudioOn ? 'text-orange-500' : 'text-[--color-text-muted] hover:text-[--color-text-primary]')}
                         >
-                          {pgmMuted ? <MutedIcon /> : <MuteIcon />}
+                          {pgmAudioOn ? <MuteIcon /> : <MutedIcon />}
                         </button>
                         <button
                           type="button"
@@ -664,7 +745,17 @@ export function ControllerPage() {
                   </SectionLabel>
                 </div>
                 <div className="flex-1 min-h-0 flex items-center justify-center">
-                  <PgmPreview whepEndpoint={pgmWhepEndpoint} muted={pgmMuted} />
+                  <PgmPreview
+                    ref={pgmPreviewRef}
+                    channels={pgmChannels}
+                    selectedUrl={selectedPgmUrl}
+                    onSelectUrl={setSelectedPgmUrl}
+                    audioOn={pgmAudioOn}
+                    onAudioOnChange={setPgmAudioOn}
+                    audioTrack={pgmAudioTrack}
+                    onAudioTrackChange={setPgmAudioTrack}
+                    onAudioTrackCount={setPgmAudioTrackCount}
+                  />
                 </div>
               </div>
             )}

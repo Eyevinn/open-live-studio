@@ -118,32 +118,32 @@ input[type="range"] {
    Validation against the original thumb: height:17 → 1.5 − 8.5 = −7 ✓ (matches original)
 ── */
 
-/* ── Handle variant A — Broadcast flat cap (SSL/Neve style) ─────────────────── */
-/* width:9 → 9px tall on screen. height:17 → 17px wide. margin-top: 1.5−8.5 = −7 */
+/* ── Handle variant A — Vertical broadcast cap with 2 px centre reference line ── */
+/* width:23 → 23px tall on screen. height:15 → 15px wide. margin-top: 1.5−7.5 = −6 */
 .fader-handle-a::-webkit-slider-thumb {
-  width: 9px;
-  height: 17px;
-  margin-top: -7px;
+  width: 23px;
+  height: 15px;
+  margin-top: -6px;
   background: linear-gradient(
     to right,
-    #5a5a5a 0%, #9a9a9a 20%,
-    #d8d8d8 45%, #f0f0f0 50%, #d8d8d8 55%,
-    #9a9a9a 80%, #5a5a5a 100%
+    #505050 0%,   #505050 calc(50% - 1px),
+    #e0e0e0 calc(50% - 1px), #e0e0e0 calc(50% + 1px),
+    #505050 calc(50% + 1px), #505050 100%
   );
-  border: 1px solid #707070;
+  border: 1px solid #606060;
   border-radius: 1px;
   box-shadow: 0 2px 6px rgba(0,0,0,0.9);
 }
 .fader-handle-a::-moz-range-thumb {
-  width: 9px;
-  height: 17px;
+  width: 23px;
+  height: 15px;
   background: linear-gradient(
     to right,
-    #5a5a5a 0%, #9a9a9a 20%,
-    #d8d8d8 45%, #f0f0f0 50%, #d8d8d8 55%,
-    #9a9a9a 80%, #5a5a5a 100%
+    #505050 0%,   #505050 calc(50% - 1px),
+    #e0e0e0 calc(50% - 1px), #e0e0e0 calc(50% + 1px),
+    #505050 calc(50% + 1px), #505050 100%
   );
-  border: 1px solid #707070;
+  border: 1px solid #606060;
   border-radius: 1px;
 }
 

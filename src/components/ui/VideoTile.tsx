@@ -1,4 +1,4 @@
-import { useEffect, useRef, useImperativeHandle, forwardRef } from 'react'
+import { useEffect, useRef, useImperativeHandle, forwardRef, useState } from 'react'
 import { cn } from '@/lib/cn'
 import { TallyLight } from './TallyLight'
 import type { TallyState } from '@/hooks/useTallyLight'
@@ -13,6 +13,7 @@ interface VideoTileProps {
   className?: string
   muted?: boolean
   aspectRatio?: '16/9'
+  noSignal?: boolean
 }
 
 export interface VideoTileHandle {
@@ -44,8 +45,10 @@ export const VideoTile = forwardRef<VideoTileHandle, VideoTileProps>(function Vi
   className,
   muted = true,
   aspectRatio = '16/9',
+  noSignal = false,
 }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null)
+  const [hasVideo, setHasVideo] = useState(false)
 
   useImperativeHandle(ref, () => ({
     setMuted: (m: boolean) => {
@@ -60,11 +63,26 @@ export const VideoTile = forwardRef<VideoTileHandle, VideoTileProps>(function Vi
     if (!el) return
     el.muted = muted
     el.srcObject = stream
+    setHasVideo(false)
     if (stream) {
       void el.play().catch(() => { /* autoplay policy */ })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stream])
+
+  // Detect actual decoded video via loadedmetadata / resize events.
+  // videoWidth > 0 means frames are being decoded; 0 means empty stream.
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el) return
+    const check = () => setHasVideo(el.videoWidth > 0)
+    el.addEventListener('loadedmetadata', check)
+    el.addEventListener('resize', check)
+    return () => {
+      el.removeEventListener('loadedmetadata', check)
+      el.removeEventListener('resize', check)
+    }
+  }, [])
 
   return (
     <div
@@ -81,13 +99,14 @@ export const VideoTile = forwardRef<VideoTileHandle, VideoTileProps>(function Vi
       <video
         ref={videoRef}
         className="w-full h-full object-contain"
+        style={{ visibility: (noSignal || !stream || !hasVideo) ? 'hidden' : 'visible' }}
         playsInline
         autoPlay
       />
 
-      {/* No stream placeholder */}
-      {!stream && (
-        <div className="absolute inset-0 flex items-center justify-center bg-zinc-900">
+      {/* No stream placeholder — rendered as sibling (not overlay) so hardware video layer can't cover it */}
+      {(noSignal || !stream || !hasVideo) && (
+        <div className="absolute inset-0 flex items-center justify-center bg-zinc-900" style={{ zIndex: 1 }}>
           <span className="text-zinc-500 text-xs font-mono uppercase tracking-widest">NO SIGNAL</span>
         </div>
       )}

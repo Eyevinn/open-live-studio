@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef } from 'react'
+import { useEffect, useCallback, useRef, useState } from 'react'
 import { useParams, useSearchParams } from 'react-router'
 import { useWebRTC } from '@/hooks/useWebRTC'
 import { useControllerWs } from '@/hooks/useControllerWs'
@@ -15,50 +15,35 @@ import { ProgramPreview } from '@/pages/ControllerPage/ProgramPreview'
 import { TransitionPanel } from '@/pages/ControllerPage/TransitionPanel'
 import { DskPanel } from '@/pages/ControllerPage/DskPanel'
 import { AudioPanel } from '@/pages/ControllerPage/AudioPanel'
-import { Badge } from '@/components/ui/Badge'
 
 type Pane = 'multiviewer' | 'controller' | 'audio' | 'pgm'
 
 // ─── PGM confidence monitor ───────────────────────────────────────────────────
 
-function PgmPane() {
-  const { programStream, connectionState, retryCountdown } = useViewerStore()
-  const videoRef = useRef<HTMLVideoElement>(null)
+interface PgmChannel { label: string; url: string }
+
+// Labels for the two audio tracks wired by flow-generator: track 0 = programme mix,
+// track 1 = monitor/PFL bus.
+
+// AudioPanel's natural rendered height when populated (header + FADER_CONTAINER_H + readout + buttons).
+// Used to compute the zoom factor that fills the viewport height.
+const AUDIO_PANEL_NATURAL_H = 300
+
+function AudioPaneFullscreen({ send }: { send: ReturnType<typeof useControllerWs> }) {
+  const [zoom, setZoom] = useState(1)
 
   useEffect(() => {
-    if (videoRef.current) {
-      videoRef.current.srcObject = programStream ?? null
-    }
-  }, [programStream])
-
-  const isConnected = connectionState === 'connected'
+    const compute = () => setZoom(Math.max(1, window.innerHeight / AUDIO_PANEL_NATURAL_H))
+    compute()
+    window.addEventListener('resize', compute)
+    return () => window.removeEventListener('resize', compute)
+  }, [])
 
   return (
-    <div className="flex-1 min-h-0 flex items-center justify-center bg-black p-4">
-      <div
-        className="relative h-full max-h-full aspect-video"
-        style={{ boxShadow: isConnected ? '0 0 0 2px #dc2626' : '0 0 0 2px #3f3f46' }}
-      >
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className="h-full w-full object-contain bg-black"
-        />
-        {/* PROGRAM label — bottom left */}
-        <div className="absolute bottom-3 left-3 flex items-center gap-1.5 pointer-events-none">
-          <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-red-600' : 'bg-zinc-600'}`} />
-          <span className="text-[11px] font-bold uppercase tracking-widest text-white opacity-80">Program</span>
-        </div>
-        {/* Connection state badge — bottom right */}
-        <div className="absolute bottom-3 right-3 pointer-events-none">
-          {connectionState === 'connected' && <Badge variant="live" label="LIVE" />}
-          {connectionState === 'connecting' && <Badge variant="connecting" label="CONNECTING" />}
-          {connectionState === 'error' && (
-            <Badge variant="error" label={retryCountdown != null ? `RETRYING IN ${retryCountdown}` : 'ERROR'} />
-          )}
-        </div>
+    <div className="flex-1 min-h-0 overflow-x-auto overflow-y-hidden">
+      {/* height inverse of zoom so the panel fills exactly one screen height after scaling */}
+      <div style={{ zoom, height: `${100 / zoom}%` }}>
+        <AudioPanel send={send} />
       </div>
     </div>
   )
@@ -93,14 +78,38 @@ export function PanePage() {
   const activeProduction   = useProductionsStore((s) => s.productions.find((p) => p.id === productionId))
   const whepEndpoint       = useProductionsStore((s) => s.productions.find((p) => p.id === productionId)?.whepEndpoint)
   const pgmWhepEndpoint    = useProductionsStore((s) => s.productions.find((p) => p.id === productionId)?.pgmWhepEndpoint)
+  const whepOutputUrls     = useProductionsStore((s) => s.productions.find((p) => p.id === productionId)?.whepOutputUrls)
+  const outputs            = useOutputsStore((s) => s.outputs)
+
+  // Build the ordered channel list: PGM first, then named WHEP outputs.
+  const pgmChannels: PgmChannel[] = [
+    ...(pgmWhepEndpoint ? [{ label: 'PGM', url: pgmWhepEndpoint }] : []),
+    ...(whepOutputUrls ?? []).map(({ outputId, url }) => ({
+      label: outputs.find((o) => o.id === outputId)?.name ?? 'Output',
+      url,
+    })),
+  ]
+
+  const [selectedPgmUrl, setSelectedPgmUrl] = useState<string | undefined>(undefined)
+  const [selectedMvUrl, setSelectedMvUrl] = useState<string | undefined>(undefined)
+  const { audioTrackCount } = useViewerStore()
+  const [mvAudioOn, setMvAudioOn] = useState(false)
+  const [mvAudioTrack, setMvAudioTrack] = useState(1)
+  const [pgmAudioOn, setPgmAudioOn] = useState(false)
+  const [pgmAudioTrack, setPgmAudioTrack] = useState(0)
+
+  // Default PGM pane to first channel when channels first become available.
+  useEffect(() => {
+    if (!selectedPgmUrl && pgmChannels.length > 0) setSelectedPgmUrl(pgmChannels[0]!.url)
+  }, [pgmChannels.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (productionId) setActiveProduction(productionId)
   }, [productionId, setActiveProduction])
 
   useWebRTC(
-    pane === 'multiviewer' ? (whepEndpoint ?? null) :
-    pane === 'pgm'         ? (pgmWhepEndpoint ?? null) :
+    pane === 'multiviewer' ? (selectedMvUrl ?? whepEndpoint ?? null) :
+    pane === 'pgm'         ? (selectedPgmUrl ?? pgmWhepEndpoint ?? null) :
     null
   )
   const send = useControllerWs(pane !== 'multiviewer' ? productionId : null)
@@ -139,8 +148,60 @@ export function PanePage() {
   return (
     <div className="h-screen w-screen bg-[--color-surface-1] overflow-hidden flex flex-col">
       {pane === 'multiviewer' && (
-        <div className="flex-1 min-h-0 flex items-center justify-center p-2">
-          <ProgramPreview />
+        <div className="flex-1 min-h-0 flex flex-col p-2 gap-1.5">
+          {(pgmChannels.length > 1 || audioTrackCount > 0) && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {pgmChannels.map((ch) => {
+                const active = ch.url === (selectedMvUrl ?? pgmChannels[0]?.url)
+                return (
+                  <button
+                    key={ch.url}
+                    onClick={() => setSelectedMvUrl(ch.url)}
+                    className="px-2 py-1 text-[9px] font-bold uppercase tracking-widest cursor-pointer transition-colors border"
+                    style={{
+                      background: active ? '#f97316' : 'transparent',
+                      borderColor: active ? '#f97316' : '#3f3f46',
+                      color: active ? '#000' : '#a1a1aa',
+                    }}
+                  >
+                    {ch.label}
+                  </button>
+                )
+              })}
+              {audioTrackCount > 0 && (
+                <>
+                  <button
+                    onClick={() => setMvAudioOn(v => !v)}
+                    className="px-2 py-1 text-[9px] font-bold uppercase tracking-widest cursor-pointer transition-colors border"
+                    style={{
+                      background: mvAudioOn ? '#18181b' : 'transparent',
+                      borderColor: mvAudioOn ? '#f97316' : '#3f3f46',
+                      color: mvAudioOn ? '#f97316' : '#52525b',
+                    }}
+                  >♪</button>
+                  {audioTrackCount > 1 && (
+                    <select
+                      value={mvAudioTrack}
+                      onChange={(e) => setMvAudioTrack(parseInt(e.target.value, 10))}
+                      className="text-[9px] font-bold uppercase tracking-widest cursor-pointer bg-zinc-900 border border-zinc-700 text-zinc-400 px-1 py-0.5 focus:outline-none focus:border-orange-500"
+                    >
+                      {(['PGM', 'MON'] as const).slice(0, audioTrackCount).map((label, i) => (
+                        <option key={i} value={i}>{label}</option>
+                      ))}
+                    </select>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+          <div className="flex-1 min-h-0 flex items-center justify-center">
+            <ProgramPreview
+              audioOn={mvAudioOn}
+              onAudioOnChange={setMvAudioOn}
+              audioTrack={mvAudioTrack}
+              onAudioTrackChange={setMvAudioTrack}
+            />
+          </div>
         </div>
       )}
       {pane === 'controller' && (
@@ -156,11 +217,66 @@ export function PanePage() {
         </div>
       )}
       {pane === 'audio' && (
-        <div className="flex-1 overflow-auto p-4">
-          <AudioPanel send={send} />
+        <AudioPaneFullscreen send={send} />
+      )}
+      {pane === 'pgm' && (
+        <div className="flex-1 min-h-0 flex flex-col p-2 gap-1.5">
+          {(pgmChannels.length > 1 || audioTrackCount > 0) && (
+            <div className="flex items-center gap-1.5 shrink-0">
+              {pgmChannels.map((ch) => {
+                const active = ch.url === (selectedPgmUrl ?? pgmChannels[0]?.url)
+                return (
+                  <button
+                    key={ch.url}
+                    onClick={() => setSelectedPgmUrl(ch.url)}
+                    className="px-2 py-1 text-[9px] font-bold uppercase tracking-widest cursor-pointer transition-colors border"
+                    style={{
+                      background: active ? '#f97316' : 'transparent',
+                      borderColor: active ? '#f97316' : '#3f3f46',
+                      color: active ? '#000' : '#a1a1aa',
+                    }}
+                  >
+                    {ch.label}
+                  </button>
+                )
+              })}
+              {audioTrackCount > 0 && (
+                <>
+                  <button
+                    onClick={() => setPgmAudioOn(v => !v)}
+                    className="px-2 py-1 text-[9px] font-bold uppercase tracking-widest cursor-pointer transition-colors border"
+                    style={{
+                      background: pgmAudioOn ? '#18181b' : 'transparent',
+                      borderColor: pgmAudioOn ? '#f97316' : '#3f3f46',
+                      color: pgmAudioOn ? '#f97316' : '#52525b',
+                    }}
+                  >♪</button>
+                  {audioTrackCount > 1 && (
+                    <select
+                      value={pgmAudioTrack}
+                      onChange={(e) => setPgmAudioTrack(parseInt(e.target.value, 10))}
+                      className="text-[9px] font-bold uppercase tracking-widest cursor-pointer bg-zinc-900 border border-zinc-700 text-zinc-400 px-1 py-0.5 focus:outline-none focus:border-orange-500"
+                    >
+                      {(['Main', 'MON'] as const).slice(0, audioTrackCount).map((label, i) => (
+                        <option key={i} value={i}>{label}</option>
+                      ))}
+                    </select>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+          <div className="flex-1 min-h-0 flex items-center justify-center">
+            <ProgramPreview
+              noSignal={activeProduction?.status !== 'active'}
+              audioOn={pgmAudioOn}
+              onAudioOnChange={setPgmAudioOn}
+              audioTrack={pgmAudioTrack}
+              onAudioTrackChange={setPgmAudioTrack}
+            />
+          </div>
         </div>
       )}
-      {pane === 'pgm' && <PgmPane />}
     </div>
   )
 }
