@@ -231,6 +231,10 @@ input[type="range"] {
 ::-webkit-scrollbar-thumb { background: #333333; border-radius: 0; }
 ::-webkit-scrollbar-thumb:hover { background: #444444; }
 
+/* Hide scrollbar while keeping the area scrollable */
+.scrollbar-hide { scrollbar-width: none; -ms-overflow-style: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
 /* VU meter segmented look — PPM style */
 .vu-segment-bar {
   background: repeating-linear-gradient(

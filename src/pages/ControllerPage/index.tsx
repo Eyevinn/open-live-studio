@@ -332,58 +332,60 @@ function ControllerOptionsContent({
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Visible transitions */}
-      <div className="flex flex-col gap-2">
-        <span className="text-xs text-[--color-text-muted]">Visible transitions</span>
-        {ALL_TRANSITIONS.map((t) => {
-          const checked = draftTransitions.includes(t)
-          const isLast  = draftTransitions.length === 1 && checked
-          return (
-            <label key={t} className="flex items-center gap-2 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={checked}
-                disabled={isLast}
-                onChange={() => {
-                  setDraftTransitions(checked
-                    ? draftTransitions.filter((x) => x !== t)
-                    : [...draftTransitions, t])
-                }}
-                className="accent-orange-500"
-              />
-              <span className="text-sm text-[--color-text-primary] text-[11px]">{TRANSITION_LABELS[t] ?? t}</span>
-            </label>
-          )
-        })}
-      </div>
-
-      {/* Source time offsets — only shown when a production with sources is active */}
-      {assignments.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <span className="text-xs text-[--color-text-muted]">Source timing (ms)</span>
-          <p className="text-[10px] text-[--color-text-muted] leading-snug">
-            Positive values delay the source to align with slower cameras.
-          </p>
-          {assignments.map((assignment) => {
-            const src = sources.find((s) => s.id === assignment.sourceId)
-            const name = src?.name ?? assignment.mixerInput
+      <div className="flex gap-6">
+        {/* Left column — Visible transitions */}
+        <div className="flex flex-col gap-2 min-w-0">
+          <span className="text-xs text-[--color-text-muted]">Visible transitions</span>
+          {ALL_TRANSITIONS.map((t) => {
+            const checked = draftTransitions.includes(t)
+            const isLast  = draftTransitions.length === 1 && checked
             return (
-              <div key={assignment.mixerInput} className="flex items-center gap-2">
-                <span className="text-[11px] text-[--color-text-primary] flex-1 truncate" title={name}>
-                  {name}
-                </span>
-                <SourceOffsetInput
-                  label={name}
-                  draftValue={draftOffsets[assignment.mixerInput] ?? 0}
-                  onChange={(val) =>
-                    setDraftOffsets((prev) => ({ ...prev, [assignment.mixerInput]: val }))
-                  }
+              <label key={t} className="flex items-center gap-2 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={checked}
+                  disabled={isLast}
+                  onChange={() => {
+                    setDraftTransitions(checked
+                      ? draftTransitions.filter((x) => x !== t)
+                      : [...draftTransitions, t])
+                  }}
+                  className="accent-orange-500"
                 />
-              </div>
+                <span className="text-[11px] text-[--color-text-primary]">{TRANSITION_LABELS[t] ?? t}</span>
+              </label>
             )
           })}
         </div>
-      )}
+
+        {/* Right column — Source time offsets */}
+        {assignments.length > 0 && (
+          <div className="flex flex-col gap-2 flex-1 min-w-0 border-l border-[--color-border] pl-6">
+            <span className="text-xs text-[--color-text-muted]">Source timing (ms)</span>
+            <p className="text-[10px] text-[--color-text-muted] leading-snug">
+              Positive values delay the source to align with slower cameras.
+            </p>
+            {assignments.map((assignment) => {
+              const src = sources.find((s) => s.id === assignment.sourceId)
+              const name = src?.name ?? assignment.mixerInput
+              return (
+                <div key={assignment.mixerInput} className="flex items-center gap-2">
+                  <span className="text-[11px] text-[--color-text-primary] flex-1 truncate" title={name}>
+                    {name}
+                  </span>
+                  <SourceOffsetInput
+                    label={name}
+                    draftValue={draftOffsets[assignment.mixerInput] ?? 0}
+                    onChange={(val) =>
+                      setDraftOffsets((prev) => ({ ...prev, [assignment.mixerInput]: val }))
+                    }
+                  />
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
       <div className="flex justify-end">
         <Button variant="active" size="sm" onClick={handleDone}>Done</Button>
@@ -610,7 +612,7 @@ export function ControllerPage() {
             flex-1 min-w-0 splits horizontal space so max-w-full on the videos
             prevents overflow regardless of how many panels are visible. */}
         {(panels.multiviewer || panels.pgm) && (
-          <div className="flex-1 min-h-0 px-4 pt-2 pb-1 overflow-hidden flex flex-row items-stretch gap-6">
+          <div className="flex-1 min-h-0 px-4 pt-2 pb-2 overflow-hidden flex flex-row items-stretch gap-6">
 
             {/* Multiviewer — unmounts fully when disabled, killing the WebRTC connection */}
             {panels.multiviewer && (
@@ -641,7 +643,9 @@ export function ControllerPage() {
                             onChange={(e) => setMvAudioTrack(parseInt(e.target.value, 10))}
                             className="text-[9px] font-bold uppercase tracking-widest cursor-pointer bg-zinc-900 border border-zinc-700 text-zinc-400 px-1 py-0.5 focus:outline-none focus:border-orange-500"
                           >
-                            {(['PGM', 'MON'] as const).slice(0, mvAudioTrackCount).map((label, i) => (
+                            {Array.from({ length: mvAudioTrackCount }, (_, i) =>
+                              i === 0 ? 'PGM' : i === 1 ? 'MON' : `AUX${i - 1}`
+                            ).map((label, i) => (
                               <option key={i} value={i}>{label}</option>
                             ))}
                           </select>
@@ -713,7 +717,9 @@ export function ControllerPage() {
                             onChange={(e) => setPgmAudioTrack(parseInt(e.target.value, 10))}
                             className="text-[9px] font-bold uppercase tracking-widest cursor-pointer bg-zinc-900 border border-zinc-700 text-zinc-400 px-1 py-0.5 focus:outline-none focus:border-orange-500"
                           >
-                            {(['PGM', 'MON'] as const).slice(0, pgmAudioTrackCount).map((label, i) => (
+                            {Array.from({ length: pgmAudioTrackCount }, (_, i) =>
+                              i === 0 ? 'PGM' : i === 1 ? 'MON' : `AUX${i - 1}`
+                            ).map((label, i) => (
                               <option key={i} value={i}>{label}</option>
                             ))}
                           </select>
@@ -767,7 +773,7 @@ export function ControllerPage() {
         {showBottomRow && (
           <div className="flex flex-none pt-2 pb-3 gap-0">
             {panels.controller && (
-              <div className={`px-3 flex flex-col gap-2 self-stretch ${panels.audio ? 'w-[70%]' : 'flex-1'}`}>
+              <div className={`px-3 flex flex-col gap-2 self-stretch ${panels.audio ? 'flex-1 min-w-0' : 'flex-1'}`}>
                 <SectionLabel icon={<ControllerIcon />} onPopOut={activeProductionId ? () => { window.open(`/pane/controller?production=${activeProductionId}`, '_blank', 'noopener') } : undefined} onHide={() => togglePanel('controller')} actions={
                   <button type="button" onClick={() => setControllerOptionsOpen(true)} title="Controller options" className="cursor-pointer hover:text-[--color-text-primary] transition-colors"><GearIcon /></button>
                 }>Controller</SectionLabel>
@@ -781,7 +787,7 @@ export function ControllerPage() {
               </div>
             )}
             {panels.audio && (
-              <div className={`flex flex-col gap-2 ${panels.controller ? 'w-[30%] pr-3' : 'flex-1 px-3'}`}>
+              <div className={`flex flex-col gap-2 shrink-0 ${panels.controller ? 'pr-3' : 'px-3'}`} style={{ width: '40%' }}>
                 <SectionLabel icon={<AudioIcon />} onPopOut={activeProductionId ? () => { window.open(`/pane/audio?production=${activeProductionId}`, '_blank', 'noopener') } : undefined} onHide={() => togglePanel('audio')} actions={
                   <button type="button" onClick={() => setAudioOptionsOpen(true)} title="Audio options" className="cursor-pointer hover:text-[--color-text-primary] transition-colors"><GearIcon /></button>
                 }>Audio</SectionLabel>
@@ -789,6 +795,7 @@ export function ControllerPage() {
                   send={send}
                   numAuxBuses={activeProduction?.values?.num_aux_buses !== undefined ? parseInt(String(activeProduction.values.num_aux_buses), 10) : 2}
                   numGroups={activeProduction?.values?.num_groups !== undefined ? parseInt(String(activeProduction.values.num_groups), 10) : 2}
+                  showEbuMain={activeProduction?.values?.ebu_main === true}
                 />
               </div>
             )}
@@ -843,7 +850,7 @@ export function ControllerPage() {
     </Modal>
 
     {/* ── Controller options modal ─────────────────────────────────────────── */}
-    <Modal open={controllerOptionsOpen} title="Controller Options" onClose={() => setControllerOptionsOpen(false)} className="max-w-xs">
+    <Modal open={controllerOptionsOpen} title="Controller Options" onClose={() => setControllerOptionsOpen(false)} className="max-w-lg">
       <ControllerOptionsContent
         controllerOptions={controllerOptions}
         setControllerOptions={setControllerOptions}

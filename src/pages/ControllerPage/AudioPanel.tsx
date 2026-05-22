@@ -1,4 +1,4 @@
-import { Fragment, useRef, useCallback, useState } from 'react'
+import { Fragment, useRef, useCallback, useState, createContext, useContext } from 'react'
 import { useAudioStore } from '@/store/audio.store'
 import { useProductionStore } from '@/store/production.store'
 import { cn } from '@/lib/cn'
@@ -32,13 +32,11 @@ const EBU_GRADIENT = [
 ].join(', ')
 const EBU_BAR_GRADIENT = `linear-gradient(to top, ${EBU_GRADIENT})`
 
-function EbuMeter({ elementId, height }: { elementId: string; height: number }) {
-  const meter              = useAudioStore((s) => s.meters[elementId])
-  const resetTruePeakLatch = useAudioStore((s) => s.resetTruePeakLatch)
+function EbuMeter({ elementId, height, tpLatch, onResetLatch }: { elementId: string; height: number; tpLatch: boolean; onResetLatch?: () => void }) {
+  const meter = useAudioStore((s) => s.meters[elementId])
 
-  const lufs_m  = meter?.lufs_m
-  const lufs_i  = meter?.lufs_i
-  const tpLatch = meter?.tp_latched ?? false
+  const lufs_m = meter?.lufs_m
+  const lufs_i = meter?.lufs_i
 
   const barRatio    = lufs_m !== undefined ? lufsToRatio(lufs_m) : 0
   const targetRatio = lufsToRatio(LUFS_TARGET)
@@ -47,11 +45,10 @@ function EbuMeter({ elementId, height }: { elementId: string; height: number }) 
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, width: 28, flexShrink: 0, marginTop: Math.round(THUMB_CSS_W / 2) }}>
-      {/* EBU bar — same height as VU meter.
-          True Peak latch shown as a red border; click bar to reset. */}
+      {/* EBU bar — same height as VU meter. True Peak latch shown as red border; click to reset. */}
       <div
-        onClick={() => tpLatch && resetTruePeakLatch(elementId)}
         title={tpLatch ? 'True Peak exceeded −1 dBTP — click to reset' : 'EBU R128 momentary loudness'}
+        onClick={tpLatch ? onResetLatch : undefined}
         style={{
           width: 10, height,
           position: 'relative',
@@ -79,7 +76,7 @@ function EbuMeter({ elementId, height }: { elementId: string; height: number }) 
         }} />
       </div>
 
-      {/* Integrated LUFS — fixed width prevents layout shift across different number widths */}
+      {/* Integrated LUFS readout */}
       <div style={{
         fontSize: 8, fontFamily: 'monospace', whiteSpace: 'nowrap', textAlign: 'center',
         width: 28,
@@ -91,13 +88,30 @@ function EbuMeter({ elementId, height }: { elementId: string; height: number }) 
       }}>
         {iStr}
       </div>
+
+
+    </div>
+  )
+}
+
+// TP_THRESHOLD: −1 dBTP expressed as linear amplitude (10^(−1/20) ≈ 0.891).
+// Strom sends true_peak in linear amplitude (0.0–1.0+), not dBTP despite the ADR.
+const TP_THRESHOLD = 0.891
+
+function EbuColumn({ elementId, isActive, tpLatch, onReset }: { elementId: string; isActive: boolean; tpLatch: boolean; onReset: () => void }) {
+  const { faderH } = useFaderDims()
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', borderRight: '1px solid #27272a', flexShrink: 0, opacity: isActive ? 1 : 0.25, transition: 'opacity 0.2s' }}>
+      <div style={{ padding: '2px 4px 2px 2px', display: 'flex', flexDirection: 'column', alignItems: 'center', flex: 1 }}>
+        <EbuMeter elementId={elementId} height={faderH} tpLatch={tpLatch} onResetLatch={onReset} />
+      </div>
     </div>
   )
 }
 
 type SendFn = (msg: OutboundMessage) => void
 
-const FADER_H = 220
+const FADER_H = 260
 // Width of the fader container. The range input CSS height is set to this value so that
 // after rotate(-90deg) it fills the container exactly — this is what centres the handle.
 // Must be ≥ the widest thumb (CSS height in index.css) so the handle isn't clipped.
@@ -113,6 +127,7 @@ const C_MAIN = { hex: '#dc2626', active: 'rgba(220,38,38,0.90)',  dim: 'rgba(220
 const C_AUX  = { hex: '#d97706', active: 'rgba(217,119,6,0.85)',  dim: 'rgba(217,119,6,0.08)' }
 const C_GRP  = { hex: '#16a34a', active: 'rgba(22,163,74,0.85)',  dim: 'rgba(22,163,74,0.08)'  }
 const C_IN   = { hex: '#2563eb', active: 'rgba(37,99,235,0.85)',  dim: 'rgba(37,99,235,0.08)'  }
+const C_MON  = { hex: '#0891b2', active: 'rgba(8,145,178,0.85)',  dim: 'rgba(8,145,178,0.08)'  }
 
 // ── VU Meter — PPM-style segmented ────────────────────────────────────────────
 
@@ -128,14 +143,15 @@ function dbToRatio(db: number): number {
 // above each threshold ever renders in amber/red.
 const PPM_GRADIENT = 'linear-gradient(to top, #00bb44 0%, #00bb44 70%, #ffcc00 70%, #ffcc00 90%, #ff2020 90%, #ff2020 100%)'
 
-function VuMeter({ elementId }: { elementId: string }) {
+function VuMeter({ elementId, numChannels = 1 }: { elementId: string; numChannels?: number }) {
+  const { faderH } = useFaderDims()
   const meter = useAudioStore((s) => s.meters[elementId])
   const channels = meter
     ? meter.peak.map((peak, i) => ({ bar: peak, hold: meter.decay?.[i] ?? peak }))
-    : [{ bar: DB_MIN, hold: DB_MIN }]
+    : Array.from({ length: numChannels }, () => ({ bar: DB_MIN, hold: DB_MIN }))
 
   return (
-    <div style={{ width: channels.length > 1 ? 14 : 7, height: FADER_H, display: 'flex', gap: 2, flexShrink: 0, marginTop: Math.round(THUMB_CSS_W / 2) }}>
+    <div style={{ width: channels.length > 1 ? 14 : 7, height: faderH, display: 'flex', gap: 2, flexShrink: 0, marginTop: Math.round(THUMB_CSS_W / 2) }}>
       {channels.map(({ bar, hold }, i) => {
         const barR  = dbToRatio(bar)
         const holdR = dbToRatio(hold)
@@ -203,6 +219,11 @@ const THUMB_CSS_W = 23  // matches .fader-handle-a::-webkit-slider-thumb { width
 // FADER_H px — matching the meter bar height — with no overshoot at either extreme.
 const FADER_CONTAINER_H = FADER_H + THUMB_CSS_W   // 243 px
 
+// Fader dimension context — lets the pop-out pane override fader height to fill the
+// viewport without prop-drilling through every strip component.
+const FaderDimsCtx = createContext({ faderH: FADER_H, faderContainerH: FADER_CONTAINER_H })
+function useFaderDims() { return useContext(FaderDimsCtx) }
+
 // dB-calibrated tick marks; pixel y = (1 − pos) × FADER_H.
 // Above unity: pos = UNITY_POS + log10(vol) × (1 − UNITY_POS), so:
 //   +20 dB (vol=10): pos = 1.000, +10 dB (vol≈3.16): pos = 0.9375
@@ -241,9 +262,14 @@ function volumeToFader(vol: number): number {
   return normalPos * UNITY_POS
 }
 
+// Stable empty fallback for store selectors that return Record types.
+// Must be defined outside components — inline `?? {}` creates a new reference
+// on every render, causing Zustand to trigger an infinite rerender loop.
+const EMPTY_RECORD: Record<number, boolean> = {}
+
 // ── Channel strip ─────────────────────────────────────────────────────────────
 
-function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false, showAfl = false, showEbu = false, mixerInput = null, isPgm = false, isPvw = false, busColor = C_MAIN }: {
+function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false, showAfl = false, showEbu = false, mixerInput = null, isPgm = false, isPvw = false, busColor = C_MAIN, grpBuses = [] }: {
   elementId: string
   label: string
   send: SendFn
@@ -256,26 +282,28 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
   isPgm?: boolean
   isPvw?: boolean
   busColor?: typeof C_MAIN
+  /** Group buses to show assign buttons for (e.g. [1, 2]) */
+  grpBuses?: number[]
 }) {
   const level = useAudioStore((s) => s.levels[elementId] ?? 1.0)
   const muted = useAudioStore((s) => s.muted[elementId] ?? false)
   const afv   = useAudioStore((s) => s.afv[elementId] ?? false)
   const pfl   = useAudioStore((s) => s.pfl[elementId] ?? false)
   const afl   = useAudioStore((s) => s.afl[elementId] ?? false)
-  const setLevel   = useAudioStore((s) => s.setLevel)
-  const applyMuted = useAudioStore((s) => s.applyMuted)
-  const toggleAfv  = useAudioStore((s) => s.toggleAfv)
-  const applyPfl   = useAudioStore((s) => s.applyPfl)
-  const applyAfl   = useAudioStore((s) => s.applyAfl)
+  const setLevel        = useAudioStore((s) => s.setLevel)
+  const applyMuted      = useAudioStore((s) => s.applyMuted)
+  const toggleAfv       = useAudioStore((s) => s.toggleAfv)
+  const applyPfl        = useAudioStore((s) => s.applyPfl)
+  const applyAfl        = useAudioStore((s) => s.applyAfl)
+  const grpSendEnabled  = useAudioStore((s) => s.grpSendEnabled[elementId] ?? EMPTY_RECORD)
+  const setGrpEnabled   = useAudioStore((s) => s.setGrpSendEnabled)
+  const truePeak        = useAudioStore((s) => showEbu ? s.meters[elementId]?.true_peak : undefined)
+  const tpLatch         = showEbu && (truePeak?.length ?? 0) > 0 && truePeak!.some((tp) => tp > TP_THRESHOLD)
+  const handleLoudnessReset = useCallback(() => { send({ type: 'LOUDNESS_RESET' }) }, [send])
 
   // Derived 3-state mode: afv wins if set, otherwise on/off from mute flag
   const mode: 'off' | 'on' | 'afv' = afv ? 'afv' : muted ? 'off' : 'on'
 
-  const throttleRef = useRef<{ timer: ReturnType<typeof setTimeout>; last: number } | null>(null)
-  const atFloorRef = useRef(false)
-
-  // Open/closed hand cursor — apply grabbing to the whole document so it persists
-  // even when the mouse leaves the input element during a fast drag.
   const handleFaderMouseDown = useCallback(() => {
     if (mode === 'off') return
     document.body.classList.add('fader-dragging')
@@ -286,43 +314,18 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
     window.addEventListener('mouseup', onUp)
   }, [mode])
 
+  const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const handleChange = useCallback((faderPos: number) => {
-    const volume = faderToVolume(faderPos)
+    const pos = faderPos >= 0.995 ? 1 : faderPos <= 0.005 ? 0 : faderPos
+    const volume = faderToVolume(pos)
     setLevel(elementId, volume)
-
-    // Auto-mute when fader hits floor; unmute on any fader movement above floor
-    const nowAtFloor = faderPos <= 0.02
-    if (nowAtFloor && !atFloorRef.current) {
-      atFloorRef.current = true
-      if (!muted) {
-        applyMuted(elementId, true)
-        send({ type: 'AUDIO_SET', elementId, property: 'mute', value: true })
-      }
-    } else if (!nowAtFloor) {
-      if (atFloorRef.current) atFloorRef.current = false
-      if (muted) {
-        applyMuted(elementId, false)
-        send({ type: 'AUDIO_SET', elementId, property: 'mute', value: false })
-      }
-    }
-
-    // At floor: mute already handles silence — cancel any pending volume PATCH and bail.
-    if (nowAtFloor) {
-      if (throttleRef.current) {
-        clearTimeout(throttleRef.current.timer)
-        throttleRef.current = null
-      }
-      return
-    }
-
-    // Trailing debounce: send only the final value after the drag settles.
-    if (throttleRef.current) clearTimeout(throttleRef.current.timer)
-    const timer = setTimeout(() => {
+    if (throttleRef.current !== null) clearTimeout(throttleRef.current)
+    throttleRef.current = setTimeout(() => {
       throttleRef.current = null
       send({ type: 'AUDIO_SET', elementId, property: 'volume', value: volume })
     }, 80)
-    throttleRef.current = { timer, last: volume }
-  }, [elementId, muted, send, setLevel, applyMuted])
+  }, [elementId, send, setLevel])
 
   /**
    * ON button — toggles the channel routing mute.
@@ -401,7 +404,14 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
     }
   }, [afl, pfl, elementId, level, send, applyAfl, applyPfl])
 
-  const STRIP_W = showEbu ? 124 : 92
+  const { faderContainerH } = useFaderDims()
+
+  // Left button column is only rendered when there are groups or PFL/AFL buttons.
+  // Without it the strip reverts to the old compact width.
+  const hasLeftButtons = grpBuses.length > 0 || showPfl || showAfl
+  const STRIP_W = showEbu
+    ? (hasLeftButtons ? 145 : 124)
+    : (hasLeftButtons ? 111 : 92)
 
   // A strip is "active" — contributing audio to the main mix — when:
   //   • mode is ON (manual, always routes to main), OR
@@ -432,17 +442,57 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
       </div>
 
       {/* Main body */}
-      <div className="flex flex-1">
+      <div className="flex flex-1 pb-2">
 
-        {/* EBU sub-column — separated by border when visible */}
-        {showEbu && (
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', borderRight: '1px solid #27272a', padding: '2px 4px 2px 2px', flexShrink: 0, opacity: isActive ? 1 : 0.25, transition: 'opacity 0.2s' }}>
-            <EbuMeter elementId={elementId} height={FADER_H} />
+        {/* Left side buttons — G1/G2 + PFL/AFL stacked vertically with padding and gaps */}
+        {(grpBuses.length > 0 || showPfl || showAfl) && (
+          <div className="flex flex-col shrink-0 justify-center" style={{ width: 28, padding: '0 0 0 7px', gap: 8 }}>
+            {grpBuses.map((bus) => {
+              const assigned = grpSendEnabled[bus] ?? false
+              return (
+                <button
+                  key={bus}
+                  onClick={() => {
+                    const next = !assigned
+                    setGrpEnabled(elementId, bus, next)
+                    send({ type: 'GRP_SEND_SET', elementId, grpBus: bus, level: 1, enabled: next })
+                  }}
+                  title={assigned ? `Remove from Group ${bus}` : `Add to Group ${bus}`}
+                  className="border-0 cursor-pointer transition-colors active:opacity-75 flex items-center justify-center shrink-0"
+                  style={{ background: assigned ? C_GRP.active : '#27272a', borderRadius: 2, width: '100%', height: 22 }}
+                >
+                  <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: '0.05em', color: assigned ? '#fff' : '#52525b', textTransform: 'uppercase' }}>G{bus}</span>
+                </button>
+              )
+            })}
+            {showPfl && (
+              <button
+                onClick={handlePflClick}
+                title={pfl ? 'PFL active — click to cancel' : 'PFL — pre-fader listen on MON'}
+                className="border-0 cursor-pointer transition-colors active:opacity-75 flex items-center justify-center shrink-0"
+                style={{ background: pfl ? '#ca8a04' : '#27272a', borderRadius: 2, width: '100%', height: 22 }}
+              >
+                <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: '0.05em', color: pfl ? '#fff' : '#52525b', textTransform: 'uppercase' }}>PFL</span>
+              </button>
+            )}
+            {showAfl && (
+              <button
+                onClick={handleAflClick}
+                title={afl ? 'AFL active — click to cancel' : 'AFL — post-fader listen on MON'}
+                className="border-0 cursor-pointer transition-colors active:opacity-75 flex items-center justify-center shrink-0"
+                style={{ background: afl ? '#ca8a04' : '#27272a', borderRadius: 2, width: '100%', height: 22 }}
+              >
+                <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: '0.05em', color: afl ? '#fff' : '#52525b', textTransform: 'uppercase' }}>AFL</span>
+              </button>
+            )}
           </div>
         )}
 
+        {/* EBU sub-column — separated by border when visible */}
+        {showEbu && <EbuColumn elementId={elementId} isActive={isActive} tpLatch={tpLatch} onReset={handleLoudnessReset} />}
+
         {/* VU + fader sub-column */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 8px', flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 0', flex: 1 }}>
 
           {/* VU meter + peak readout — wider container centers the text under the bars */}
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 28, gap: 2, opacity: isActive ? 1 : 0.25, transition: 'opacity 0.2s' }}>
@@ -451,13 +501,13 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
           </div>
 
           {/* Fader + tick marks */}
-          <div className="relative shrink-0" style={{ width: FADER_W, height: FADER_CONTAINER_H }}>
+          <div className="relative shrink-0" style={{ width: FADER_W, height: faderContainerH }}>
 
             <div
               className="absolute pointer-events-none"
               style={{
                 width: 4,
-                height: FADER_CONTAINER_H - THUMB_CSS_W,
+                height: faderContainerH - THUMB_CSS_W,
                 top: Math.round(THUMB_CSS_W / 2),
                 left: '50%',
                 transform: 'translateX(-50%)',
@@ -467,7 +517,7 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
             />
 
             {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
-              const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_CONTAINER_H - THUMB_CSS_W))
+              const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (faderContainerH - THUMB_CSS_W))
               return (
                 <Fragment key={db}>
                   <div
@@ -481,9 +531,9 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
                   <span
                     className="absolute pointer-events-none"
                     style={{
-                      top: y, left: 'calc(50% + 10px)', transform: 'translateY(-50%)',
-                      fontSize: isInfinity ? 10 : 6, lineHeight: 1,
-                      fontFamily: isInfinity ? 'sans-serif' : 'monospace',
+                      top: y, left: 'calc(50% + 15px)', transform: 'translateY(-50%)',
+                      fontSize: isInfinity ? 9 : 6, lineHeight: 1,
+                      fontFamily: 'monospace',
                       color: major ? '#505050' : '#383838', whiteSpace: 'nowrap',
                     }}
                   >
@@ -502,9 +552,9 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
               aria-label={`${label} fader`}
               className="fader-rotated fader-handle-a"
               style={{
-                width: FADER_CONTAINER_H, height: FADER_W,
-                left: -(FADER_CONTAINER_H - FADER_W) / 2,
-                top:  (FADER_CONTAINER_H - FADER_W) / 2,
+                width: faderContainerH, height: FADER_W,
+                left: -(faderContainerH - FADER_W) / 2,
+                top:  (faderContainerH - FADER_W) / 2,
                 cursor: mode === 'off' ? 'not-allowed' : 'pointer',
                 zIndex: 2,
               }}
@@ -515,41 +565,6 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
 
       {/* Bottom buttons */}
       <div className="border-t border-zinc-800 shrink-0 flex flex-col">
-        {/* PFL / AFL row — only rendered when at least one is shown */}
-        {(showPfl || showAfl) && (
-          <div className="flex gap-px border-b border-zinc-800">
-            {showPfl && (
-              <button
-                onClick={handlePflClick}
-                title={pfl ? 'PFL active — hearing this channel pre-fader on MON. Click to cancel.' : 'PFL — route channel pre-fader to MON bus for monitoring'}
-                className={cn(
-                  'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
-                  pfl
-                    ? 'text-yellow-200'
-                    : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
-                )}
-                style={pfl ? { background: 'rgba(202,138,4,0.35)' } : {}}
-              >
-                PFL
-              </button>
-            )}
-            {showAfl && (
-              <button
-                onClick={handleAflClick}
-                title={afl ? 'AFL active — hearing this channel post-fader on MON. Click to cancel.' : 'AFL — route channel post-fader to MON bus for monitoring'}
-                className={cn(
-                  'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
-                  afl
-                    ? 'text-yellow-200'
-                    : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
-                )}
-                style={afl ? { background: 'rgba(202,138,4,0.35)' } : {}}
-              >
-                AFL
-              </button>
-            )}
-          </div>
-        )}
         {/* ON / AFV row */}
         <div className="flex gap-px">
           <button
@@ -575,11 +590,9 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
               title={mode === 'afv' ? 'AFV — audio follows video. Click to mute.' : 'Click to enable AFV'}
               className={cn(
                 'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
-                mode === 'afv'
-                  ? 'text-orange-300'
-                  : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
+                mode === 'afv' ? 'text-white' : 'text-zinc-500',
               )}
-              style={mode === 'afv' ? { background: 'rgba(200,100,0,0.2)' } : {}}
+              style={mode === 'afv' ? { background: '#c86400' } : { background: '#18181b' }}
             >
               AFV
             </button>
@@ -600,41 +613,48 @@ function AuxChannelStrip({ elementId, label, auxBus, send }: {
   auxBus: number
   send: SendFn
 }) {
+  const { faderContainerH } = useFaderDims()
   const level          = useAudioStore((s) => s.auxSend[elementId]?.[auxBus] ?? 0)
   const enabled        = useAudioStore((s) => s.auxSendEnabled[elementId]?.[auxBus] ?? false)
+  const pre            = useAudioStore((s) => s.auxSendPre[elementId]?.[auxBus] ?? true)
   const setAuxSend     = useAudioStore((s) => s.setAuxSend)
   const setAuxEnabled  = useAudioStore((s) => s.setAuxSendEnabled)
+  const setAuxPre      = useAudioStore((s) => s.setAuxSendPre)
 
-  const throttleRef = useRef<{ timer: ReturnType<typeof setTimeout>; last: number } | null>(null)
+  const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleChange = useCallback((faderPos: number) => {
     const newLevel = faderToVolume(faderPos)
     setAuxSend(elementId, auxBus, newLevel)
-    if (throttleRef.current) clearTimeout(throttleRef.current.timer)
-    const timer = setTimeout(() => {
+    if (throttleRef.current !== null) clearTimeout(throttleRef.current)
+    throttleRef.current = setTimeout(() => {
       throttleRef.current = null
-      send({ type: 'AUX_SEND_SET', elementId, auxBus, level: newLevel, enabled })
+      send({ type: 'AUX_SEND_SET', elementId, auxBus, level: newLevel, enabled, pre })
     }, 80)
-    throttleRef.current = { timer, last: newLevel }
-  }, [elementId, auxBus, enabled, send, setAuxSend])
+  }, [elementId, auxBus, enabled, pre, send, setAuxSend])
 
   const handleOnClick = useCallback(() => {
     const next = !enabled
     setAuxEnabled(elementId, auxBus, next)
-    send({ type: 'AUX_SEND_SET', elementId, auxBus, level, enabled: next })
-  }, [enabled, level, elementId, auxBus, send, setAuxEnabled])
+    send({ type: 'AUX_SEND_SET', elementId, auxBus, level, enabled: next, pre })
+  }, [enabled, pre, level, elementId, auxBus, send, setAuxEnabled])
 
-  const STRIP_W = 92
+  const handlePreChange = useCallback((nextPre: boolean) => {
+    setAuxPre(elementId, auxBus, nextPre)
+    send({ type: 'AUX_SEND_SET', elementId, auxBus, level, enabled, pre: nextPre })
+  }, [level, enabled, elementId, auxBus, send, setAuxPre])
+
+  const STRIP_W = 111
 
   return (
     <div
       className="flex flex-col shrink-0 select-none border-r border-zinc-800"
       style={{ width: STRIP_W, background: '#0d0d0d', opacity: enabled ? 1 : 0.55 }}
     >
-      {/* Channel label header — amber tint when send is active */}
+      {/* Channel label header — blue tint when send is active */}
       <div
         className="px-1 py-0.5 text-center border-b border-zinc-900 shrink-0"
-        style={{ background: enabled ? C_AUX.active : 'rgba(0,0,0,0.5)' }}
+        style={{ background: enabled ? C_IN.active : 'rgba(0,0,0,0.5)' }}
       >
         <span
           className="text-[9px] font-bold tracking-widest uppercase truncate block"
@@ -644,31 +664,55 @@ function AuxChannelStrip({ elementId, label, auxBus, send }: {
         </span>
       </div>
 
-      {/* Main body — meter | fader */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 8px', flex: 1 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 28, gap: 2 }}>
-          <VuMeter elementId={elementId} />
-          <PeakReadout elementId={elementId} />
+      {/* Main body — PRE/POST column | meter | fader */}
+      <div className="flex flex-1 pb-2">
+
+        {/* Left side — PRE / POST radio buttons */}
+        <div className="flex flex-col shrink-0 justify-center" style={{ width: 28, padding: '0 0 0 7px', gap: 8 }}>
+          <button
+            onClick={() => handlePreChange(true)}
+            title="Pre-fader send — level is tapped before the channel fader (IFB/monitor standard)"
+            className="border-0 cursor-pointer transition-colors active:opacity-75 flex items-center justify-center shrink-0"
+            style={{ background: pre ? C_AUX.active : '#27272a', borderRadius: 2, width: '100%', height: 22 }}
+          >
+            <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: '0.05em', color: pre ? '#fff' : '#52525b', textTransform: 'uppercase' }}>PRE</span>
+          </button>
+          <button
+            onClick={() => handlePreChange(false)}
+            title="Post-fader send — level follows the channel fader (effects sends)"
+            className="border-0 cursor-pointer transition-colors active:opacity-75 flex items-center justify-center shrink-0"
+            style={{ background: !pre ? C_AUX.active : '#27272a', borderRadius: 2, width: '100%', height: 22 }}
+          >
+            <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: '0.05em', color: !pre ? '#fff' : '#52525b', textTransform: 'uppercase' }}>POST</span>
+          </button>
         </div>
-        <div className="relative shrink-0" style={{ width: FADER_W, height: FADER_CONTAINER_H }}>
-          <div className="absolute pointer-events-none" style={{ width: 4, height: FADER_CONTAINER_H - THUMB_CSS_W, top: Math.round(THUMB_CSS_W / 2), left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
-          {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
-            const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_CONTAINER_H - THUMB_CSS_W))
-            return (
-              <Fragment key={db}>
-                <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
-                <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 10px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 10 : 6, lineHeight: 1, fontFamily: isInfinity ? 'sans-serif' : 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
-              </Fragment>
-            )
-          })}
-          <input
-            type="range" min={0} max={1} step={0.005}
-            value={volumeToFader(level)}
-            onChange={(e) => handleChange(parseFloat(e.target.value))}
-            aria-label={`${label} AUX ${auxBus} send`}
-            className="fader-rotated fader-handle-a"
-            style={{ width: FADER_CONTAINER_H, height: FADER_W, left: -(FADER_CONTAINER_H - FADER_W) / 2, top: (FADER_CONTAINER_H - FADER_W) / 2, cursor: 'pointer', zIndex: 2 }}
-          />
+
+        {/* VU + fader sub-column */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 0', flex: 1 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 28, gap: 2 }}>
+            <VuMeter elementId={elementId} />
+            <PeakReadout elementId={elementId} />
+          </div>
+          <div className="relative shrink-0" style={{ width: FADER_W, height: faderContainerH }}>
+            <div className="absolute pointer-events-none" style={{ width: 4, height: faderContainerH - THUMB_CSS_W, top: Math.round(THUMB_CSS_W / 2), left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
+            {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
+              const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (faderContainerH - THUMB_CSS_W))
+              return (
+                <Fragment key={db}>
+                  <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
+                  <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 15px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 9 : 6, lineHeight: 1, fontFamily: 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
+                </Fragment>
+              )
+            })}
+            <input
+              type="range" min={0} max={1} step={0.005}
+              value={volumeToFader(level)}
+              onChange={(e) => handleChange(parseFloat(e.target.value))}
+              aria-label={`${label} AUX ${auxBus} send`}
+              className="fader-rotated fader-handle-a"
+              style={{ width: faderContainerH, height: FADER_W, left: -(faderContainerH - FADER_W) / 2, top: (faderContainerH - FADER_W) / 2, cursor: 'pointer', zIndex: 2 }}
+            />
+          </div>
         </div>
       </div>
 
@@ -683,7 +727,7 @@ function AuxChannelStrip({ elementId, label, auxBus, send }: {
               ? 'text-white'
               : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
           )}
-          style={enabled ? { background: C_AUX.active } : {}}
+          style={enabled ? { background: C_IN.active } : {}}
         >
           ON
         </button>
@@ -704,31 +748,33 @@ function AuxMasterStrip({ auxBus, label, send, onSelect }: {
   send: SendFn
   onSelect?: () => void
 }) {
+  const { faderContainerH } = useFaderDims()
   const level           = useAudioStore((s) => s.auxMasterLevel[auxBus] ?? 1.0)
   const muted           = useAudioStore((s) => s.auxMasterMuted[auxBus] ?? false)
   const setMasterLevel  = useAudioStore((s) => s.setAuxMasterLevel)
   const setMasterMuted  = useAudioStore((s) => s.setAuxMasterMuted)
   const meterId         = `aux${auxBus}`
 
-  const throttleRef = useRef<{ timer: ReturnType<typeof setTimeout>; last: number } | null>(null)
+  const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleFaderMouseDown = useCallback(() => {
     document.body.classList.add('fader-dragging')
-    const onUp = () => { document.body.classList.remove('fader-dragging'); window.removeEventListener('mouseup', onUp) }
+    const onUp = () => {
+      document.body.classList.remove('fader-dragging')
+      window.removeEventListener('mouseup', onUp)
+    }
     window.addEventListener('mouseup', onUp)
   }, [])
 
   const handleChange = useCallback((faderPos: number) => {
-    const volume = faderToVolume(faderPos)
+    const pos = faderPos >= 0.995 ? 1 : faderPos <= 0.005 ? 0 : faderPos
+    const volume = faderToVolume(pos)
     setMasterLevel(auxBus, volume)
-    if (throttleRef.current) clearTimeout(throttleRef.current.timer)
-    const timer = setTimeout(() => {
+    if (throttleRef.current !== null) clearTimeout(throttleRef.current)
+    throttleRef.current = setTimeout(() => {
       throttleRef.current = null
-      // Send with current muted state — backend applies 0 when muted, so the
-      // fader position propagates to all clients even while the bus is silenced.
       send({ type: 'AUX_MASTER_SET', auxBus, volume, muted })
     }, 80)
-    throttleRef.current = { timer, last: volume }
   }, [auxBus, muted, send, setMasterLevel])
 
   const handleOnClick = useCallback(() => {
@@ -766,14 +812,14 @@ function AuxMasterStrip({ auxBus, label, send, onSelect }: {
           <VuMeter elementId={meterId} />
           <PeakReadout elementId={meterId} />
         </div>
-        <div className="relative shrink-0" style={{ width: FADER_W, height: FADER_CONTAINER_H }}>
-          <div className="absolute pointer-events-none" style={{ width: 4, height: FADER_CONTAINER_H - THUMB_CSS_W, top: Math.round(THUMB_CSS_W / 2), left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
+        <div className="relative shrink-0" style={{ width: FADER_W, height: faderContainerH }}>
+          <div className="absolute pointer-events-none" style={{ width: 4, height: faderContainerH - THUMB_CSS_W, top: Math.round(THUMB_CSS_W / 2), left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
           {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
-            const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_CONTAINER_H - THUMB_CSS_W))
+            const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (faderContainerH - THUMB_CSS_W))
             return (
               <Fragment key={db}>
                 <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
-                <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 10px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 10 : 6, lineHeight: 1, fontFamily: isInfinity ? 'sans-serif' : 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
+                <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 15px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 9 : 6, lineHeight: 1, fontFamily: 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
               </Fragment>
             )
           })}
@@ -784,7 +830,7 @@ function AuxMasterStrip({ auxBus, label, send, onSelect }: {
             onMouseDown={handleFaderMouseDown}
             aria-label={`${label} master fader`}
             className="fader-rotated fader-handle-a"
-            style={{ width: FADER_CONTAINER_H, height: FADER_W, left: -(FADER_CONTAINER_H - FADER_W) / 2, top: (FADER_CONTAINER_H - FADER_W) / 2, cursor: muted ? 'not-allowed' : 'pointer', zIndex: 2 }}
+            style={{ width: faderContainerH, height: FADER_W, left: -(faderContainerH - FADER_W) / 2, top: (faderContainerH - FADER_W) / 2, cursor: muted ? 'not-allowed' : 'pointer', zIndex: 2 }}
           />
         </div>
       </div>
@@ -809,108 +855,6 @@ function AuxMasterStrip({ auxBus, label, send, onSelect }: {
   )
 }
 
-// ── GRP Channel strip ─────────────────────────────────────────────────────────
-// Shown in GROUPS tab sends view. Fader = send level for this channel to the GRP bus.
-// ON/OFF routes or silences the send without losing the fader position.
-
-function GrpChannelStrip({ elementId, label, grpBus, send }: {
-  elementId: string
-  label: string
-  grpBus: number
-  send: SendFn
-}) {
-  const level          = useAudioStore((s) => s.grpSend[elementId]?.[grpBus] ?? 0)
-  const enabled        = useAudioStore((s) => s.grpSendEnabled[elementId]?.[grpBus] ?? false)
-  const setGrpSend     = useAudioStore((s) => s.setGrpSend)
-  const setGrpEnabled  = useAudioStore((s) => s.setGrpSendEnabled)
-
-  const throttleRef = useRef<{ timer: ReturnType<typeof setTimeout>; last: number } | null>(null)
-
-  const handleChange = useCallback((faderPos: number) => {
-    const newLevel = faderToVolume(faderPos)
-    setGrpSend(elementId, grpBus, newLevel)
-    if (throttleRef.current) clearTimeout(throttleRef.current.timer)
-    const timer = setTimeout(() => {
-      throttleRef.current = null
-      send({ type: 'GRP_SEND_SET', elementId, grpBus, level: newLevel, enabled })
-    }, 80)
-    throttleRef.current = { timer, last: newLevel }
-  }, [elementId, grpBus, enabled, send, setGrpSend])
-
-  const handleOnClick = useCallback(() => {
-    const next = !enabled
-    setGrpEnabled(elementId, grpBus, next)
-    send({ type: 'GRP_SEND_SET', elementId, grpBus, level, enabled: next })
-  }, [enabled, level, elementId, grpBus, send, setGrpEnabled])
-
-  const STRIP_W = 92
-
-  return (
-    <div
-      className="flex flex-col shrink-0 select-none border-r border-zinc-800"
-      style={{ width: STRIP_W, background: '#0d0d0d', opacity: enabled ? 1 : 0.55 }}
-    >
-      {/* Channel label header — violet tint when send is active */}
-      <div
-        className="px-1 py-0.5 text-center border-b border-zinc-900 shrink-0"
-        style={{ background: enabled ? C_GRP.active : 'rgba(0,0,0,0.5)' }}
-      >
-        <span
-          className="text-[9px] font-bold tracking-widest uppercase truncate block"
-          style={{ color: enabled ? '#ffffff' : '#52525b' }}
-        >
-          {label}
-        </span>
-      </div>
-
-      {/* Main body — meter | fader */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 8px', flex: 1 }}>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 28, gap: 2 }}>
-          <VuMeter elementId={elementId} />
-          <PeakReadout elementId={elementId} />
-        </div>
-        <div className="relative shrink-0" style={{ width: FADER_W, height: FADER_CONTAINER_H }}>
-          <div className="absolute pointer-events-none" style={{ width: 4, height: FADER_CONTAINER_H - THUMB_CSS_W, top: Math.round(THUMB_CSS_W / 2), left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
-          {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
-            const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_CONTAINER_H - THUMB_CSS_W))
-            return (
-              <Fragment key={db}>
-                <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
-                <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 10px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 10 : 6, lineHeight: 1, fontFamily: isInfinity ? 'sans-serif' : 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
-              </Fragment>
-            )
-          })}
-          <input
-            type="range" min={0} max={1} step={0.005}
-            value={volumeToFader(level)}
-            onChange={(e) => handleChange(parseFloat(e.target.value))}
-            aria-label={`${label} GRP ${grpBus} send`}
-            className="fader-rotated fader-handle-a"
-            style={{ width: FADER_CONTAINER_H, height: FADER_W, left: -(FADER_CONTAINER_H - FADER_W) / 2, top: (FADER_CONTAINER_H - FADER_W) / 2, cursor: 'pointer', zIndex: 2 }}
-          />
-        </div>
-      </div>
-
-      {/* Bottom — ON button */}
-      <div className="border-t border-zinc-800 shrink-0 flex overflow-hidden">
-        <button
-          onClick={handleOnClick}
-          title={enabled ? 'Send active — click to remove from group' : 'Send silent — click to route to group'}
-          className={cn(
-            'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
-            enabled
-              ? 'text-white'
-              : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
-          )}
-          style={enabled ? { background: C_GRP.active } : {}}
-        >
-          ON
-        </button>
-      </div>
-    </div>
-  )
-}
-
 // ── GRP Master strip ──────────────────────────────────────────────────────────
 // Fader = overall GRP bus output level; ON/OFF = mute the entire bus.
 // Meter element ID "grp1"/"grp2" matches what the meter relay broadcasts.
@@ -922,29 +866,33 @@ function GrpMasterStrip({ grpBus, label, send, onSelect }: {
   send: SendFn
   onSelect?: () => void
 }) {
+  const { faderContainerH } = useFaderDims()
   const level           = useAudioStore((s) => s.grpMasterLevel[grpBus] ?? 1.0)
   const muted           = useAudioStore((s) => s.grpMasterMuted[grpBus] ?? false)
   const setMasterLevel  = useAudioStore((s) => s.setGrpMasterLevel)
   const setMasterMuted  = useAudioStore((s) => s.setGrpMasterMuted)
   const meterId         = `grp${grpBus}`
 
-  const throttleRef = useRef<{ timer: ReturnType<typeof setTimeout>; last: number } | null>(null)
+  const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleFaderMouseDown = useCallback(() => {
     document.body.classList.add('fader-dragging')
-    const onUp = () => { document.body.classList.remove('fader-dragging'); window.removeEventListener('mouseup', onUp) }
+    const onUp = () => {
+      document.body.classList.remove('fader-dragging')
+      window.removeEventListener('mouseup', onUp)
+    }
     window.addEventListener('mouseup', onUp)
   }, [])
 
   const handleChange = useCallback((faderPos: number) => {
-    const volume = faderToVolume(faderPos)
+    const pos = faderPos >= 0.995 ? 1 : faderPos <= 0.005 ? 0 : faderPos
+    const volume = faderToVolume(pos)
     setMasterLevel(grpBus, volume)
-    if (throttleRef.current) clearTimeout(throttleRef.current.timer)
-    const timer = setTimeout(() => {
+    if (throttleRef.current !== null) clearTimeout(throttleRef.current)
+    throttleRef.current = setTimeout(() => {
       throttleRef.current = null
       send({ type: 'GRP_MASTER_SET', grpBus, volume, muted })
     }, 80)
-    throttleRef.current = { timer, last: volume }
   }, [grpBus, muted, send, setMasterLevel])
 
   const handleOnClick = useCallback(() => {
@@ -985,14 +933,14 @@ function GrpMasterStrip({ grpBus, label, send, onSelect }: {
           <VuMeter elementId={meterId} />
           <PeakReadout elementId={meterId} />
         </div>
-        <div className="relative shrink-0" style={{ width: FADER_W, height: FADER_CONTAINER_H }}>
-          <div className="absolute pointer-events-none" style={{ width: 4, height: FADER_CONTAINER_H - THUMB_CSS_W, top: Math.round(THUMB_CSS_W / 2), left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
+        <div className="relative shrink-0" style={{ width: FADER_W, height: faderContainerH }}>
+          <div className="absolute pointer-events-none" style={{ width: 4, height: faderContainerH - THUMB_CSS_W, top: Math.round(THUMB_CSS_W / 2), left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
           {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
-            const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (FADER_CONTAINER_H - THUMB_CSS_W))
+            const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (faderContainerH - THUMB_CSS_W))
             return (
               <Fragment key={db}>
                 <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
-                <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 10px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 10 : 6, lineHeight: 1, fontFamily: isInfinity ? 'sans-serif' : 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
+                <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 15px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 9 : 6, lineHeight: 1, fontFamily: 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
               </Fragment>
             )
           })}
@@ -1003,7 +951,7 @@ function GrpMasterStrip({ grpBus, label, send, onSelect }: {
             onMouseDown={handleFaderMouseDown}
             aria-label={`${label} master fader`}
             className="fader-rotated fader-handle-a"
-            style={{ width: FADER_CONTAINER_H, height: FADER_W, left: -(FADER_CONTAINER_H - FADER_W) / 2, top: (FADER_CONTAINER_H - FADER_W) / 2, cursor: muted ? 'not-allowed' : 'pointer', zIndex: 2 }}
+            style={{ width: faderContainerH, height: FADER_W, left: -(faderContainerH - FADER_W) / 2, top: (faderContainerH - FADER_W) / 2, cursor: muted ? 'not-allowed' : 'pointer', zIndex: 2 }}
           />
         </div>
       </div>
@@ -1020,6 +968,112 @@ function GrpMasterStrip({ grpBus, label, send, onSelect }: {
               : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
           )}
           style={isActive ? { background: C_GRP.active } : {}}
+        >
+          ON
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── Monitor Master strip ──────────────────────────────────────────────────────
+// Controls the operator's local listening level on monitor_out.
+// Zero effect on the programme mix — purely a local monitoring control.
+
+function MonitorMasterStrip({ send }: { send: SendFn }) {
+  const { faderContainerH } = useFaderDims()
+  const level      = useAudioStore((s) => s.monitorLevel)
+  const muted      = useAudioStore((s) => s.monitorMuted)
+  const setLevel   = useAudioStore((s) => s.setMonitorLevel)
+  const setMuted   = useAudioStore((s) => s.setMonitorMuted)
+
+  const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const handleFaderMouseDown = useCallback(() => {
+    document.body.classList.add('fader-dragging')
+    const onUp = () => {
+      document.body.classList.remove('fader-dragging')
+      window.removeEventListener('mouseup', onUp)
+    }
+    window.addEventListener('mouseup', onUp)
+  }, [])
+
+  const handleChange = useCallback((faderPos: number) => {
+    const pos = faderPos >= 0.995 ? 1 : faderPos <= 0.005 ? 0 : faderPos
+    const volume = faderToVolume(pos)
+    setLevel(volume)
+    if (throttleRef.current !== null) clearTimeout(throttleRef.current)
+    throttleRef.current = setTimeout(() => {
+      throttleRef.current = null
+      send({ type: 'MONITOR_SET', volume, muted })
+    }, 80)
+  }, [muted, send, setLevel])
+
+  const handleOnClick = useCallback(() => {
+    const next = !muted
+    setMuted(next)
+    send({ type: 'MONITOR_SET', volume: level, muted: next })
+  }, [muted, level, send, setMuted])
+
+  const isActive = !muted
+  const STRIP_W = 92
+
+  return (
+    <div
+      className="flex flex-col shrink-0 select-none border-r border-zinc-800 relative"
+      style={{ width: STRIP_W, background: '#0d0d0d' }}
+    >
+      <div
+        className="px-1 py-0.5 text-center border-b border-zinc-900 shrink-0"
+        style={{ background: isActive ? C_MON.active : 'rgba(0,0,0,0.5)' }}
+      >
+        <span
+          className="text-[9px] font-bold tracking-widest uppercase truncate block"
+          style={{ color: isActive ? '#ffffff' : '#52525b' }}
+        >
+          MON
+        </span>
+      </div>
+
+      {/* VU meter — awaiting monitor_out metering support from Strom (meter:monitor element).
+          Until then the bars will be empty but the strip layout is ready. */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 8px', flex: 1 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 28, gap: 2, opacity: isActive ? 1 : 0.25, transition: 'opacity 0.2s' }}>
+          <VuMeter elementId="monitor" numChannels={2} />
+          <PeakReadout elementId="monitor" />
+        </div>
+        <div className="relative shrink-0" style={{ width: FADER_W, height: faderContainerH }}>
+          <div className="absolute pointer-events-none" style={{ width: 4, height: faderContainerH - THUMB_CSS_W, top: Math.round(THUMB_CSS_W / 2), left: '50%', transform: 'translateX(-50%)', background: '#181818', border: '1px solid #2a2a2a' }} />
+          {FADER_TICKS.map(({ pos, db, major, infinity: isInfinity }) => {
+            const y = Math.round(THUMB_CSS_W / 2 + (1 - pos) * (faderContainerH - THUMB_CSS_W))
+            return (
+              <Fragment key={db}>
+                <div className="absolute pointer-events-none" style={{ top: y, left: '50%', transform: 'translate(-50%, -50%)', width: major ? 20 : 14, height: major ? 2 : 1, background: major ? '#505050' : '#383838' }} />
+                <span className="absolute pointer-events-none" style={{ top: y, left: 'calc(50% + 15px)', transform: 'translateY(-50%)', fontSize: isInfinity ? 9 : 6, lineHeight: 1, fontFamily: 'monospace', color: major ? '#505050' : '#383838', whiteSpace: 'nowrap' }}>{db}</span>
+              </Fragment>
+            )
+          })}
+          <input
+            type="range" min={0} max={1} step={0.005}
+            value={volumeToFader(level)}
+            onChange={(e) => handleChange(parseFloat(e.target.value))}
+            onMouseDown={handleFaderMouseDown}
+            aria-label="Monitor master fader"
+            className="fader-rotated fader-handle-a"
+            style={{ width: faderContainerH, height: FADER_W, left: -(faderContainerH - FADER_W) / 2, top: (faderContainerH - FADER_W) / 2, cursor: muted ? 'not-allowed' : 'pointer', zIndex: 2 }}
+          />
+        </div>
+      </div>
+
+      <div className="border-t border-zinc-800 shrink-0 flex overflow-hidden">
+        <button
+          onClick={handleOnClick}
+          title={muted ? 'Monitor muted — click to unmute' : 'Monitor active — click to mute'}
+          className={cn(
+            'flex-1 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75',
+            isActive ? 'text-white' : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300',
+          )}
+          style={isActive ? { background: C_MON.active } : {}}
         >
           ON
         </button>
@@ -1073,9 +1127,11 @@ function NoContent({ label }: { label: string }) {
 // AUX   → drill-down: list of AUX master strips, click to see per-channel sends
 // GROUPS → same drill-down pattern for GRP buses
 
-type AudioTab = 'main' | 'aux' | 'groups'
+type AudioTab = string  // 'main' | 'aux-1' | 'aux-2' | …
 
-export function AudioPanel({ send, numAuxBuses = 2, numGroups = 2 }: { send: SendFn; numAuxBuses?: number; numGroups?: number }) {
+export function AudioPanel({ send, numAuxBuses = 2, numGroups = 2, showEbuMain = false, faderHeight }: { send: SendFn; numAuxBuses?: number; numGroups?: number; showEbuMain?: boolean; faderHeight?: number }) {
+  const fH = faderHeight ?? FADER_H
+  const fCH = fH + THUMB_CSS_W
   const elements = useAudioStore((s) => s.elements)
   const pgmInput = useProductionStore((s) => s.pgmInput)
   const pvwInput = useProductionStore((s) => s.pvwInput)
@@ -1088,31 +1144,28 @@ export function AudioPanel({ send, numAuxBuses = 2, numGroups = 2 }: { send: Sen
   // MAIN tab — per-section collapsed state; all expanded by default
   const [collapsed, setCollapsed] = useState({ out: false, groups: false, in: false })
   const toggleSection = (k: keyof typeof collapsed) => setCollapsed((c) => ({ ...c, [k]: !c[k] }))
-  // AUX tab drill-down — null = list view, number = selected bus
-  const [selectedAux, setSelectedAux] = useState<number | null>(null)
-  // GROUPS tab drill-down
-  const [selectedGrp, setSelectedGrp] = useState<number | null>(null)
+  // AUX tabs — shared collapsed state for OUT/IN sections
+  const [auxCollapsed, setAuxCollapsed] = useState({ out: false, in: false })
+  const toggleAuxSection = (k: keyof typeof auxCollapsed) => setAuxCollapsed((c) => ({ ...c, [k]: !c[k] }))
 
   const mainElement   = elements.find((e) => e.elementId === 'main')
   const inputElements = elements.filter((e) => e.elementId !== 'main' && e.mixerInput !== null)
   const hasContent = elements.length > 0
 
+  // One tab per AUX bus — clicking goes directly to that bus's send view, no drill-down
   const TABS: Array<{ id: AudioTab; label: string; color: string }> = [
-    { id: 'main',   label: 'MAIN',   color: C_MAIN.hex },
-    ...(auxBuses.length > 0 ? [{ id: 'aux' as AudioTab,    label: 'AUX', color: C_AUX.hex }] : []),
-    ...(grpBuses.length > 0 ? [{ id: 'groups' as AudioTab, label: 'GRP', color: C_GRP.hex }] : []),
+    { id: 'main', label: 'MAIN', color: C_MAIN.hex },
+    ...auxBuses.map((bus) => ({ id: `aux-${bus}`, label: `AUX ${bus}`, color: C_AUX.hex })),
+    // GRP tab removed — groups are managed via G1/G2 buttons on each channel strip in MAIN
   ]
 
-  const handleTabChange = (id: AudioTab) => {
-    setActiveTab(id)
-    // Always reset drill-down when switching tabs so we start at the list view
-    setSelectedAux(null)
-    setSelectedGrp(null)
-  }
+  // Extract selected AUX bus number from the active tab id, e.g. 'aux-2' → 2
+  const activeAuxBus = activeTab.startsWith('aux-') ? parseInt(activeTab.slice(4), 10) : null
 
   return (
+    <FaderDimsCtx.Provider value={{ faderH: fH, faderContainerH: fCH }}>
     <div
-      className="border border-zinc-800 overflow-hidden flex items-stretch w-full"
+      className="border border-zinc-800 overflow-hidden flex items-stretch"
       style={{ background: '#0d0d0d', minHeight: 300 }}
     >
       {/* Tab selector — vertical, left edge */}
@@ -1120,7 +1173,7 @@ export function AudioPanel({ send, numAuxBuses = 2, numGroups = 2 }: { send: Sen
         {TABS.map((tab) => (
           <button
             key={tab.id}
-            onClick={() => handleTabChange(tab.id)}
+            onClick={() => setActiveTab(tab.id)}
             title={tab.label}
             className="flex-1 flex items-center justify-center transition-colors border-b border-zinc-800 last:border-b-0"
             style={{
@@ -1156,10 +1209,11 @@ export function AudioPanel({ send, numAuxBuses = 2, numGroups = 2 }: { send: Sen
               {!collapsed.out && (
                 <div className="flex items-stretch shrink-0">
                   {mainElement ? (
-                    <ChannelStrip elementId="main" label="MAIN" send={send} showAfv={false} showEbu busColor={C_MAIN} />
+                    <ChannelStrip elementId="main" label="MAIN" send={send} showAfv={false} showEbu={showEbuMain} busColor={C_MAIN} />
                   ) : (
                     <NoContent label="NO OUT" />
                   )}
+                  <MonitorMasterStrip send={send} />
                 </div>
               )}
 
@@ -1180,7 +1234,7 @@ export function AudioPanel({ send, numAuxBuses = 2, numGroups = 2 }: { send: Sen
               {/* IN section */}
               <SectionBar label="IN" collapsed={collapsed.in} onToggle={() => toggleSection('in')} color={C_IN.hex} />
               {!collapsed.in && (
-                <div className="flex items-stretch overflow-x-auto">
+                <div className="flex items-stretch overflow-x-auto scrollbar-hide">
                   <div className="flex">
                     {inputElements.length === 0 ? (
                       <NoContent label="NO IN" />
@@ -1198,6 +1252,7 @@ export function AudioPanel({ send, numAuxBuses = 2, numGroups = 2 }: { send: Sen
                           isPgm={!!pgmInput && el.mixerInput === pgmInput}
                           isPvw={!!pvwInput && el.mixerInput === pvwInput}
                           busColor={C_IN}
+                          grpBuses={grpBuses}
                         />
                       ))
                     )}
@@ -1207,90 +1262,39 @@ export function AudioPanel({ send, numAuxBuses = 2, numGroups = 2 }: { send: Sen
             </>
           )}
 
-          {/* ── AUX tab ──────────────────────────────────────────────────── */}
-          {activeTab === 'aux' && (
-            auxBuses.length === 0 ? (
-              <NoContent label="NO AUX BUSES CONFIGURED" />
-            ) : selectedAux === null ? (
-              // List view — MAIN output + all AUX masters (headers clickable)
-              <div className="flex items-stretch">
-                {mainElement && <ChannelStrip elementId="main" label="MAIN" send={send} showAfv={false} showEbu busColor={C_MAIN} />}
-                {auxBuses.map((bus) => (
-                  <AuxMasterStrip key={bus} auxBus={bus} label={`AUX ${bus}`} send={send} onSelect={() => setSelectedAux(bus)} />
-                ))}
-              </div>
-            ) : (
-              // Detail view — MAIN + pinned AUX master + per-channel sends
-              <div className="flex items-stretch overflow-x-auto">
-                {/* Back button */}
-                <button
-                  onClick={() => setSelectedAux(null)}
-                  className="shrink-0 border-r border-zinc-800 px-1 text-[8px] text-zinc-500 hover:text-zinc-300 uppercase tracking-widest"
-                  style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
-                >
-                  ← Back
-                </button>
-                {/* Pinned MAIN output */}
-                {mainElement && <ChannelStrip elementId="main" label="MAIN" send={send} showAfv={false} showEbu busColor={C_MAIN} />}
-                {/* Pinned AUX master */}
-                <AuxMasterStrip auxBus={selectedAux} label={`AUX ${selectedAux}`} send={send} />
-                {/* Per-channel sends */}
+          {/* ── AUX tabs — one per bus, direct send view, no drill-down ── */}
+          {activeAuxBus !== null && (
+            <div className="flex items-stretch overflow-x-auto scrollbar-hide">
+              {/* OUT section — AUX bus master */}
+              <SectionBar label="OUT" collapsed={auxCollapsed.out} onToggle={() => toggleAuxSection('out')} color={C_AUX.hex} />
+              {!auxCollapsed.out && (
+                <AuxMasterStrip auxBus={activeAuxBus} label={`AUX ${activeAuxBus}`} send={send} />
+              )}
+              {/* IN section — per-channel send strips */}
+              <SectionBar label="IN" collapsed={auxCollapsed.in} onToggle={() => toggleAuxSection('in')} color={C_IN.hex} />
+              {!auxCollapsed.in && (
                 <div className="flex">
-                  {inputElements.map((el) => (
-                    <AuxChannelStrip
-                      key={el.elementId}
-                      elementId={el.elementId}
-                      label={el.label}
-                      auxBus={selectedAux}
-                      send={send}
-                    />
-                  ))}
+                  {inputElements.length === 0 ? (
+                    <NoContent label="NO INPUTS" />
+                  ) : (
+                    inputElements.map((el) => (
+                      <AuxChannelStrip
+                        key={el.elementId}
+                        elementId={el.elementId}
+                        label={el.label}
+                        auxBus={activeAuxBus}
+                        send={send}
+                      />
+                    ))
+                  )}
                 </div>
-              </div>
-            )
+              )}
+            </div>
           )}
 
-          {/* ── GROUPS tab ───────────────────────────────────────────────── */}
-          {activeTab === 'groups' && (
-            grpBuses.length === 0 ? (
-              <NoContent label="NO GROUP BUSES CONFIGURED" />
-            ) : selectedGrp === null ? (
-              // List view — all GRP masters, headers are clickable
-              <div className="flex items-stretch">
-                {grpBuses.map((bus) => (
-                  <GrpMasterStrip key={bus} grpBus={bus} label={`GRP ${bus}`} send={send} onSelect={() => setSelectedGrp(bus)} />
-                ))}
-              </div>
-            ) : (
-              // Detail view — per-channel sends + pinned master
-              <div className="flex items-stretch overflow-x-auto">
-                {/* Back button */}
-                <button
-                  onClick={() => setSelectedGrp(null)}
-                  className="shrink-0 border-r border-zinc-800 px-1 text-[8px] text-zinc-500 hover:text-zinc-300 uppercase tracking-widest"
-                  style={{ writingMode: 'vertical-rl', transform: 'rotate(180deg)' }}
-                >
-                  ← Back
-                </button>
-                {/* Pinned master */}
-                <GrpMasterStrip grpBus={selectedGrp} label={`GRP ${selectedGrp}`} send={send} />
-                {/* Per-channel sends */}
-                <div className="flex">
-                  {inputElements.map((el) => (
-                    <GrpChannelStrip
-                      key={el.elementId}
-                      elementId={el.elementId}
-                      label={el.label}
-                      grpBus={selectedGrp}
-                      send={send}
-                    />
-                  ))}
-                </div>
-              </div>
-            )
-          )}
         </>
       )}
     </div>
+    </FaderDimsCtx.Provider>
   )
 }

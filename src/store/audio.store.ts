@@ -11,8 +11,7 @@ interface MeterReading {
   lufs_m?: number;        // momentary, 400ms window
   lufs_s?: number;        // short-term, 3s window
   lufs_i?: number;        // integrated (programme loudness)
-  true_peak?: number[];   // per-channel dBTP
-  tp_latched?: boolean;   // latched red if any channel ever exceeded −1 dBTP
+  true_peak?: number[];   // per-channel linear amplitude from Strom (0.0–1.0+); −1 dBTP = 0.891
 }
 
 interface AudioState {
@@ -24,8 +23,11 @@ interface AudioState {
   afl: Record<string, boolean>                         // elementId → AFL send enabled (input channels only)
   auxSend: Record<string, Record<number, number>>      // elementId → auxBus(1-indexed) → fader level (0–10); preserved across ON/OFF
   auxSendEnabled: Record<string, Record<number, boolean>> // elementId → auxBus(1-indexed) → send routed to bus
+  auxSendPre: Record<string, Record<number, boolean>>  // elementId → auxBus(1-indexed) → true = pre-fader, false = post-fader (default)
   auxMasterLevel: Record<number, number>               // auxBus(1-indexed) → fader level (0–10); 1.0 = 0 dB default
   auxMasterMuted: Record<number, boolean>              // auxBus(1-indexed) → master muted (output silenced)
+  monitorLevel: number                                 // monitor_out master fader level (0–10); 1.0 = 0 dB default
+  monitorMuted: boolean                                // monitor_out master muted (operator's listening level)
   grpSend: Record<string, Record<number, number>>      // elementId → grpBus(1-indexed) → fader level (0–10); preserved across ON/OFF
   grpSendEnabled: Record<string, Record<number, boolean>> // elementId → grpBus(1-indexed) → send routed to bus
   grpMasterLevel: Record<number, number>               // grpBus(1-indexed) → fader level (0–10); 1.0 = 0 dB default
@@ -50,9 +52,15 @@ interface AudioActions {
   /** Server-authoritative AUX per-channel send setter.
    *  level = fader position (0–10); enabled = whether send is routed. */
   applyAuxSend: (elementId: string, auxBus: number, level: number, enabled: boolean) => void
+  /** Server-authoritative AUX pre/post toggle setter. */
+  applyAuxSendPre: (elementId: string, auxBus: number, pre: boolean) => void
   /** Server-authoritative AUX bus master setter.
    *  volume = fader level (0–10); muted = whether output is silenced. */
   applyAuxMaster: (auxBus: number, volume: number, muted: boolean) => void
+  /** Server-authoritative monitor bus master setter.
+   *  volume = fader level (0–10); muted = whether the operator's monitoring output is silenced.
+   *  Has zero effect on the programme mix — local listening level only. */
+  applyMonitorMaster: (volume: number, muted: boolean) => void
   /** Server-authoritative GRP per-channel send setter.
    *  level = fader position (0–10); enabled = whether send is routed. */
   applyGrpSend: (elementId: string, grpBus: number, level: number, enabled: boolean) => void
@@ -61,17 +69,22 @@ interface AudioActions {
   applyGrpMaster: (grpBus: number, volume: number, muted: boolean) => void
   applyMeter: (elementId: string, peak: number[], rms: number[]) => void
   applyLoudness: (elementId: string, lufs_m: number, lufs_s: number | null, lufs_i: number | null, true_peak: number[]) => void
-  resetTruePeakLatch: (elementId: string) => void
   // Optimistic local-only updates called by the UI before sending via WS
   setLevel: (elementId: string, value: number) => void
   /** Update the fader level for an aux send (does not change enabled state). */
   setAuxSend: (elementId: string, auxBus: number, level: number) => void
   /** Toggle the ON/OFF state of an aux send without touching the fader level. */
   setAuxSendEnabled: (elementId: string, auxBus: number, enabled: boolean) => void
+  /** Toggle the pre/post-fader state of an aux send. */
+  setAuxSendPre: (elementId: string, auxBus: number, pre: boolean) => void
   /** Update the fader level for an AUX bus master (does not change muted state). */
   setAuxMasterLevel: (auxBus: number, level: number) => void
   /** Toggle the muted state of an AUX bus master without touching the fader level. */
   setAuxMasterMuted: (auxBus: number, muted: boolean) => void
+  /** Update the monitor bus master fader level (does not change muted state). */
+  setMonitorLevel: (level: number) => void
+  /** Toggle the monitor bus master mute without touching the fader level. */
+  setMonitorMuted: (muted: boolean) => void
   /** Update the fader level for a GRP send (does not change enabled state). */
   setGrpSend: (elementId: string, grpBus: number, level: number) => void
   /** Toggle the ON/OFF state of a GRP send without touching the fader level. */
@@ -80,6 +93,8 @@ interface AudioActions {
   setGrpMasterLevel: (grpBus: number, level: number) => void
   /** Toggle the muted state of a GRP bus master without touching the fader level. */
   setGrpMasterMuted: (grpBus: number, muted: boolean) => void
+  /** Reset all group send assignments — called on production deactivation. */
+  resetGrpState: () => void
   toggleMute: (elementId: string) => void
   toggleAfv: (elementId: string) => void
   togglePfl: (elementId: string) => void
@@ -96,8 +111,11 @@ export const useAudioStore = create<AudioState & AudioActions>()(
       afl: {},
       auxSend: {},
       auxSendEnabled: {},
+      auxSendPre: {},
       auxMasterLevel: {},
       auxMasterMuted: {},
+      monitorLevel: 1.0,
+      monitorMuted: false,
       grpSend: {},
       grpSendEnabled: {},
       grpMasterLevel: {},
@@ -116,8 +134,11 @@ export const useAudioStore = create<AudioState & AudioActions>()(
             s.afl = {}
             s.auxSend = {}
             s.auxSendEnabled = {}
+            s.auxSendPre = {}
             s.auxMasterLevel = {}
             s.auxMasterMuted = {}
+            s.monitorLevel = 1.0
+            s.monitorMuted = false
             s.grpSend = {}
             s.grpSendEnabled = {}
             s.grpMasterLevel = {}
@@ -170,27 +191,20 @@ export const useAudioStore = create<AudioState & AudioActions>()(
           s.meters[elementId] = {
             peak, rms,
             lufs_m: prev?.lufs_m, lufs_s: prev?.lufs_s, lufs_i: prev?.lufs_i,
-            true_peak: prev?.true_peak, tp_latched: prev?.tp_latched,
+            true_peak: prev?.true_peak,
           }
         }),
 
       applyLoudness: (elementId, lufs_m, lufs_s, lufs_i, true_peak) =>
         _set((s) => {
           const prev = s.meters[elementId] ?? { peak: [], rms: [] }
-          const exceeded = true_peak.some((tp) => tp > -1)
           s.meters[elementId] = {
             ...prev,
             lufs_m,
             ...(lufs_s !== null && { lufs_s }),
             ...(lufs_i !== null && { lufs_i }),
             true_peak,
-            tp_latched: prev.tp_latched || exceeded,
           }
-        }),
-
-      resetTruePeakLatch: (elementId) =>
-        _set((s) => {
-          if (s.meters[elementId]) s.meters[elementId].tp_latched = false
         }),
 
       setLevel: (elementId, value) =>
@@ -218,6 +232,12 @@ export const useAudioStore = create<AudioState & AudioActions>()(
           s.auxSendEnabled[elementId][auxBus] = enabled
         }),
 
+      applyAuxSendPre: (elementId, auxBus, pre) =>
+        _set((s) => {
+          if (!s.auxSendPre[elementId]) s.auxSendPre[elementId] = {}
+          s.auxSendPre[elementId][auxBus] = pre
+        }),
+
       applyAuxMaster: (auxBus, volume, muted) =>
         _set((s) => {
           // Always update the fader position so all clients stay in sync,
@@ -242,6 +262,12 @@ export const useAudioStore = create<AudioState & AudioActions>()(
           s.grpMasterMuted[grpBus] = muted
         }),
 
+      applyMonitorMaster: (volume, muted) =>
+        _set((s) => {
+          s.monitorLevel = volume
+          s.monitorMuted = muted
+        }),
+
       setAuxSend: (elementId, auxBus, level) =>
         _set((s) => {
           if (!s.auxSend[elementId]) s.auxSend[elementId] = {}
@@ -254,11 +280,23 @@ export const useAudioStore = create<AudioState & AudioActions>()(
           s.auxSendEnabled[elementId][auxBus] = enabled
         }),
 
+      setAuxSendPre: (elementId, auxBus, pre) =>
+        _set((s) => {
+          if (!s.auxSendPre[elementId]) s.auxSendPre[elementId] = {}
+          s.auxSendPre[elementId][auxBus] = pre
+        }),
+
       setAuxMasterLevel: (auxBus, level) =>
         _set((s) => { s.auxMasterLevel[auxBus] = level }),
 
       setAuxMasterMuted: (auxBus, muted) =>
         _set((s) => { s.auxMasterMuted[auxBus] = muted }),
+
+      setMonitorLevel: (level) =>
+        _set((s) => { s.monitorLevel = level }),
+
+      setMonitorMuted: (muted) =>
+        _set((s) => { s.monitorMuted = muted }),
 
       setGrpSend: (elementId, grpBus, level) =>
         _set((s) => {
@@ -277,6 +315,9 @@ export const useAudioStore = create<AudioState & AudioActions>()(
 
       setGrpMasterMuted: (grpBus, muted) =>
         _set((s) => { s.grpMasterMuted[grpBus] = muted }),
+
+      resetGrpState: () =>
+        _set((s) => { s.grpSend = {}; s.grpSendEnabled = {} }),
 
       togglePfl: (elementId) =>
         _set((s) => { s.pfl[elementId] = !s.pfl[elementId] }),
