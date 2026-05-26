@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
-import { useTemplatesStore } from '@/store/templates.store'
 import { productionConfigsApi } from '@/lib/api'
 import type { ProductionConfig } from '@/lib/api'
+import { PRODUCTION_PROPERTIES } from '@/lib/production-schema'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 
@@ -19,19 +19,26 @@ function ConfigFields({
   values,
   onChange,
 }: {
-  values: Record<string, string | number>
-  onChange: (values: Record<string, string | number>) => void
+  values: Record<string, string | number | boolean>
+  onChange: (values: Record<string, string | number | boolean>) => void
 }) {
-  const templates = useTemplatesStore((s) => s.templates)
-  const template = templates[0] ?? null
-  if (!template || (template.properties?.length ?? 0) === 0) return null
   return (
     <div className="flex flex-col gap-3 border-t border-[--color-border] pt-3">
       <span className="text-xs uppercase tracking-wider text-[--color-text-muted]">Values</span>
-      {(template.properties ?? []).map((prop) => (
+      {PRODUCTION_PROPERTIES.map((prop) => (
         <div key={prop.id}>
           <label className="text-xs text-[--color-text-muted] block mb-1">{prop.label}</label>
-          {prop.type === 'select' ? (
+          {prop.type === 'boolean' ? (
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={Boolean(values[prop.id] ?? prop.default)}
+                onChange={(e) => onChange({ ...values, [prop.id]: e.target.checked })}
+                className="accent-orange-500"
+              />
+              <span className="text-xs text-[--color-text-muted]">Enable</span>
+            </label>
+          ) : prop.type === 'select' ? (
             <select
               value={String(values[prop.id] ?? prop.default)}
               onChange={(e) => onChange({ ...values, [prop.id]: e.target.value })}
@@ -41,11 +48,11 @@ function ConfigFields({
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
             </select>
-          ) : prop.type === 'number' ? (
+          ) : (
             <div className="flex items-center gap-2">
               <input
                 type="number"
-                value={values[prop.id] ?? prop.default}
+                value={values[prop.id] as number ?? prop.default as number}
                 min={prop.min}
                 max={prop.max}
                 onChange={(e) => onChange({ ...values, [prop.id]: e.target.valueAsNumber })}
@@ -53,13 +60,6 @@ function ConfigFields({
               />
               {prop.unit && <span className="text-xs text-[--color-text-muted] shrink-0">{prop.unit}</span>}
             </div>
-          ) : (
-            <input
-              type="text"
-              value={String(values[prop.id] ?? prop.default)}
-              onChange={(e) => onChange({ ...values, [prop.id]: e.target.value })}
-              className={inputCls}
-            />
           )}
         </div>
       ))}
@@ -72,21 +72,17 @@ function ConfigFields({
 // ---------------------------------------------------------------------------
 
 function CreateConfigModal({ onSave, onClose }: { onSave: (cfg: ProductionConfig) => void; onClose: () => void }) {
-  const templates = useTemplatesStore((s) => s.templates)
   const [name, setName] = useState('')
-  const [values, setValues] = useState<Record<string, string | number>>(() => {
-    const props = templates[0]?.properties ?? []
-    return Object.fromEntries(props.map((p) => [p.id, p.default]))
-  })
+  const [values, setValues] = useState<Record<string, string | number | boolean>>(() =>
+    Object.fromEntries(PRODUCTION_PROPERTIES.map((p) => [p.id, p.default]))
+  )
   const [saving, setSaving] = useState(false)
 
   async function handleCreate() {
     if (!name.trim()) return
-    const templateId = templates[0]?.id
-    if (!templateId) return
     setSaving(true)
     try {
-      const created = await productionConfigsApi.create({ name: name.trim(), templateId, values })
+      const created = await productionConfigsApi.create({ name: name.trim(), values })
       onSave(created)
     } finally {
       setSaving(false)
@@ -126,7 +122,7 @@ function CreateConfigModal({ onSave, onClose }: { onSave: (cfg: ProductionConfig
 
 function EditConfigModal({ config, onSave, onClose }: { config: ProductionConfig; onSave: (updated: ProductionConfig) => void; onClose: () => void }) {
   const [name, setName] = useState(config.name)
-  const [values, setValues] = useState<Record<string, string | number>>({ ...config.values })
+  const [values, setValues] = useState<Record<string, string | number | boolean>>({ ...config.values })
   const [saving, setSaving] = useState(false)
 
   async function handleSave() {
@@ -184,7 +180,7 @@ export function ConfigsPanel() {
   async function load() {
     setIsLoading(true)
     try {
-      const data = await productionConfigsApi.listAll()
+      const data = await productionConfigsApi.list()
       setConfigs(data)
     } finally {
       setIsLoading(false)

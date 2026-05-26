@@ -6,6 +6,17 @@ import { usePipelineStore } from './pipeline.store.js'
 
 export type TransitionType = 'fade' | 'slide_left' | 'slide_right' | 'slide_up' | 'slide_down'
 
+export interface PipZone {
+  rect: { x: number; y: number; w: number; h: number } | null
+  capacity: number | null
+  sources: number[]
+}
+
+export interface PipConfig {
+  bg: number | null
+  zones: PipZone[]
+}
+
 interface ProductionState {
   /** Active mixer input on program, e.g. "video_in_0" */
   pgmInput: string | null
@@ -20,6 +31,11 @@ interface ProductionState {
   dskState: Record<number, boolean>
   /** Runtime source time offsets: mixerInput → offsetMs. Synced via WS, reset on production change. */
   sourceOffsets: Record<string, number>
+  /** Runtime source audio time offsets: mixerInput → offsetMs. Synced via WS, reset on production change. */
+  sourceAudioOffsets: Record<string, number>
+  pgmPip: number | null
+  pvwPip: number | null
+  pips: PipConfig[]
 }
 
 interface ProductionActions {
@@ -35,6 +51,11 @@ interface ProductionActions {
   setDskState: (layer: number, visible: boolean) => void
   /** Server-authoritative offset setter — called by WS handler on SOURCE_OFFSET_STATE */
   applySourceOffset: (mixerInput: string, offsetMs: number) => void
+  /** Server-authoritative audio offset setter — called by WS handler on SOURCE_AUDIO_OFFSET_STATE */
+  applySourceAudioOffset: (mixerInput: string, offsetMs: number) => void
+  applyPipState: (pgmPip: number | null, pvwPip: number | null, pips: PipConfig[]) => void
+  applyPipConfig: (pipIdx: number, config: PipConfig) => void
+  setPvwPip: (pip: number | null) => void
 }
 
 export const useProductionStore = create<ProductionState & ProductionActions>()(
@@ -50,6 +71,10 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
       activeProductionId: null,
       dskState: {},
       sourceOffsets: {},
+      sourceAudioOffsets: {},
+      pgmPip: null,
+      pvwPip: null,
+      pips: [],
 
       // Actions
       cut: () =>
@@ -107,6 +132,10 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
           state.tBarPosition = 1
           state.dskState = {}
           state.sourceOffsets = {}
+          state.sourceAudioOffsets = {}
+          state.pgmPip = null
+          state.pvwPip = null
+          state.pips = []
         })
         // Clear audio strips synchronously so the new production never renders with
         // a previous production's elements. React 18 batches these two store updates
@@ -124,6 +153,28 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
       applySourceOffset: (mixerInput, offsetMs) =>
         set((state) => {
           state.sourceOffsets[mixerInput] = offsetMs
+        }),
+
+      applySourceAudioOffset: (mixerInput, offsetMs) =>
+        set((state) => {
+          state.sourceAudioOffsets[mixerInput] = offsetMs
+        }),
+
+      applyPipState: (pgmPip, pvwPip, pips) =>
+        set((state) => {
+          state.pgmPip = pgmPip
+          state.pvwPip = pvwPip
+          state.pips = pips
+        }),
+
+      applyPipConfig: (pipIdx, config) =>
+        set((state) => {
+          state.pips[pipIdx] = config
+        }),
+
+      setPvwPip: (pip) =>
+        set((state) => {
+          state.pvwPip = pip
         }),
     })),
     { name: 'production' },

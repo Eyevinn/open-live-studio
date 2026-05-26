@@ -67,7 +67,7 @@ export const ProgramPreview = forwardRef<ProgramPreviewHandle, ProgramPreviewPro
           <VideoTile ref={tileRef} stream={programStream} label="" tally="off" className="h-full w-full" noSignal={noSignal} />
 
           {/* Connection state badge — bottom right */}
-          <div className="absolute bottom-2 right-2 pointer-events-none">
+          <div className="absolute bottom-2 right-2 pointer-events-none" style={{ zIndex: 2 }}>
             {connectionState === 'connected' && <Badge variant="live" label="LIVE" />}
             {connectionState === 'connecting' && <Badge variant="connecting" label="CONNECTING" />}
             {connectionState === 'error' && (

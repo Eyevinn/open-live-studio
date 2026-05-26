@@ -65,49 +65,20 @@ export interface ApiProduction {
   graphicAssignments?: ProductionGraphicAssignment[]
   outputAssignments?: ProductionOutputAssignment[]
   whepOutputUrls?: Array<{ outputId: string; url: string }>
-  templateId?: string
   stromFlowId?: string
   whepEndpoint?: string
   pgmWhepEndpoint?: string
   whipEndpoints?: Array<{ mixerInput: string; url: string }>
   srtOutputUri?: string
-  values?: Record<string, string | number>
+  values?: Record<string, string | number | boolean>
   airTime?: string
   deletionWarnings?: Array<{ type: 'source' | 'graphic' | 'output'; name: string }>
-}
-
-export interface TemplateProperty {
-  id: string
-  label: string
-  type: 'select' | 'text' | 'number'
-  default: string | number
-  options?: Array<{ value: string; label: string }>
-  min?: number
-  max?: number
-  unit?: string
-}
-
-export interface ApiTemplate {
-  id: string
-  name: string
-  description?: string
-  flow: {
-    elements: unknown[]
-    blocks: unknown[]
-    links: unknown[]
-  }
-  inputs: Array<{ id: string }>
-  audioElements?: ApiAudioElement[]
-  properties?: TemplateProperty[]
-  createdAt: string
-  updatedAt: string
 }
 
 export interface ProductionConfig {
   _id: string
   name: string
-  templateId: string
-  values: Record<string, string | number>
+  values: Record<string, string | number | boolean>
   createdAt: string
   updatedAt: string
 }
@@ -120,13 +91,12 @@ type RawProduction = {
   graphicAssignments?: ProductionGraphicAssignment[]
   outputAssignments?: ProductionOutputAssignment[]
   whepOutputUrls?: Array<{ outputId: string; url: string }>
-  templateId?: string
   stromFlowId?: string
   whepEndpoint?: string
   pgmWhepEndpoint?: string
   whipEndpoints?: Array<{ mixerInput: string; url: string }>
   srtOutputUri?: string
-  values?: Record<string, string | number>
+  values?: Record<string, string | number | boolean>
   airTime?: string
   deletionWarnings?: Array<{ type: 'source' | 'graphic' | 'output'; name: string }>
 }
@@ -140,7 +110,6 @@ function normalizeProduction(d: RawProduction): ApiProduction {
     graphicAssignments: d.graphicAssignments ?? [],
     outputAssignments: d.outputAssignments ?? [],
     whepOutputUrls: d.whepOutputUrls,
-    templateId: d.templateId,
     stromFlowId: d.stromFlowId,
     whepEndpoint: d.whepEndpoint,
     pgmWhepEndpoint: d.pgmWhepEndpoint,
@@ -167,7 +136,7 @@ export const productionsApi = {
       body: JSON.stringify(body),
     }).then(normalizeProduction),
 
-  update: (id: string, body: { name?: string; templateId?: string | null; values?: Record<string, string | number>; airTime?: string | null }) =>
+  update: (id: string, body: { name?: string; values?: Record<string, string | number | boolean>; airTime?: string | null }) =>
     request<RawProduction>(`/api/v1/productions/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
@@ -311,19 +280,16 @@ export const statusApi = {
 }
 
 export const productionConfigsApi = {
-  listAll: () =>
+  list: () =>
     request<ProductionConfig[]>('/api/v1/production-configs'),
 
-  list: (templateId: string) =>
-    request<ProductionConfig[]>(`/api/v1/production-configs?templateId=${encodeURIComponent(templateId)}`),
-
-  create: (body: { name: string; templateId: string; values: Record<string, string | number> }) =>
+  create: (body: { name: string; values: Record<string, string | number | boolean> }) =>
     request<ProductionConfig>('/api/v1/production-configs', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
 
-  update: (id: string, body: { name?: string; values?: Record<string, string | number> }) =>
+  update: (id: string, body: { name?: string; values?: Record<string, string | number | boolean> }) =>
     request<ProductionConfig>(`/api/v1/production-configs/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
@@ -331,29 +297,6 @@ export const productionConfigsApi = {
 
   remove: (id: string) =>
     request<void>(`/api/v1/production-configs/${id}`, { method: 'DELETE' }),
-}
-
-export const templatesApi = {
-  list: () =>
-    request<ApiTemplate[]>('/api/v1/templates'),
-
-  create: (body: Omit<ApiTemplate, 'id' | 'createdAt' | 'updatedAt'>) =>
-    request<ApiTemplate>('/api/v1/templates', {
-      method: 'POST',
-      body: JSON.stringify(body),
-    }),
-
-  get: (id: string) =>
-    request<ApiTemplate>(`/api/v1/templates/${id}`),
-
-  update: (id: string, body: Partial<Omit<ApiTemplate, 'id' | 'createdAt' | 'updatedAt'>>) =>
-    request<ApiTemplate>(`/api/v1/templates/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(body),
-    }),
-
-  remove: (id: string) =>
-    request<void>(`/api/v1/templates/${id}`, { method: 'DELETE' }),
 }
 
 export interface ApiGraphic {

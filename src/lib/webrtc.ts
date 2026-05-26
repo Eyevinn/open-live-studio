@@ -27,10 +27,16 @@ type WhepOptions = {
   authToken?: string
 }
 
+// How long to wait for ICE to reach 'connected' after the offer is posted.
+// Must be longer than the TURN allocation timeout (typically 4-8 s) so that
+// TURN failures have time to fall back to host/STUN candidates.
+const ICE_CONNECT_TIMEOUT_MS = 15_000
+
 export class WhepClient {
   private pc: RTCPeerConnection | null = null
   private resourceUrl: string | null = null
   private healthInterval: ReturnType<typeof setInterval> | null = null
+  private iceConnectTimer: ReturnType<typeof setTimeout> | null = null
   private prevFramesDecoded = 0
   private prevPacketsLost = 0
   private frozenSince = 0
@@ -75,11 +81,16 @@ export class WhepClient {
       this.pc.oniceconnectionstatechange = () => {
         const state = this.pc?.iceConnectionState
         if (state === 'connected' || state === 'completed') {
+          this._clearIceConnectTimer()
           this.callbacks.onConnected?.()
           this._startHealthMonitor()
         } else if (state === 'failed') {
+          this._clearIceConnectTimer()
           this.callbacks.onError?.('ICE connection failed — check TURN server')
         } else if (state === 'disconnected') {
+          // 'disconnected' is transient in some browsers but can also be terminal.
+          // Fire onDisconnected for UI feedback; the health monitor detects a
+          // sustained freeze and triggers onError → retry if the stream never recovers.
           this.callbacks.onDisconnected?.()
         }
       }
@@ -90,12 +101,13 @@ export class WhepClient {
 
       this.pc.onicecandidate = (_e) => { /* ICE candidate events — no logging needed */ }
 
-      // Two audio transceivers so the offer has two audio m-lines — required for
-      // WHEP endpoints with num_audio_tracks:2 (e.g. PGM + MON bus). If the server
-      // only sends one audio track, the second transceiver is set to inactive in the
-      // answer and no second ontrack event fires.
-      this.pc.addTransceiver('audio', { direction: 'recvonly' })
-      this.pc.addTransceiver('audio', { direction: 'recvonly' })
+      // Six audio transceivers: main + monitor + up to 4 aux buses.
+      // The server sets unused transceivers to inactive in its answer — offering
+      // more than the server uses is harmless. Must match or exceed num_audio_tracks
+      // on the WHEP output block (flow-generator wires main, monitor, aux1…auxN).
+      for (let i = 0; i < 6; i++) {
+        this.pc.addTransceiver('audio', { direction: 'recvonly' })
+      }
       this.pc.addTransceiver('video', { direction: 'recvonly' })
 
       const offer = await this.pc.createOffer()
@@ -103,10 +115,13 @@ export class WhepClient {
       offer.sdp = this._enableOpusStereo(offer.sdp ?? '')
       await this.pc.setLocalDescription(offer)
 
-      // Wait for ICE gathering (2 s timeout)
+      // Wait for ICE gathering (5 s timeout).
+      // Longer than 2 s so TURN candidates have time to resolve even when DNS
+      // is slow. Browser host/STUN candidates arrive in < 100 ms — the extra
+      // wait only matters when TURN allocation is in progress.
       await new Promise<void>((resolve) => {
         if (this.pc?.iceGatheringState === 'complete') { resolve(); return }
-        const timer = setTimeout(resolve, 2000)
+        const timer = setTimeout(resolve, 5000)
         this.pc!.onicegatheringstatechange = () => {
           if (this.pc?.iceGatheringState === 'complete') { clearTimeout(timer); resolve() }
         }
@@ -130,6 +145,19 @@ export class WhepClient {
       this.resourceUrl = resp.headers.get('Location')
       const answerSdp = await resp.text()
       await this.pc.setRemoteDescription({ type: 'answer', sdp: answerSdp })
+
+      // If ICE is already connected (e.g. loopback/same-host), skip the timer.
+      // Otherwise arm a watchdog: if ICE hasn't reached 'connected' within the
+      // timeout, treat it as a failure so the caller can retry. This catches the
+      // case where TURN is flaky and ICE gets stuck in 'checking' indefinitely.
+      const alreadyUp = this.pc.iceConnectionState === 'connected' || this.pc.iceConnectionState === 'completed'
+      if (!alreadyUp) {
+        this.iceConnectTimer = setTimeout(() => {
+          this.callbacks.onError?.(`ICE connection timed out after ${ICE_CONNECT_TIMEOUT_MS}ms`)
+          this.close()
+        }, ICE_CONNECT_TIMEOUT_MS)
+      }
+
       return true
     } catch (err) {
       this.callbacks.onError?.((err as Error).message)
@@ -147,10 +175,15 @@ export class WhepClient {
   }
 
   close(): void {
+    this._clearIceConnectTimer()
     if (this.healthInterval) { clearInterval(this.healthInterval); this.healthInterval = null }
     this.pc?.close()
     this.pc = null
     this.resourceUrl = null
+  }
+
+  private _clearIceConnectTimer(): void {
+    if (this.iceConnectTimer) { clearTimeout(this.iceConnectTimer); this.iceConnectTimer = null }
   }
 
   isConnected(): boolean {

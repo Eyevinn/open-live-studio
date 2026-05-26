@@ -4,11 +4,11 @@ import { Link, useNavigate } from 'react-router'
 import { useProductionsStore, type Production } from '@/store/productions.store'
 import { useProductionStore } from '@/store/production.store'
 import { useSourcesStore } from '@/store/sources.store'
-import { useTemplatesStore } from '@/store/templates.store'
 import { useGraphicsStore } from '@/store/graphics.store'
 import { useOutputsStore } from '@/store/outputs.store'
 import { productionsApi, productionConfigsApi } from '@/lib/api'
-import type { ApiTemplate, TemplateProperty, ProductionConfig, ProductionGraphicAssignment } from '@/lib/api'
+import type { ProductionConfig, ProductionGraphicAssignment } from '@/lib/api'
+import { PRODUCTION_PROPERTIES, type TemplateProperty } from '@/lib/production-schema'
 import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
@@ -41,6 +41,38 @@ const MAX_INPUTS = 10
 const MIN_INPUTS = 2
 
 function mixerInput(index: number) { return `video_in_${index}` }
+
+// ---------------------------------------------------------------------------
+// Tooltip content for each template property id
+// ---------------------------------------------------------------------------
+
+const PROP_TOOLTIPS: Record<string, string> = {
+  mix_latency:          'Audio pipeline latency in milliseconds. Higher values improve stability; lower values reduce delay.',
+  clock:                'GStreamer pipeline clock. Use TAI to synchronise EFP cameras by absolute timestamp.',
+  pgm_resolution:       'Resolution of the programme output.',
+  pgm_framerate:        'Frame rate of the programme output.',
+  bitrate:              'Video encoding bitrate for the programme output, in kbps.',
+  multiview_resolution: 'Resolution of the multiviewer output.',
+  multiview_framerate:  'Frame rate of the multiviewer output.',
+  multiview_bitrate:    'Video encoding bitrate for the multiviewer output, in kbps.',
+  num_aux_buses:        'Number of auxiliary audio send buses. Each aux bus can feed monitors, IFB returns, or external recordings.',
+  num_groups:           'Number of group (submix) buses for routing channels to shared processing before the main mix.',
+  ebu_main:             'Enables EBU R128 integrated loudness metering on the main programme bus.',
+  num_pips:             'Number of Picture-in-Picture slots available in the vision mixer.',
+}
+
+// Small ⓘ icon that reveals a tooltip on hover.
+// Uses the shared Tooltip component — do not re-style the content wrapper.
+function InfoTip({ text }: { text: string }) {
+  return (
+    <Tooltip
+      className="inline-flex items-center"
+      content={<span className="text-xs text-zinc-200 leading-relaxed max-w-52 block">{text}</span>}
+    >
+      <span className="inline-flex items-center justify-center w-3.5 h-3.5 rounded-full border border-current text-[9px] leading-none text-[--color-text-muted] opacity-40 hover:opacity-80 cursor-help transition-opacity select-none shrink-0">i</span>
+    </Tooltip>
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Source slot row — one input
@@ -200,11 +232,10 @@ function OutputSlotRow({ value, usedIds, takenByOtherIds, canRemove, onChange, o
 
 interface OptionsModalProps {
   production: Production
-  template: ApiTemplate | null
   onClose: () => void
 }
 
-function ProductionOptionsModal({ production, template, onClose }: OptionsModalProps) {
+function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
   const { assignSource, unassignSource, assignGraphic, unassignGraphic, updateValues, updateName, assignOutput, unassignOutput } = useProductionsStore()
   const allProductions = useProductionsStore((s) => s.productions)
   const sources = useSourcesStore((s) => s.sources)
@@ -303,16 +334,15 @@ function ProductionOptionsModal({ production, template, onClose }: OptionsModalP
     setAssignments(newAssignments)
     setSlotCount((c) => c - 1)
 
-    // Sync backend for every slot that changed
-    const ops: Promise<unknown>[] = []
+    // Sync backend for every slot that changed — sequential to avoid CouchDB 409 conflicts
+    // when multiple writes race on the same document revision.
     for (let i = index; i < slotCount; i++) {
       const pad = mixerInput(i)
       const newSrc = newAssignments[pad]
       const oldSrc = assignments[pad]
-      if (newSrc && newSrc !== oldSrc) ops.push(assignSource(production.id, { mixerInput: pad, sourceId: newSrc }))
-      else if (!newSrc && oldSrc) ops.push(unassignSource(production.id, pad))
+      if (newSrc && newSrc !== oldSrc) await assignSource(production.id, { mixerInput: pad, sourceId: newSrc })
+      else if (!newSrc && oldSrc) await unassignSource(production.id, pad)
     }
-    await Promise.all(ops)
   }
 
   async function handleGfxChange(dskInput: string, graphicId: string) {
@@ -324,89 +354,86 @@ function ProductionOptionsModal({ production, template, onClose }: OptionsModalP
     }
   }
 
-  const [configValues, setConfigValues] = useState<Record<string, string | number>>(() => {
+  const [configValues, setConfigValues] = useState<Record<string, string | number | boolean>>(() => {
     if (production.values && Object.keys(production.values).length > 0) return { ...production.values }
-    return Object.fromEntries((template?.properties ?? []).map((p) => [p.id, p.default]))
+    return Object.fromEntries(PRODUCTION_PROPERTIES.map((p) => [p.id, p.default]))
   })
   const [valuesDirty, setValuesDirty] = useState(false)
+  const [savedConfigs, setSavedConfigs] = useState<ProductionConfig[]>([])
+  const [selectedConfigId, setSelectedConfigId] = useState<string>('')
 
-  function handleValueChange(id: string, value: string | number) {
+  useEffect(() => {
+    void productionConfigsApi.list().then(setSavedConfigs).catch(() => setSavedConfigs([]))
+  }, [])
+
+  function handleValueChange(id: string, value: string | number | boolean) {
     setConfigValues((prev) => ({ ...prev, [id]: value }))
     setValuesDirty(true)
   }
 
+  function handleConfigLoad(cfgId: string) {
+    setSelectedConfigId(cfgId)
+    if (!cfgId) return
+    const cfg = savedConfigs.find((c) => c._id === cfgId)
+    if (cfg) { setConfigValues({ ...cfg.values }); setValuesDirty(true) }
+  }
+
   const assigned = Object.values(assignments).filter(Boolean).length
 
-  return (
-    <Modal open title="Production Options" onClose={onClose} className="max-w-3xl">
-      <div className="flex flex-col gap-5">
-        <div className="grid grid-cols-2 gap-x-8">
+  const tProps = PRODUCTION_PROPERTIES
+  const cfgOnChange = isActive ? undefined : handleValueChange
 
-          {/* LEFT — name + config */}
-          <div className="flex flex-col gap-5">
-            <div className="flex flex-col gap-1">
-              <span className="text-xs uppercase tracking-wider text-orange-500">Name</span>
-              <input
-                className={inputCls}
-                value={prodName}
-                onChange={(e) => setProdName(e.target.value)}
-                onBlur={() => void handleNameBlur()}
-                onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
-              />
+  return (
+    <Modal open title="Production Options" onClose={onClose} className="max-w-6xl">
+      <div className="flex flex-col gap-5">
+
+        {/* Two-column split: left = General+Sources+Graphics+Outputs, right = Configuration */}
+        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] divide-x divide-[--color-border]">
+
+          {/* Col 1: Setup (General · Sources · Graphics · Outputs) */}
+          <div className="flex flex-col gap-4 pr-8">
+
+            <div className="w-fit border-b border-orange-500 pb-1.5">
+              <span className="text-sm uppercase tracking-wider text-orange-500">Setup</span>
             </div>
 
-            {template && (template.properties?.length ?? 0) > 0 && (
-              <div className="flex flex-col gap-3">
-                <span className="text-xs uppercase tracking-wider text-orange-500">Configuration</span>
-                {isActive ? (
-                  <div className="flex flex-col gap-2">
-                    {(template.properties ?? []).map((prop) => (
-                      <div key={prop.id} className="flex flex-col gap-0.5">
-                        <span className="text-xs text-[--color-text-muted]">{prop.label}</span>
-                        <span className="text-sm text-[--color-text-primary] font-mono">
-                          {prop.type === 'select'
-                            ? (prop.options?.find((o) => o.value === String(configValues[prop.id] ?? prop.default))?.label ?? String(configValues[prop.id] ?? prop.default))
-                            : `${configValues[prop.id] ?? prop.default}${prop.unit ? ` ${prop.unit}` : ''}`}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-3">
-                    {(template.properties ?? []).map((prop) => (
-                      <div key={prop.id}>
-                        <label className="text-xs text-[--color-text-muted] block mb-1">{prop.label}</label>
-                        <PropertyField
-                          property={prop}
-                          value={configValues[prop.id] ?? prop.default}
-                          onChange={(v) => handleValueChange(prop.id, v)}
-                        />
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* RIGHT — sources, graphics, outputs */}
-          <div className="flex flex-col gap-5 border-l border-[--color-border] pl-8">
-
-            {/* Sources */}
             <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
+              <span className="text-xs uppercase tracking-wider text-orange-500">General</span>
+              <div className="flex flex-col gap-2">
+                <div>
+                  <div className="flex items-center gap-1 mb-1">
+                    <label className="text-xs text-[--color-text-muted]">Name</label>
+                    <InfoTip text="The name of this production, displayed in the productions list." />
+                  </div>
+                  {isActive
+                    ? <span className="text-sm text-[--color-text-primary]">{production.name}</span>
+                    : <input className={inputCls} value={prodName} onChange={(e) => setProdName(e.target.value)} onBlur={() => void handleNameBlur()} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }} />
+                  }
+                </div>
+                <div>
+                  <div className="flex items-center gap-1 mb-1">
+                    <label className="text-xs text-[--color-text-muted]">Air Time <span className="font-normal normal-case">(optional)</span></label>
+                    <InfoTip text="Optional scheduled air time. An 'On Air' badge appears on the production card once this time is reached." />
+                  </div>
+                  {isActive
+                    ? <span className="text-sm text-[--color-text-primary] font-mono">{production.airTime ? new Date(production.airTime).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) : <span className="text-[--color-text-muted] italic text-xs">Not set</span>}</span>
+                    : <input type="datetime-local" value={airTimeLocal} onChange={(e) => void handleAirTimeChange(e.target.value)} className={selectCls} />
+                  }
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-1">
                 <span className="text-xs uppercase tracking-wider text-orange-500">Sources</span>
-                <span className="text-xs font-mono text-[--color-text-muted]">{assigned} assigned</span>
+                <InfoTip text="Camera feeds and other inputs assigned to mixer slots. Each source connects to a video input on the vision mixer." />
               </div>
               {isActive ? (
                 <div className="flex flex-col gap-1.5">
-                  {production.sources.length === 0 ? (
-                    <span className="text-xs text-[--color-text-muted] italic">No sources assigned</span>
-                  ) : (
-                    production.sources.map((s) => (
-                      <SourceAssignmentBadge key={s.mixerInput} assignment={s} />
-                    ))
-                  )}
+                  {production.sources.length === 0
+                    ? <span className="text-xs text-[--color-text-muted] italic">No sources assigned</span>
+                    : production.sources.map((s) => <SourceAssignmentBadge key={s.mixerInput} assignment={s} />)
+                  }
                 </div>
               ) : sources.length === 0 ? (
                 <p className="text-xs text-[--color-text-muted] py-1">No sources available.</p>
@@ -414,32 +441,21 @@ function ProductionOptionsModal({ production, template, onClose }: OptionsModalP
                 <>
                   <div className="flex flex-col gap-2">
                     {Array.from({ length: slotCount }, (_, i) => (
-                      <SlotRow
-                        key={i}
-                        index={i}
-                        currentSourceId={assignments[mixerInput(i)] ?? ''}
-                        canRemove={slotCount > MIN_INPUTS}
-                        onChange={(sourceId) => void handleChange(i, sourceId)}
-                        onRemove={() => void handleRemove(i)}
-                      />
+                      <SlotRow key={i} index={i} currentSourceId={assignments[mixerInput(i)] ?? ''} canRemove={slotCount > MIN_INPUTS} onChange={(sourceId) => void handleChange(i, sourceId)} onRemove={() => void handleRemove(i)} />
                     ))}
                   </div>
                   {slotCount < MAX_INPUTS && (
-                    <button
-                      type="button"
-                      onClick={() => setSlotCount((c) => c + 1)}
-                      className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity"
-                    >
-                      + New Input
-                    </button>
+                    <button type="button" onClick={() => setSlotCount((c) => c + 1)} className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity">+ New Input</button>
                   )}
                 </>
               )}
             </div>
 
-            {/* Graphics (DSK) */}
             <div className="flex flex-col gap-2">
-              <span className="text-xs uppercase tracking-wider text-orange-500">Graphics (DSK)</span>
+              <div className="flex items-center gap-1">
+                <span className="text-xs uppercase tracking-wider text-orange-500">Graphics (DSK)</span>
+                <InfoTip text="Downstream Keyers composite graphic overlays over the programme output after the vision mixer." />
+              </div>
               {isActive ? (
                 <div className="flex flex-col gap-1.5">
                   {DSK_SLOTS.map((dskInput) => {
@@ -447,10 +463,7 @@ function ProductionOptionsModal({ production, template, onClose }: OptionsModalP
                     const graphic = graphics.find((g) => g.id === graphicId)
                     return (
                       <div key={dskInput} className="flex items-center gap-2">
-                        {graphic
-                          ? <span className="text-xs text-[--color-text-primary]">{graphic.name}</span>
-                          : <span className="text-xs text-[--color-text-muted] italic">None</span>
-                        }
+                        {graphic ? <span className="text-xs text-[--color-text-primary]">{graphic.name}</span> : <span className="text-xs text-[--color-text-muted] italic">None</span>}
                       </div>
                     )
                   })}
@@ -458,84 +471,69 @@ function ProductionOptionsModal({ production, template, onClose }: OptionsModalP
               ) : (
                 <div className="flex flex-col gap-2">
                   {DSK_SLOTS.map((dskInput) => (
-                    <GfxSlotRow
-                      key={dskInput}
-                      dskInput={dskInput}
-                      currentGraphicId={gfxAssignments[dskInput] ?? ''}
-                      onChange={(graphicId) => void handleGfxChange(dskInput, graphicId)}
-                    />
+                    <GfxSlotRow key={dskInput} dskInput={dskInput} currentGraphicId={gfxAssignments[dskInput] ?? ''} onChange={(graphicId) => void handleGfxChange(dskInput, graphicId)} />
                   ))}
                 </div>
               )}
             </div>
 
-            {/* Outputs */}
             <div className="flex flex-col gap-2">
-              <span className="text-xs uppercase tracking-wider text-orange-500">Outputs</span>
+              <div className="flex items-center gap-1">
+                <span className="text-xs uppercase tracking-wider text-orange-500">Outputs</span>
+                <InfoTip text="Output destinations where the programme signal is sent — SRT transmitters or EFP encoders." />
+              </div>
               {isActive ? (
                 <div className="flex flex-col gap-1.5">
                   {outputList.length === 0
                     ? <span className="text-xs text-[--color-text-muted] italic">No outputs assigned</span>
                     : outputList.map((outputId) => {
                         const label = outputId === VIRTUAL_OUTPUT_ID ? 'WHEP Output' : (catalogueOutputs.find((o) => o.id === outputId)?.name ?? outputId)
-                        return (
-                          <div key={outputId} className="flex items-center gap-2">
-                            <span className="text-xs text-[--color-text-primary]">{label}</span>
-                          </div>
-                        )
+                        return <div key={outputId}><span className="text-xs text-[--color-text-primary]">{label}</span></div>
                       })
                   }
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
                   {outputList.map((id, i) => (
-                    <OutputSlotRow
-                      key={i}
-                      value={id}
-                      usedIds={outputList}
-                      takenByOtherIds={[]}
-                      canRemove={true}
-                      onChange={(newId) => void handleOutputChange(i, newId)}
-                      onRemove={() => void handleOutputRemove(i)}
-                    />
+                    <OutputSlotRow key={i} value={id} usedIds={outputList} takenByOtherIds={[]} canRemove={true} onChange={(newId) => void handleOutputChange(i, newId)} onRemove={() => void handleOutputRemove(i)} />
                   ))}
-                  <button
-                    type="button"
-                    onClick={() => setOutputList((prev) => [...prev, ''])}
-                    className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity"
-                  >
-                    + New Output
-                  </button>
+                  <button type="button" onClick={() => setOutputList((prev) => [...prev, ''])} className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity">+ New Output</button>
                 </div>
               )}
             </div>
 
-            {/* Air Time */}
-            <div className="flex flex-col gap-2">
-              <span className="text-xs uppercase tracking-wider text-orange-500">Air Time <span className="normal-case text-[--color-text-muted]">(optional)</span></span>
-              {isActive ? (
-                <span className="text-sm text-[--color-text-primary] font-mono">
-                  {production.airTime
-                    ? new Date(production.airTime).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' })
-                    : <span className="text-[--color-text-muted] italic text-xs">Not set</span>}
-                </span>
-              ) : (
-                <input
-                  type="datetime-local"
-                  value={airTimeLocal}
-                  onChange={(e) => void handleAirTimeChange(e.target.value)}
-                  className={selectCls}
-                />
+          </div>
+
+          {/* Col 2: Configuration (Strom · PGM | Multiviewer · Audio · PiP) */}
+          <div className="flex flex-col gap-4 pl-8">
+
+            <div className="flex items-center gap-3">
+              <span className="text-sm uppercase tracking-wider text-orange-500 border-b border-orange-500 pb-0.5">Configuration</span>
+              {savedConfigs.length > 0 && (
+                <select value={selectedConfigId} onChange={(e) => handleConfigLoad(e.target.value)} className="px-2 py-1 rounded bg-[--color-surface-raised] border border-[--color-border-strong] text-xs text-[--color-text-primary] focus:outline-none focus:border-orange-500 appearance-none cursor-pointer" disabled={isActive}>
+                  <option value="">— load saved config —</option>
+                  {savedConfigs.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+                </select>
               )}
+            </div>
+
+            <div className="grid grid-cols-2">
+              <div className="flex flex-col gap-4 pr-6">
+                <ConfigFieldGroup label="Strom" ids={['mix_latency', 'clock']} properties={tProps} values={configValues} onChange={cfgOnChange} />
+                <ConfigFieldGroup label="PGM" ids={['pgm_resolution', 'pgm_framerate', 'bitrate']} properties={tProps} values={configValues} onChange={cfgOnChange} />
+              </div>
+              <div className="flex flex-col gap-4 pl-6">
+                <ConfigFieldGroup label="Multiviewer" ids={['multiview_resolution', 'multiview_framerate', 'multiview_bitrate']} properties={tProps} values={configValues} onChange={cfgOnChange} />
+                <ConfigFieldGroup label="Audio" ids={['num_aux_buses', 'num_groups', 'ebu_main']} properties={tProps} values={configValues} onChange={cfgOnChange} />
+                <ConfigFieldGroup label="Picture in Picture" ids={['num_pips']} properties={tProps} values={configValues} onChange={cfgOnChange} />
+              </div>
             </div>
 
           </div>
         </div>
 
-        <div className="flex items-center justify-between pt-3 border-t border-[--color-border]">
-          {isActive && (
-            <span className="text-xs text-[--color-text-muted] italic">Deactivate this production to make changes.</span>
-          )}
+        <div className="flex items-center justify-between">
+          {isActive && <span className="text-xs text-[--color-text-muted] italic">Deactivate this production to make changes.</span>}
           <Button variant="active" onClick={() => { if (valuesDirty) void updateValues(production.id, configValues); onClose() }} className="ml-auto">Done</Button>
         </div>
       </div>
@@ -552,15 +550,31 @@ interface CreateModalProps {
   onCreated: () => void
 }
 
+// Maps property IDs to config sub-sections.
+// Properties not listed here fall into a catch-all at the end.
+
 function PropertyField({
   property,
   value,
   onChange,
 }: {
   property: TemplateProperty
-  value: string | number
-  onChange: (v: string | number) => void
+  value: string | number | boolean
+  onChange: (v: string | number | boolean) => void
 }) {
+  if (property.type === 'boolean') {
+    return (
+      <label className="flex items-center gap-2 cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={Boolean(value)}
+          onChange={(e) => onChange(e.target.checked)}
+          className="accent-orange-500"
+        />
+        <span className="text-xs text-[--color-text-muted]">Enable</span>
+      </label>
+    )
+  }
   if (property.type === 'select') {
     return (
       <select
@@ -579,7 +593,7 @@ function PropertyField({
       <div className="flex items-center gap-2">
         <input
           type="number"
-          value={value}
+          value={value as number}
           min={property.min}
           max={property.max}
           onChange={(e) => onChange(e.target.valueAsNumber)}
@@ -601,21 +615,96 @@ function PropertyField({
   )
 }
 
-function defaultConfigValues(properties: TemplateProperty[]): Record<string, string | number> {
+// Renders a named group of config fields — handles both edit and read-only mode.
+// Pass onChange to enable editing; omit for read-only display.
+function ConfigFieldGroup({
+  label,
+  ids,
+  properties,
+  values,
+  onChange,
+}: {
+  label?: string
+  ids: string[]
+  properties: TemplateProperty[]
+  values: Record<string, string | number | boolean>
+  onChange?: (id: string, v: string | number | boolean) => void
+}) {
+  const props = ids.map((id) => properties.find((p) => p.id === id)).filter((p): p is TemplateProperty => !!p)
+  if (!props.length) return null
+  return (
+    <div className="flex flex-col gap-2">
+      {label && <span className="text-xs uppercase tracking-wider text-orange-500">{label}</span>}
+      <div className="flex flex-col gap-2">
+        {props.map((prop) => {
+          const value = values[prop.id] ?? prop.default
+          if (onChange) {
+            return (
+              <div key={prop.id}>
+                <div className="flex items-center gap-1 mb-1">
+                  <label className="text-xs text-[--color-text-muted]">{prop.label}</label>
+                  {PROP_TOOLTIPS[prop.id] && <InfoTip text={PROP_TOOLTIPS[prop.id]!} />}
+                </div>
+                <PropertyField property={prop} value={value} onChange={(v) => onChange(prop.id, v)} />
+                {prop.id === 'num_aux_buses' && Number(values['num_aux_buses'] ?? 0) > 0 && (
+                  <div className="mt-2">
+                    <span className="text-xs text-[--color-text-muted] block mb-1">Aux send mode</span>
+                    <div className="flex gap-4">
+                      <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                        <input type="checkbox" checked={values['aux_pre_fader'] !== false} onChange={() => onChange('aux_pre_fader', true)} className="accent-orange-500" />
+                        <span className="text-xs text-[--color-text-muted]">Pre</span>
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                        <input type="checkbox" checked={values['aux_pre_fader'] === false} onChange={() => onChange('aux_pre_fader', false)} className="accent-orange-500" />
+                        <span className="text-xs text-[--color-text-muted]">Post</span>
+                      </label>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          }
+          // Read-only
+          let display: string
+          if (prop.type === 'boolean') display = value ? 'Enabled' : 'Disabled'
+          else if (prop.type === 'select') display = prop.options?.find((o) => o.value === String(value))?.label ?? String(value)
+          else display = `${value}${prop.unit ? ` ${prop.unit}` : ''}`
+          return (
+            <div key={prop.id} className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-1">
+                <span className="text-xs text-[--color-text-muted]">{prop.label}</span>
+                {PROP_TOOLTIPS[prop.id] && <InfoTip text={PROP_TOOLTIPS[prop.id]!} />}
+              </div>
+              <span className="text-sm text-[--color-text-primary] font-mono">{display}</span>
+              {prop.id === 'num_aux_buses' && Number(value) > 0 && (
+                <div className="flex flex-col gap-0.5 mt-1">
+                  <span className="text-xs text-[--color-text-muted]">Aux send mode</span>
+                  <span className="text-sm text-[--color-text-primary] font-mono">
+                    {values['aux_pre_fader'] === false ? 'Post-fader' : 'Pre-fader'}
+                  </span>
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function defaultConfigValues(properties: TemplateProperty[]): Record<string, string | number | boolean> {
   return Object.fromEntries(properties.map((p) => [p.id, p.default]))
 }
 
 function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
   const { fetchAll } = useProductionsStore()
   const allProductions = useProductionsStore((s) => s.productions)
-  const templates = useTemplatesStore((s) => s.templates)
   const sources = useSourcesStore((s) => s.sources)
 
   // All outputs already assigned to any existing production
   const outputsTakenByAll = allProductions.flatMap((p) => p.outputAssignments.map((a) => a.outputId))
 
   const [name, setName] = useState('')
-  const [templateId, setTemplateId] = useState(() => templates[0]?.id ?? '')
   const [assignments, setAssignments] = useState<Record<string, string>>({})
   const [gfxAssignments, setGfxAssignments] = useState<Record<string, string>>({})
   const [outputList, setOutputList] = useState<string[]>([])
@@ -623,38 +712,20 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
   const [slotCount, setSlotCount] = useState(MIN_INPUTS)
   const [saving, setSaving] = useState(false)
 
-  const [configValues, setConfigValues] = useState<Record<string, string | number>>({})
+  const [configValues, setConfigValues] = useState<Record<string, string | number | boolean>>(() =>
+    defaultConfigValues(PRODUCTION_PROPERTIES)
+  )
   const [savedConfigs, setSavedConfigs] = useState<ProductionConfig[]>([])
   const [selectedConfigId, setSelectedConfigId] = useState<string>('')
   const [saveAsConfig, setSaveAsConfig] = useState(false)
   const [configName, setConfigName] = useState('')
 
-  const selectedTemplate = templates.find((t) => t.id === templateId) ?? null
-  const hasProperties = (selectedTemplate?.properties?.length ?? 0) > 0
+  const hasProperties = PRODUCTION_PROPERTIES.length > 0
 
-  // Auto-select first template if none selected yet (e.g. templates loaded after mount)
+  // Load saved configs on mount
   useEffect(() => {
-    if (!templateId && templates[0]) setTemplateId(templates[0].id)
-  }, [templates, templateId])
-
-  // Reset state when template changes
-  useEffect(() => {
-    setAssignments({})
-    setSlotCount(MIN_INPUTS)
-    setSelectedConfigId('')
-    setSaveAsConfig(false)
-    setConfigName('')
-    if (selectedTemplate?.properties) {
-      setConfigValues(defaultConfigValues(selectedTemplate.properties))
-      void productionConfigsApi.list(templateId).then(setSavedConfigs).catch(() => {
-        setSavedConfigs([])
-      })
-    } else {
-      setConfigValues({})
-      setSavedConfigs([])
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [templateId])
+    void productionConfigsApi.list().then(setSavedConfigs).catch(() => setSavedConfigs([]))
+  }, [])
 
   function handleConfigSelect(cfgId: string) {
     setSelectedConfigId(cfgId)
@@ -663,7 +734,7 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
     if (cfg) setConfigValues({ ...cfg.values })
   }
 
-  function handlePropertyChange(id: string, value: string | number) {
+  function handlePropertyChange(id: string, value: string | number | boolean) {
     setConfigValues((prev) => ({ ...prev, [id]: value }))
     setSelectedConfigId('') // deselect saved config when user edits manually
   }
@@ -672,18 +743,16 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
     if (!name.trim()) return
     setSaving(true)
     try {
-      if (saveAsConfig && configName.trim() && templateId && hasProperties) {
+      if (saveAsConfig && configName.trim() && hasProperties) {
         await productionConfigsApi.create({
           name: configName.trim(),
-          templateId,
           values: configValues,
         })
       }
 
       const prod = await productionsApi.create({ name: name.trim() })
       const airTimeIso = airTimeLocal ? new Date(airTimeLocal).toISOString() : undefined
-      const updateBody: { templateId?: string; values?: Record<string, string | number>; airTime?: string } = {}
-      if (templateId) updateBody.templateId = templateId
+      const updateBody: { values?: Record<string, string | number | boolean>; airTime?: string } = {}
       if (hasProperties && Object.keys(configValues).length > 0) updateBody.values = configValues
       if (airTimeIso) updateBody.airTime = airTimeIso
       if (Object.keys(updateBody).length > 0) await productionsApi.update(prod.id, updateBody)
@@ -705,194 +774,144 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
 
   const assignedCount = Object.values(assignments).filter(Boolean).length
 
-  return (
-    <Modal open title="New Production" onClose={onClose} className="max-w-3xl">
-      <div className="flex flex-col gap-4">
-        <div className="grid grid-cols-2 gap-x-8">
+  const tProps = PRODUCTION_PROPERTIES
 
-          {/* LEFT — name, template, config */}
-          <div className="flex flex-col gap-4">
-            <div>
-              <label className="text-xs text-[--color-text-muted] uppercase tracking-wider block mb-1">
-                Production Name
-              </label>
-              <input
-                type="text"
-                value={name}
-                autoFocus
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !saving) void handleCreate() }}
-                placeholder="Evening News — May 1"
-                className={inputCls}
-              />
+  return (
+    <Modal open title="New Production" onClose={onClose} className="max-w-6xl">
+      <div className="flex flex-col gap-4">
+
+        {/* Two-column split: left = General+Sources+Graphics+Outputs, right = Configuration */}
+        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] divide-x divide-[--color-border]">
+
+          {/* Col 1: Setup (General · Sources · Graphics · Outputs) */}
+          <div className="flex flex-col gap-4 pr-8">
+
+            <div className="w-fit border-b border-orange-500 pb-1.5">
+              <span className="text-sm uppercase tracking-wider text-orange-500">Setup</span>
             </div>
 
-            {selectedTemplate && hasProperties && (
-              <div className="flex flex-col gap-3">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs uppercase tracking-wider text-orange-500 shrink-0">Configuration</span>
-                  <select
-                    value={selectedConfigId}
-                    onChange={(e) => handleConfigSelect(e.target.value)}
-                    className="flex-1 px-2 py-1 rounded bg-[--color-surface-raised] border border-[--color-border-strong] text-xs text-[--color-text-primary] focus:outline-none focus:border-orange-500 appearance-none cursor-pointer"
-                  >
-                    <option value="">— load saved config —</option>
-                    {savedConfigs.map((c) => (
-                      <option key={c._id} value={c._id}>{c.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {(selectedTemplate.properties ?? []).map((prop) => (
-                  <div key={prop.id}>
-                    <label className="text-xs text-[--color-text-muted] block mb-1">{prop.label}</label>
-                    <PropertyField
-                      property={prop}
-                      value={configValues[prop.id] ?? prop.default}
-                      onChange={(v) => handlePropertyChange(prop.id, v)}
-                    />
-                  </div>
-                ))}
-
-                <label className="flex items-center justify-end gap-2 cursor-pointer select-none">
-                  <span className="text-xs text-[--color-text-muted]">Save as config</span>
-                  <input
-                    type="checkbox"
-                    checked={saveAsConfig}
-                    onChange={(e) => setSaveAsConfig(e.target.checked)}
-                    className="accent-orange-500"
-                  />
-                </label>
-                {saveAsConfig && (
-                  <input
-                    type="text"
-                    value={configName}
-                    onChange={(e) => setConfigName(e.target.value)}
-                    placeholder="Config name, e.g. HD Standard"
-                    className={inputCls}
-                  />
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* RIGHT — sources, graphics, outputs */}
-          <div className="flex flex-col gap-4 border-l border-[--color-border] pl-8">
-
-            {/* Sources */}
-            {selectedTemplate && (
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs uppercase tracking-wider text-orange-500">Sources</span>
-                  <span className="text-xs font-mono text-[--color-text-muted]">{assignedCount} assigned</span>
-                </div>
-                {sources.length === 0 ? (
-                  <p className="text-xs text-[--color-text-muted] py-1">No sources available.</p>
-                ) : (
-                  <>
-                    <div className="flex flex-col gap-2">
-                      {Array.from({ length: slotCount }, (_, i) => (
-                        <SlotRow
-                          key={i}
-                          index={i}
-                          currentSourceId={assignments[mixerInput(i)] ?? ''}
-                          canRemove={slotCount > MIN_INPUTS}
-                          onChange={(sourceId) =>
-                            setAssignments((prev) => ({ ...prev, [mixerInput(i)]: sourceId }))
-                          }
-                          onRemove={() => {
-                            setAssignments((prev) => {
-                              const n = { ...prev }
-                              for (let j = i; j < slotCount - 1; j++) {
-                                const next = mixerInput(j + 1)
-                                const curr = mixerInput(j)
-                                if (n[next]) { n[curr] = n[next] } else { delete n[curr] }
-                              }
-                              delete n[mixerInput(slotCount - 1)]
-                              return n
-                            })
-                            setSlotCount((c) => c - 1)
-                          }}
-                        />
-                      ))}
-                    </div>
-                    {slotCount < MAX_INPUTS && (
-                      <button
-                        type="button"
-                        onClick={() => setSlotCount((c) => c + 1)}
-                        className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity"
-                      >
-                        + New Input
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-
-            {/* Graphics (DSK) */}
             <div className="flex flex-col gap-2">
-              <span className="text-xs uppercase tracking-wider text-orange-500">Graphics (DSK)</span>
+              <span className="text-xs uppercase tracking-wider text-orange-500">General</span>
+              <div className="flex flex-col gap-2">
+                <div>
+                  <div className="flex items-center gap-1 mb-1">
+                    <label className="text-xs text-[--color-text-muted]">Name</label>
+                    <InfoTip text="The name of this production, displayed in the productions list." />
+                  </div>
+                  <input type="text" value={name} autoFocus onChange={(e) => setName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !saving) void handleCreate() }} placeholder="Evening News — May 1" className={inputCls} />
+                </div>
+                <div>
+                  <div className="flex items-center gap-1 mb-1">
+                    <label className="text-xs text-[--color-text-muted]">Air Time <span className="font-normal normal-case">(optional)</span></label>
+                    <InfoTip text="Optional scheduled air time. An 'On Air' badge appears on the production card once this time is reached." />
+                  </div>
+                  <input type="datetime-local" value={airTimeLocal} onChange={(e) => setAirTimeLocal(e.target.value)} className={selectCls} />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-1">
+                <span className="text-xs uppercase tracking-wider text-orange-500">Sources</span>
+                <InfoTip text="Camera feeds and other inputs assigned to mixer slots. Each source connects to a video input on the vision mixer." />
+              </div>
+              {sources.length === 0 ? (
+                <p className="text-xs text-[--color-text-muted] py-1">No sources available.</p>
+              ) : (
+                <>
+                  <div className="flex flex-col gap-2">
+                    {Array.from({ length: slotCount }, (_, i) => (
+                      <SlotRow key={i} index={i} currentSourceId={assignments[mixerInput(i)] ?? ''} canRemove={slotCount > MIN_INPUTS}
+                        onChange={(sourceId) => setAssignments((prev) => ({ ...prev, [mixerInput(i)]: sourceId }))}
+                        onRemove={() => {
+                          setAssignments((prev) => {
+                            const n = { ...prev }
+                            for (let j = i; j < slotCount - 1; j++) {
+                              const next = mixerInput(j + 1)
+                              const curr = mixerInput(j)
+                              if (n[next]) { n[curr] = n[next] } else { delete n[curr] }
+                            }
+                            delete n[mixerInput(slotCount - 1)]
+                            return n
+                          })
+                          setSlotCount((c) => c - 1)
+                        }}
+                      />
+                    ))}
+                  </div>
+                  {slotCount < MAX_INPUTS && (
+                    <button type="button" onClick={() => setSlotCount((c) => c + 1)} className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity">+ New Input</button>
+                  )}
+                </>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-1">
+                <span className="text-xs uppercase tracking-wider text-orange-500">Graphics (DSK)</span>
+                <InfoTip text="Downstream Keyers composite graphic overlays over the programme output after the vision mixer." />
+              </div>
               <div className="flex flex-col gap-2">
                 {DSK_SLOTS.map((dskInput) => (
-                  <GfxSlotRow
-                    key={dskInput}
-                    dskInput={dskInput}
-                    currentGraphicId={gfxAssignments[dskInput] ?? ''}
-                    onChange={(graphicId) =>
-                      setGfxAssignments((prev) => ({ ...prev, [dskInput]: graphicId }))
-                    }
-                  />
+                  <GfxSlotRow key={dskInput} dskInput={dskInput} currentGraphicId={gfxAssignments[dskInput] ?? ''} onChange={(graphicId) => setGfxAssignments((prev) => ({ ...prev, [dskInput]: graphicId }))} />
                 ))}
               </div>
             </div>
 
-            {/* Outputs */}
             <div className="flex flex-col gap-2">
-              <span className="text-xs uppercase tracking-wider text-orange-500">Outputs</span>
+              <div className="flex items-center gap-1">
+                <span className="text-xs uppercase tracking-wider text-orange-500">Outputs</span>
+                <InfoTip text="Output destinations where the programme signal is sent — SRT transmitters or EFP encoders." />
+              </div>
               <div className="flex flex-col gap-2">
                 {outputList.map((id, i) => (
-                  <OutputSlotRow
-                    key={i}
-                    value={id}
-                    usedIds={outputList}
-                    takenByOtherIds={[]}
-                    canRemove={true}
-                    onChange={(newId) => setOutputList((prev) => prev.map((v, j) => j === i ? newId : v))}
-                    onRemove={() => setOutputList((prev) => prev.filter((_, j) => j !== i))}
-                  />
+                  <OutputSlotRow key={i} value={id} usedIds={outputList} takenByOtherIds={[]} canRemove={true} onChange={(newId) => setOutputList((prev) => prev.map((v, j) => j === i ? newId : v))} onRemove={() => setOutputList((prev) => prev.filter((_, j) => j !== i))} />
                 ))}
-                <button
-                  type="button"
-                  onClick={() => setOutputList((prev) => [...prev, ''])}
-                  className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity"
-                >
-                  + New Output
-                </button>
+                <button type="button" onClick={() => setOutputList((prev) => [...prev, ''])} className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity">+ New Output</button>
               </div>
-            </div>
-
-            {/* Air Time */}
-            <div className="flex flex-col gap-2">
-              <span className="text-xs uppercase tracking-wider text-orange-500">Air Time <span className="normal-case text-[--color-text-muted]">(optional)</span></span>
-              <input
-                type="datetime-local"
-                value={airTimeLocal}
-                onChange={(e) => setAirTimeLocal(e.target.value)}
-                className={selectCls}
-              />
             </div>
 
           </div>
+
+          {/* Col 2: Configuration (Strom · PGM | Multiviewer · Audio · PiP) */}
+          {hasProperties && (
+            <div className="flex flex-col gap-4 pl-8">
+
+              <div className="flex items-center gap-3">
+                <span className="text-sm uppercase tracking-wider text-orange-500 border-b border-orange-500 pb-0.5">Configuration</span>
+                <select value={selectedConfigId} onChange={(e) => handleConfigSelect(e.target.value)} className="px-2 py-1 rounded bg-[--color-surface-raised] border border-[--color-border-strong] text-xs text-[--color-text-primary] focus:outline-none focus:border-orange-500 appearance-none cursor-pointer">
+                  <option value="">— load saved config —</option>
+                  {savedConfigs.map((c) => <option key={c._id} value={c._id}>{c.name}</option>)}
+                </select>
+                <label className="flex items-center gap-1.5 cursor-pointer select-none shrink-0">
+                  <span className="text-xs text-[--color-text-muted]">Save</span>
+                  <input type="checkbox" checked={saveAsConfig} onChange={(e) => setSaveAsConfig(e.target.checked)} className="accent-orange-500" />
+                </label>
+              </div>
+              {saveAsConfig && (
+                <input type="text" value={configName} onChange={(e) => setConfigName(e.target.value)} placeholder="Config name, e.g. HD Standard" className={inputCls} />
+              )}
+
+              <div className="grid grid-cols-2">
+                <div className="flex flex-col gap-4 pr-6">
+                  <ConfigFieldGroup label="Strom" ids={['mix_latency', 'clock']} properties={tProps} values={configValues} onChange={handlePropertyChange} />
+                  <ConfigFieldGroup label="PGM" ids={['pgm_resolution', 'pgm_framerate', 'bitrate']} properties={tProps} values={configValues} onChange={handlePropertyChange} />
+                </div>
+                <div className="flex flex-col gap-4 pl-6">
+                  <ConfigFieldGroup label="Multiviewer" ids={['multiview_resolution', 'multiview_framerate', 'multiview_bitrate']} properties={tProps} values={configValues} onChange={handlePropertyChange} />
+                  <ConfigFieldGroup label="Audio" ids={['num_aux_buses', 'num_groups', 'ebu_main']} properties={tProps} values={configValues} onChange={handlePropertyChange} />
+                  <ConfigFieldGroup label="Picture in Picture" ids={['num_pips']} properties={tProps} values={configValues} onChange={handlePropertyChange} />
+                </div>
+              </div>
+
+            </div>
+          )}
+
         </div>
 
-        <div className="flex justify-end gap-2 pt-3 border-t border-[--color-border]">
+        <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button
-            variant="active"
-            onClick={() => void handleCreate()}
-            disabled={!name.trim() || (saveAsConfig && !configName.trim()) || saving}
-          >
+          <Button variant="active" onClick={() => void handleCreate()} disabled={!name.trim() || (saveAsConfig && !configName.trim()) || saving}>
             {saving ? 'Creating…' : 'Create'}
           </Button>
         </div>
@@ -908,7 +927,6 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
 export function ProductionsPanel() {
   const { productions, isLoading, removeProduction, updateStatus, fetchAll } = useProductionsStore()
   const { activeProductionId, setActiveProduction } = useProductionStore()
-  const templates = useTemplatesStore((s) => s.templates)
   const outputs = useOutputsStore((s) => s.outputs)
   const navigate = useNavigate()
 
@@ -946,7 +964,6 @@ export function ProductionsPanel() {
   }
 
   const optionsProd = optionsId ? productions.find((p) => p.id === optionsId) : null
-  const optionsTemplate = optionsProd?.templateId ? templates.find((t) => t.id === optionsProd.templateId) ?? null : null
   const deleteTarget = deleteTargetId ? productions.find((p) => p.id === deleteTargetId) : null
   const deactivateTarget = deactivateTargetId ? productions.find((p) => p.id === deactivateTargetId) : null
 
@@ -968,7 +985,6 @@ export function ProductionsPanel() {
         {[...productions].sort((a, b) => a.name.localeCompare(b.name)).map((prod) => {
           const isActive = prod.status === 'active'
           const isActivating = prod.status === 'activating'
-          const template = templates.find((t) => t.id === prod.templateId)
           const assignedCount = prod.sources.length
           const airStartMs = prod.airTime ? new Date(prod.airTime).getTime() : null
           const isOnAir = getProgramMode(airStartMs, now) === 'onair'
@@ -1048,7 +1064,7 @@ export function ProductionsPanel() {
                 </div>
                 <div className="flex items-center gap-2 mt-0.5 min-w-0">
                   <span className="text-xs text-[--color-text-muted] truncate">
-                    {template ? template.name : 'No template'}{assignedCount > 0 ? ` · ${assignedCount} ${assignedCount === 1 ? 'source' : 'sources'}` : ''}
+                    {assignedCount > 0 ? `${assignedCount} ${assignedCount === 1 ? 'source' : 'sources'}` : 'No sources'}
                   </span>
                   {isActive && prod.whipEndpoints?.map((ep) => {
                     const idx = /(\d+)$/.exec(ep.mixerInput)?.[1]
@@ -1206,7 +1222,6 @@ export function ProductionsPanel() {
       {optionsProd && (
         <ProductionOptionsModal
           production={optionsProd}
-          template={optionsTemplate}
           onClose={() => setOptionsId(null)}
         />
       )}

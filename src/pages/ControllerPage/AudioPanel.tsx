@@ -127,7 +127,7 @@ const C_MAIN = { hex: '#dc2626', active: 'rgba(220,38,38,0.90)',  dim: 'rgba(220
 const C_AUX  = { hex: '#d97706', active: 'rgba(217,119,6,0.85)',  dim: 'rgba(217,119,6,0.08)' }
 const C_GRP  = { hex: '#16a34a', active: 'rgba(22,163,74,0.85)',  dim: 'rgba(22,163,74,0.08)'  }
 const C_IN   = { hex: '#2563eb', active: 'rgba(37,99,235,0.85)',  dim: 'rgba(37,99,235,0.08)'  }
-const C_MON  = { hex: '#0891b2', active: 'rgba(8,145,178,0.85)',  dim: 'rgba(8,145,178,0.08)'  }
+const C_MON  = { hex: '#a855f7', active: 'rgba(168,85,247,0.85)',  dim: 'rgba(168,85,247,0.08)'  }
 
 // ── VU Meter — PPM-style segmented ────────────────────────────────────────────
 
@@ -619,7 +619,6 @@ function AuxChannelStrip({ elementId, label, auxBus, send }: {
   const pre            = useAudioStore((s) => s.auxSendPre[elementId]?.[auxBus] ?? true)
   const setAuxSend     = useAudioStore((s) => s.setAuxSend)
   const setAuxEnabled  = useAudioStore((s) => s.setAuxSendEnabled)
-  const setAuxPre      = useAudioStore((s) => s.setAuxSendPre)
 
   const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -639,12 +638,7 @@ function AuxChannelStrip({ elementId, label, auxBus, send }: {
     send({ type: 'AUX_SEND_SET', elementId, auxBus, level, enabled: next, pre })
   }, [enabled, pre, level, elementId, auxBus, send, setAuxEnabled])
 
-  const handlePreChange = useCallback((nextPre: boolean) => {
-    setAuxPre(elementId, auxBus, nextPre)
-    send({ type: 'AUX_SEND_SET', elementId, auxBus, level, enabled, pre: nextPre })
-  }, [level, enabled, elementId, auxBus, send, setAuxPre])
-
-  const STRIP_W = 111
+  const STRIP_W = 92
 
   return (
     <div
@@ -664,31 +658,11 @@ function AuxChannelStrip({ elementId, label, auxBus, send }: {
         </span>
       </div>
 
-      {/* Main body — PRE/POST column | meter | fader */}
+      {/* Main body — meter | fader */}
       <div className="flex flex-1 pb-2">
 
-        {/* Left side — PRE / POST radio buttons */}
-        <div className="flex flex-col shrink-0 justify-center" style={{ width: 28, padding: '0 0 0 7px', gap: 8 }}>
-          <button
-            onClick={() => handlePreChange(true)}
-            title="Pre-fader send — level is tapped before the channel fader (IFB/monitor standard)"
-            className="border-0 cursor-pointer transition-colors active:opacity-75 flex items-center justify-center shrink-0"
-            style={{ background: pre ? C_AUX.active : '#27272a', borderRadius: 2, width: '100%', height: 22 }}
-          >
-            <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: '0.05em', color: pre ? '#fff' : '#52525b', textTransform: 'uppercase' }}>PRE</span>
-          </button>
-          <button
-            onClick={() => handlePreChange(false)}
-            title="Post-fader send — level follows the channel fader (effects sends)"
-            className="border-0 cursor-pointer transition-colors active:opacity-75 flex items-center justify-center shrink-0"
-            style={{ background: !pre ? C_AUX.active : '#27272a', borderRadius: 2, width: '100%', height: 22 }}
-          >
-            <span style={{ fontSize: 7, fontWeight: 700, letterSpacing: '0.05em', color: !pre ? '#fff' : '#52525b', textTransform: 'uppercase' }}>POST</span>
-          </button>
-        </div>
-
         {/* VU + fader sub-column */}
-        <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 0', flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', padding: '2px 0 2px 8px', flex: 1 }}>
           <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', flexShrink: 0, width: 28, gap: 2 }}>
             <VuMeter elementId={elementId} />
             <PeakReadout elementId={elementId} />

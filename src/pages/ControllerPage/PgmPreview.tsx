@@ -84,6 +84,7 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
 
     setAudioTrackCount(0)
     streamRef.current = null
+    setConnectionState('connecting')
 
     const startCountdown = (seconds: number, onDone: () => void) => {
       setRetryCountdown(seconds)
@@ -173,7 +174,7 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
             <span className="text-zinc-500 text-xs font-mono uppercase tracking-widest">NO SIGNAL</span>
           </div>
         )}
-        <div className="absolute bottom-2 right-2 pointer-events-none">
+        <div className="absolute bottom-2 right-2 pointer-events-none" style={{ zIndex: 2 }}>
           {connectionState === 'connected'  && <Badge variant="live"       label="LIVE" />}
           {connectionState === 'connecting' && <Badge variant="connecting" label="CONNECTING" />}
           {connectionState === 'error'      && (

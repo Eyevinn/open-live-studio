@@ -18,9 +18,13 @@ export async function connectWhep(
   const pc = new RTCPeerConnection({ iceServers })
   let whepResourceUrl: string | null = null
 
-  // Add recvonly transceivers so the offer includes a/v m-lines
+  // Add recvonly transceivers so the offer includes a/v m-lines.
+  // Six audio transceivers: main + monitor + up to 4 aux buses.
+  // Unused ones are set inactive by the server — offering extra is harmless.
   pc.addTransceiver('video', { direction: 'recvonly' })
-  pc.addTransceiver('audio', { direction: 'recvonly' })
+  for (let i = 0; i < 6; i++) {
+    pc.addTransceiver('audio', { direction: 'recvonly' })
+  }
 
   // Assign ontrack BEFORE setLocalDescription/setRemoteDescription.
   // In Chromium and Safari, ontrack events can fire synchronously during

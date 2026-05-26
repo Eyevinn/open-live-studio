@@ -1,4 +1,4 @@
-import { useProductionStore, type TransitionType } from '@/store/production.store'
+import { useProductionStore, type TransitionType, type PipConfig } from '@/store/production.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { cn } from '@/lib/cn'
@@ -10,7 +10,7 @@ const TRANSITION_TYPES: TransitionType[] = ['fade', 'slide_left', 'slide_right',
 const TRANSITION_LABELS: Record<TransitionType, string> = {
   fade:        'FADE',
   slide_left:  '← PUSH',
-  slide_right: 'PUSH →',
+  slide_right: '→ PUSH',
   slide_up:    '↑ PUSH',
   slide_down:  '↓ PUSH',
 }
@@ -21,11 +21,15 @@ interface TransitionPanelProps {
   onFtb: () => void
   onSelectPvw: (mixerInput: string) => void
   onSetOvl: (alpha: number) => void
+  onSelectPvwPip?: (pip: number) => void
+  pips?: PipConfig[]
+  pgmPip?: number | null
+  pvwPip?: number | null
   className?: string
   visibleTransitions?: string[]
 }
 
-export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, className, visibleTransitions }: TransitionPanelProps) {
+export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, onSelectPvwPip, pips, pgmPip, pvwPip, className, visibleTransitions }: TransitionPanelProps) {
   const ovlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const debouncedSetOvl = useCallback((alpha: number) => {
     if (ovlTimerRef.current) clearTimeout(ovlTimerRef.current)
@@ -107,7 +111,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, c
         <div className="flex items-stretch gap-px flex-1 overflow-x-auto p-1">
           {inputSlots.length === 0 && (
             <span className="text-[9px] text-zinc-600 italic px-1 flex items-center">
-              {!production?.templateId ? 'NO TEMPLATE' : 'NO SOURCES'}
+              {'NO SOURCES'}
             </span>
           )}
           {inputSlots.map((slot) => (
@@ -122,6 +126,20 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, c
               style={pgmInput === slot.mixerInput ? { background: '#ff0000', borderColor: '#ffffff' } : {}}
             >
               {slot.name}
+            </div>
+          ))}
+          {(pips ?? []).map((_, pipIdx) => (
+            <div
+              key={`pgm-pip-${pipIdx}`}
+              className={cn(
+                'flex-1 min-w-14 px-1.5 text-[10px] font-bold truncate border cursor-default select-none flex items-center justify-center tracking-wide',
+                pgmPip === pipIdx
+                  ? 'text-white border-white'
+                  : 'text-zinc-600 border-zinc-800 bg-zinc-900',
+              )}
+              style={pgmPip === pipIdx ? { background: '#ff0000', borderColor: '#ffffff' } : {}}
+            >
+              PiP {pipIdx + 1}
             </div>
           ))}
         </div>
@@ -168,7 +186,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, c
         <div className="flex items-stretch gap-px flex-1 overflow-x-auto p-1">
           {inputSlots.length === 0 && (
             <span className="text-[9px] text-zinc-600 italic px-1 flex items-center">
-              {!production?.templateId ? 'NO TEMPLATE' : 'NO SOURCES'}
+              {'NO SOURCES'}
             </span>
           )}
           {inputSlots.map((slot) => {
@@ -190,6 +208,28 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, c
                 style={isActive ? { background: '#00cc00', borderColor: '#ffffff' } : {}}
               >
                 {slot.name}
+              </button>
+            )
+          })}
+          {(pips ?? []).map((_, pipIdx) => {
+            const isOnPgm = pgmPip === pipIdx
+            const isActive = pvwPip === pipIdx
+            return (
+              <button
+                key={`pvw-pip-${pipIdx}`}
+                onClick={() => !isOnPgm && onSelectPvwPip?.(pipIdx)}
+                disabled={isOnPgm}
+                className={cn(
+                  'btn-hardware flex-1 min-w-14 px-1.5 text-[10px] font-bold truncate border transition-all tracking-wide cursor-pointer',
+                  isActive
+                    ? 'text-black border-white'
+                    : isOnPgm
+                      ? 'text-zinc-700 bg-zinc-900 border-zinc-800 opacity-40 cursor-not-allowed'
+                      : 'text-zinc-500 bg-zinc-900 border-zinc-800 hover:text-white hover:border-zinc-500',
+                )}
+                style={isActive ? { background: '#00cc00', borderColor: '#ffffff' } : {}}
+              >
+                PiP {pipIdx + 1}
               </button>
             )
           })}

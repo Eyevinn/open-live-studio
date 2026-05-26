@@ -14,6 +14,7 @@ interface VideoTileProps {
   muted?: boolean
   aspectRatio?: '16/9'
   noSignal?: boolean
+  noCursor?: boolean
 }
 
 export interface VideoTileHandle {
@@ -46,6 +47,7 @@ export const VideoTile = forwardRef<VideoTileHandle, VideoTileProps>(function Vi
   muted = true,
   aspectRatio = '16/9',
   noSignal = false,
+  noCursor = false,
 }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [hasVideo, setHasVideo] = useState(false)
@@ -87,7 +89,8 @@ export const VideoTile = forwardRef<VideoTileHandle, VideoTileProps>(function Vi
   return (
     <div
       className={cn(
-        'relative bg-black rounded overflow-hidden cursor-pointer select-none',
+        'relative bg-black rounded overflow-hidden select-none',
+        !noCursor && 'cursor-pointer',
         tallyRingClasses[tally],
         className,
       )}

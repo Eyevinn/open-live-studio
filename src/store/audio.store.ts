@@ -95,6 +95,8 @@ interface AudioActions {
   setGrpMasterMuted: (grpBus: number, muted: boolean) => void
   /** Reset all group send assignments — called on production deactivation. */
   resetGrpState: () => void
+  /** Reset all aux per-channel send state — called on production (re)connect. */
+  resetAuxSendState: () => void
   toggleMute: (elementId: string) => void
   toggleAfv: (elementId: string) => void
   togglePfl: (elementId: string) => void
@@ -145,6 +147,13 @@ export const useAudioStore = create<AudioState & AudioActions>()(
             s.grpMasterMuted = {}
             s.meters = {}
             s.pendingAfvByMixerInput = {}
+          } else if (elements.length === 0) {
+            // Same production (re)connecting — reset per-channel aux sends so stale
+            // levels aren't re-applied when the user first touches a strip after restart.
+            // Master levels are intentionally preserved; the backend re-broadcasts them.
+            s.auxSend = {}
+            s.auxSendEnabled = {}
+            s.auxSendPre = {}
           }
           s.elements = elements
           s.productionId = productionId
@@ -318,6 +327,9 @@ export const useAudioStore = create<AudioState & AudioActions>()(
 
       resetGrpState: () =>
         _set((s) => { s.grpSend = {}; s.grpSendEnabled = {} }),
+
+      resetAuxSendState: () =>
+        _set((s) => { s.auxSend = {}; s.auxSendEnabled = {}; s.auxSendPre = {} }),
 
       togglePfl: (elementId) =>
         _set((s) => { s.pfl[elementId] = !s.pfl[elementId] }),

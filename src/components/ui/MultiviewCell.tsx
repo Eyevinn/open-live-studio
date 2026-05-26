@@ -33,6 +33,7 @@ export function MultiviewCell({ source }: MultiviewCellProps) {
         sublabel={source.address}
         tally={tally}
         className="w-full rounded-none"
+        noCursor
       />
       <div className="absolute top-1.5 right-1.5">
         <TallyLight state={tally} size="sm" />

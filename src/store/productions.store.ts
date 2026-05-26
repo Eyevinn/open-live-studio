@@ -16,13 +16,12 @@ export interface Production {
   graphicAssignments: ProductionGraphicAssignment[]
   outputAssignments: ProductionOutputAssignment[]
   whepOutputUrls?: Array<{ outputId: string; url: string }>
-  templateId?: string
   stromFlowId?: string
   whepEndpoint?: string
   pgmWhepEndpoint?: string
   whipEndpoints?: Array<{ mixerInput: string; url: string }>
   srtOutputUri?: string
-  values?: Record<string, string | number>
+  values?: Record<string, string | number | boolean>
   airTime?: string
   deletionWarnings?: Array<{ type: 'source' | 'graphic' | 'output'; name: string }>
 }
@@ -39,8 +38,7 @@ interface ProductionsActions {
   removeProduction: (id: string) => Promise<void>
   updateStatus: (id: string, status: ProductionStatus) => Promise<void>
   updateName: (id: string, name: string) => Promise<void>
-  updateTemplateId: (id: string, templateId: string | null) => Promise<void>
-  updateValues: (id: string, values: Record<string, string | number>) => Promise<void>
+  updateValues: (id: string, values: Record<string, string | number | boolean>) => Promise<void>
   updateAirTime: (id: string, airTime: string | null) => Promise<void>
   assignSource: (id: string, assignment: ProductionSourceAssignment) => Promise<void>
   unassignSource: (id: string, mixerInput: string) => Promise<void>
@@ -59,7 +57,6 @@ function fromApi(p: ApiProduction): Production {
     graphicAssignments: p.graphicAssignments ?? [],
     outputAssignments: p.outputAssignments ?? [],
     whepOutputUrls: p.whepOutputUrls,
-    templateId: p.templateId,
     stromFlowId: p.stromFlowId,
     whepEndpoint: p.whepEndpoint,
     pgmWhepEndpoint: p.pgmWhepEndpoint,
@@ -164,14 +161,6 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
         set((state) => {
           const prod = state.productions.find((p) => p.id === id)
           if (prod) prod.name = name
-        })
-      },
-
-      updateTemplateId: async (id, templateId) => {
-        const updated = await productionsApi.update(id, { templateId })
-        set((state) => {
-          const prod = state.productions.find((p) => p.id === id)
-          if (prod) prod.templateId = updated.templateId
         })
       },
 

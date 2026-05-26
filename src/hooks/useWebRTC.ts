@@ -33,6 +33,8 @@ export function useWebRTC(whepEndpoint?: string | null): void {
     let retryTimer: ReturnType<typeof setTimeout> | null = null
     let countdownTimer: ReturnType<typeof setInterval> | null = null
 
+    setConnectionState('connecting')
+
     const startCountdown = (seconds: number, onDone: () => void) => {
       setRetryCountdown(seconds)
       let remaining = seconds - 1

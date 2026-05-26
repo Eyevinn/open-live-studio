@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react'
-import { useProductionStore } from '@/store/production.store'
+import { useProductionStore, type PipZone, type PipConfig } from '@/store/production.store'
 import { useAudioStore } from '@/store/audio.store'
 
 import { BASE } from '@/lib/base'
@@ -8,7 +8,7 @@ const WS_BASE = BASE.replace(/^http/, 'ws')
 export type OutboundMessage =
   | { type: 'CUT'; mixerInput: string; afvRampMs?: number }
   | { type: 'TRANSITION'; mixerInput: string; transitionType: string; durationMs?: number; afvRampMs?: number }
-  | { type: 'TAKE'; afvRampMs?: number }
+  | { type: 'TAKE'; transitionType?: string; durationMs?: number; afvRampMs?: number }
   | { type: 'SET_PVW'; mixerInput: string }
   | { type: 'FTB'; active?: boolean; durationMs?: number }
   | { type: 'SET_OVL'; alpha: number }
@@ -28,7 +28,10 @@ export type OutboundMessage =
   | { type: 'GRP_MASTER_SET'; grpBus: number; volume: number; muted: boolean }
   | { type: 'MONITOR_SET'; volume: number; muted: boolean }
   | { type: 'SOURCE_OFFSET_SET'; mixerInput: string; offsetMs: number }
+  | { type: 'SOURCE_AUDIO_OFFSET_SET'; mixerInput: string; offsetMs: number }
   | { type: 'LOUDNESS_RESET' }
+  | { type: 'SELECT_PVW_PIP'; pip: number }
+  | { type: 'SET_PIP'; pip: number; bg: number | null; zones: PipZone[] }
 
 /**
  * Opens a WebSocket connection to /ws/productions/:id/controller.
@@ -55,7 +58,9 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   const resetGrpState        = useAudioStore((s) => s.resetGrpState)
   const applyMeter           = useAudioStore((s) => s.applyMeter)
   const applyLoudness        = useAudioStore((s) => s.applyLoudness)
-  const applySourceOffset    = useProductionStore((s) => s.applySourceOffset)
+  const applySourceOffset      = useProductionStore((s) => s.applySourceOffset)
+  const applySourceAudioOffset = useProductionStore((s) => s.applySourceAudioOffset)
+  const applyPipState          = useProductionStore((s) => s.applyPipState)
 
   useEffect(() => {
     if (!productionId) return
@@ -157,6 +162,12 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
             }
             break
           }
+          case 'SOURCE_AUDIO_OFFSET_STATE': {
+            if (typeof msg['mixerInput'] === 'string' && typeof msg['offsetMs'] === 'number') {
+              applySourceAudioOffset(msg['mixerInput'] as string, msg['offsetMs'] as number)
+            }
+            break
+          }
           case 'METER_DATA':
             if (typeof msg['elementId'] === 'string' && Array.isArray(msg['peak']) && Array.isArray(msg['rms'])) {
               applyMeter(msg['elementId'] as string, msg['peak'] as number[], msg['rms'] as number[])
@@ -173,6 +184,13 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
               )
             }
             break
+          case 'PIP_STATE':
+            applyPipState(
+              typeof msg['pgmPip'] === 'number' ? msg['pgmPip'] as number : null,
+              typeof msg['pvwPip'] === 'number' ? msg['pvwPip'] as number : null,
+              Array.isArray(msg['pips']) ? msg['pips'] as PipConfig[] : [],
+            )
+            break
         }
       } catch {
         // ignore malformed frames
@@ -187,7 +205,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
       ws.close()
       wsRef.current = null
     }
-  }, [productionId, setPgm, setPvw, setTBarPosition, setDskState, applyLevel, applyMuted, applyAfvByMixerInput, applyPfl, applyAfl, applyAuxSend, applyAuxMaster, applyGrpSend, applyGrpMaster, applyMonitorMaster, applyMeter, applyLoudness, applySourceOffset])
+  }, [productionId, setPgm, setPvw, setTBarPosition, setDskState, applyLevel, applyMuted, applyAfvByMixerInput, applyPfl, applyAfl, applyAuxSend, applyAuxMaster, applyGrpSend, applyGrpMaster, applyMonitorMaster, applyMeter, applyLoudness, applySourceOffset, applySourceAudioOffset, applyPipState])
 
   const send = useCallback((msg: OutboundMessage) => {
     const ws = wsRef.current
