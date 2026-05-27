@@ -1089,12 +1089,12 @@ export function ProductionsPanel() {
                     <InlineCopyButton label="WHEP OUT: PGM" value={prod.pgmWhepEndpoint} />
                   )}
                   {isActive && prod.srtOutputUri && (
-                    <InlineCopyButton label="SRT OUT: Program" value={toCallerUrl(prod.srtOutputUri, stromHost)} displayUrl={prod.srtOutputUri} />
+                    <InlineCopyButton label="SRT OUT: Program" value={toCallerUrl(prod.srtOutputUri, stromHost)} />
                   )}
                   {isActive && prod.outputAssignments?.flatMap((a) => {
                     const out = outputs.find((o) => o.id === a.outputId)
                     if (!out || out.outputType === 'whep' || !out.url) return []
-                    return [<InlineCopyButton key={a.outputId} label={`SRT OUT: ${out.name}`} value={toCallerUrl(out.url, stromHost)} displayUrl={out.url} />]
+                    return [<InlineCopyButton key={a.outputId} label={`SRT OUT: ${out.name}`} value={toCallerUrl(out.url, stromHost)} />]
                   })}
                   {isActive && prod.whepOutputUrls?.map((w) => {
                     const out = outputs.find((o) => o.id === w.outputId)

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useImperativeHandle, forwardRef, useState } from 'react'
+import { useEffect, useRef, useImperativeHandle, forwardRef, useState, useCallback } from 'react'
 import { cn } from '@/lib/cn'
 import { TallyLight } from './TallyLight'
 import type { TallyState } from '@/hooks/useTallyLight'
@@ -15,6 +15,7 @@ interface VideoTileProps {
   aspectRatio?: '16/9'
   noSignal?: boolean
   noCursor?: boolean
+  onHasVideo?: (hasVideo: boolean) => void
 }
 
 export interface VideoTileHandle {
@@ -48,15 +49,25 @@ export const VideoTile = forwardRef<VideoTileHandle, VideoTileProps>(function Vi
   aspectRatio = '16/9',
   noSignal = false,
   noCursor = false,
+  onHasVideo,
 }, ref) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [hasVideo, setHasVideo] = useState(false)
+  // Stable ref so the loadedmetadata effect doesn't need onHasVideo as a dep.
+  const onHasVideoRef = useRef(onHasVideo)
+  onHasVideoRef.current = onHasVideo
 
   useImperativeHandle(ref, () => ({
     setMuted: (m: boolean) => {
       if (videoRef.current) videoRef.current.muted = m
     },
   }))
+
+  // Wrap setHasVideo to also notify the parent via onHasVideoRef.
+  const updateHasVideo = useCallback((v: boolean) => {
+    setHasVideo(v)
+    onHasVideoRef.current?.(v)
+  }, [])
 
   // Only re-runs when the stream changes — avoids flickering on mute toggle.
   // Initial muted state is set here so autoplay starts correctly.
@@ -65,7 +76,7 @@ export const VideoTile = forwardRef<VideoTileHandle, VideoTileProps>(function Vi
     if (!el) return
     el.muted = muted
     el.srcObject = stream
-    setHasVideo(false)
+    updateHasVideo(false)
     if (stream) {
       void el.play().catch(() => { /* autoplay policy */ })
     }
@@ -77,14 +88,14 @@ export const VideoTile = forwardRef<VideoTileHandle, VideoTileProps>(function Vi
   useEffect(() => {
     const el = videoRef.current
     if (!el) return
-    const check = () => setHasVideo(el.videoWidth > 0)
+    const check = () => updateHasVideo(el.videoWidth > 0)
     el.addEventListener('loadedmetadata', check)
     el.addEventListener('resize', check)
     return () => {
       el.removeEventListener('loadedmetadata', check)
       el.removeEventListener('resize', check)
     }
-  }, [])
+  }, [updateHasVideo])
 
   return (
     <div

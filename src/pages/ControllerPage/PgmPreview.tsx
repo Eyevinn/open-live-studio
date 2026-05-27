@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 'react'
+
+const MAX_RETRIES = 3
 import { WhepClient } from '@/lib/webrtc'
 import { getApiToken } from '@/lib/sat'
 import { Badge } from '@/components/ui/Badge'
@@ -35,6 +37,8 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
   }))
   const [connectionState, setConnectionState] = useState<ViewerConnectionState>('disconnected')
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null)
+  const [retryAttempt, setRetryAttempt] = useState(0)
+  const [hasVideo, setHasVideo] = useState(false)
   const clientRef = useRef<WhepClient | null>(null)
 
   const whepEndpoint = selectedUrl ?? channels[0]?.url
@@ -76,14 +80,31 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
 
   useEffect(() => () => { void audioCtxRef.current?.close() }, [])
 
+  // Track actual decoded frames via video element events.
+  useEffect(() => {
+    const el = videoRef.current
+    if (!el) return
+    const check = () => setHasVideo(el.videoWidth > 0)
+    el.addEventListener('loadedmetadata', check)
+    el.addEventListener('resize', check)
+    return () => {
+      el.removeEventListener('loadedmetadata', check)
+      el.removeEventListener('resize', check)
+    }
+  }, [])
+
   useEffect(() => {
     if (!whepEndpoint) return
     let cancelled = false
     let countdownTimer: ReturnType<typeof setInterval> | null = null
     let authToken: string | undefined
+    let retryCount = 0
+    const MAX_RETRIES = 3
 
     setAudioTrackCount(0)
     streamRef.current = null
+    setHasVideo(false)
+    setRetryAttempt(0)
     setConnectionState('connecting')
 
     const startCountdown = (seconds: number, onDone: () => void) => {
@@ -104,6 +125,7 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
     const connect = () => {
       if (cancelled) return
       setConnectionState('connecting')
+      setHasVideo(false)
       const client = new WhepClient(
         whepEndpoint,
         {
@@ -119,11 +141,27 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
             }
           },
           onConnected:    () => { if (!cancelled) setConnectionState('connected') },
-          onDisconnected: () => { if (!cancelled) setConnectionState('disconnected') },
+          onDisconnected: () => {
+            if (!cancelled) {
+              streamRef.current = null
+              if (videoRef.current) videoRef.current.srcObject = null
+              setHasVideo(false)
+              setConnectionState('disconnected')
+            }
+          },
           onError:        () => {
             if (!cancelled) {
-              setConnectionState('error')
-              startCountdown(3, connect)
+              streamRef.current = null
+              if (videoRef.current) videoRef.current.srcObject = null
+              setHasVideo(false)
+              retryCount++
+              setRetryAttempt(retryCount)
+              if (retryCount >= MAX_RETRIES) {
+                setConnectionState('failed')
+              } else {
+                setConnectionState('error')
+                startCountdown(3, connect)
+              }
             }
           },
         },
@@ -145,6 +183,7 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
       cancelled = true
       if (countdownTimer) clearInterval(countdownTimer)
       setRetryCountdown(null)
+      setHasVideo(false)
       if (clientRef.current) {
         void clientRef.current.disconnect()
         clientRef.current = null
@@ -154,7 +193,8 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
     }
   }, [whepEndpoint])
 
-  const showNoSignal = connectionState !== 'connected'
+  // Show NO SIGNAL until the video element is actually decoding frames, regardless of ICE state.
+  const showNoSignal = !hasVideo
   // Unmute video for single-track (direct output). Mute when AudioContext handles it (multi-track).
   const videoMuted = !audioOn || audioTrackCount > 1
 
@@ -175,11 +215,14 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
           </div>
         )}
         <div className="absolute bottom-2 right-2 pointer-events-none" style={{ zIndex: 2 }}>
-          {connectionState === 'connected'  && <Badge variant="live"       label="LIVE" />}
-          {connectionState === 'connecting' && <Badge variant="connecting" label="CONNECTING" />}
-          {connectionState === 'error'      && (
-            <Badge variant="error" label={retryCountdown != null ? `RETRYING IN ${retryCountdown}` : 'ERROR'} />
+          {connectionState === 'connected' && hasVideo && <Badge variant="live" label="LIVE" />}
+          {(connectionState === 'connecting' || (connectionState === 'connected' && !hasVideo)) && (
+            <Badge variant="connecting" label="CONNECTING" />
           )}
+          {connectionState === 'error' && (
+            <Badge variant="error" label={retryCountdown != null ? `RETRYING ${retryAttempt}/${MAX_RETRIES} IN ${retryCountdown}` : `RETRYING ${retryAttempt}/${MAX_RETRIES}`} />
+          )}
+          {connectionState === 'failed' && <Badge variant="disconnected" label="SIGNAL LOST" />}
         </div>
       </div>
     </div>

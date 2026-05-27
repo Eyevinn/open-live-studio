@@ -17,8 +17,10 @@ import { BASE as API_BASE } from '@/lib/base'
  */
 export function useWebRTC(whepEndpoint?: string | null): void {
   const setProgramStream = useViewerStore((s) => s.setProgramStream)
+  const clearProgramStream = useViewerStore((s) => s.clearProgramStream)
   const setConnectionState = useViewerStore((s) => s.setConnectionState)
   const setRetryCountdown = useViewerStore((s) => s.setRetryCountdown)
+  const setRetryAttempt = useViewerStore((s) => s.setRetryAttempt)
   const setAudioTrackCount = useViewerStore((s) => s.setAudioTrackCount)
   const disconnect = useViewerStore((s) => s.disconnect)
   const clientRef = useRef<WhepClient | null>(null)
@@ -32,8 +34,11 @@ export function useWebRTC(whepEndpoint?: string | null): void {
     let cancelled = false
     let retryTimer: ReturnType<typeof setTimeout> | null = null
     let countdownTimer: ReturnType<typeof setInterval> | null = null
+    let retryCount = 0
+    const MAX_RETRIES = 3
 
     setConnectionState('connecting')
+    setRetryAttempt(0)
 
     const startCountdown = (seconds: number, onDone: () => void) => {
       setRetryCountdown(seconds)
@@ -72,12 +77,22 @@ export function useWebRTC(whepEndpoint?: string | null): void {
           if (!cancelled) setConnectionState('connected')
         },
         onDisconnected: () => {
-          if (!cancelled) setConnectionState('disconnected')
+          if (!cancelled) {
+            clearProgramStream()
+            setConnectionState('disconnected')
+          }
         },
         onError: () => {
           if (!cancelled) {
-            setConnectionState('error')
-            startCountdown(3, connect)
+            clearProgramStream()
+            retryCount++
+            setRetryAttempt(retryCount)
+            if (retryCount >= MAX_RETRIES) {
+              setConnectionState('failed')
+            } else {
+              setConnectionState('error')
+              startCountdown(3, connect)
+            }
           }
         },
       }, { iceServersUrl: `${API_BASE}/api/v1/ice-servers`, proxyUrl: `${API_BASE}/api/v1/whep-proxy`, authToken })
@@ -106,5 +121,5 @@ export function useWebRTC(whepEndpoint?: string | null): void {
         disconnect()
       }
     }
-  }, [whepEndpoint, setProgramStream, setConnectionState, setRetryCountdown, setAudioTrackCount, disconnect])
+  }, [whepEndpoint, setProgramStream, clearProgramStream, setConnectionState, setRetryCountdown, setRetryAttempt, setAudioTrackCount, disconnect])
 }
