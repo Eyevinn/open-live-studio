@@ -6,6 +6,7 @@ import { BASE } from '@/lib/base'
 const WS_BASE = BASE.replace(/^http/, 'ws')
 
 const WS_RECONNECT_DELAY_MS = 2000
+const WS_MAX_RECONNECTS = 5
 
 export type OutboundMessage =
   | { type: 'CUT'; mixerInput: string; afvRampUpMs?: number; afvRampDownMs?: number }
@@ -96,6 +97,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
 
     let cancelled = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let reconnectCount = 0
 
     const connect = () => {
       if (cancelled) return
@@ -243,7 +245,8 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
 
       ws.onclose = () => {
         wsRef.current = null
-        if (!cancelled) {
+        if (!cancelled && reconnectCount < WS_MAX_RECONNECTS) {
+          reconnectCount++
           reconnectTimer = setTimeout(connect, WS_RECONNECT_DELAY_MS)
         }
       }

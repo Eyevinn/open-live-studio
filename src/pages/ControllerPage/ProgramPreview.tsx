@@ -1,6 +1,6 @@
 import { useRef, useImperativeHandle, forwardRef, useEffect, useState, useCallback } from 'react'
 
-const MAX_RETRIES = 3
+const MAX_RETRIES = 5
 import { useViewerStore } from '@/store/viewer.store'
 import { VideoTile, type VideoTileHandle } from '@/components/ui/VideoTile'
 import { Badge } from '@/components/ui/Badge'
@@ -84,7 +84,7 @@ export const ProgramPreview = forwardRef<ProgramPreviewHandle, ProgramPreviewPro
               <Badge variant="connecting" label="CONNECTING" />
             )}
             {connectionState === 'error' && (
-              <Badge variant="error" label={retryCountdown != null ? `RETRYING ${retryAttempt}/${MAX_RETRIES} IN ${retryCountdown}` : `RETRYING ${retryAttempt}/${MAX_RETRIES}`} />
+              <Badge variant="error" label={retryCountdown != null ? `RETRYING IN ${retryCountdown}` : 'RETRYING'} />
             )}
             {connectionState === 'failed' && <Badge variant="disconnected" label="SIGNAL LOST" />}
           </div>

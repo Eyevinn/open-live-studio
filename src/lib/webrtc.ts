@@ -35,12 +35,9 @@ const ICE_CONNECT_TIMEOUT_MS = 15_000
 export class WhepClient {
   private pc: RTCPeerConnection | null = null
   private resourceUrl: string | null = null
-  private healthInterval: ReturnType<typeof setInterval> | null = null
   private iceConnectTimer: ReturnType<typeof setTimeout> | null = null
-  private prevFramesDecoded = 0
-  private prevPacketsLost = 0
-  private frozenSince = 0
-  private lossRecoveryPending = false
+  private connectingInProgress = false
+  private wasConnected = false
 
   constructor(
     private readonly endpoint: string,
@@ -49,6 +46,7 @@ export class WhepClient {
   ) {}
 
   async connect(): Promise<boolean> {
+    this.connectingInProgress = true
     try {
       // Fetch ICE config. Use the provided iceServersUrl (backend proxy) or fall
       // back to the endpoint's origin — the proxy avoids CORS/auth issues with
@@ -83,14 +81,17 @@ export class WhepClient {
         if (state === 'connected' || state === 'completed') {
           this._clearIceConnectTimer()
           this.callbacks.onConnected?.()
-          this._startHealthMonitor()
+          // Only re-attach tracks on ICE reconnect (not initial connect) — on
+          // first connect, ontrack already fired onVideoTrack with remoteStream.
+          // Replacing srcObject with a new MediaStream object on every ICE
+          // 'connected' event forces the browser to re-initialize the video
+          // decoder, causing bad framerate for several seconds.
+          if (this.wasConnected) this._reattachTracks()
+          this.wasConnected = true
         } else if (state === 'failed') {
           this._clearIceConnectTimer()
           this.callbacks.onError?.('ICE connection failed — check TURN server')
         } else if (state === 'disconnected') {
-          // 'disconnected' is transient in some browsers but can also be terminal.
-          // Fire onDisconnected for UI feedback; the health monitor detects a
-          // sustained freeze and triggers onError → retry if the stream never recovers.
           this.callbacks.onDisconnected?.()
         }
       }
@@ -163,23 +164,27 @@ export class WhepClient {
       this.callbacks.onError?.((err as Error).message)
       this.close()
       return false
+    } finally {
+      this.connectingInProgress = false
     }
   }
 
   async disconnect(): Promise<void> {
-    if (this.resourceUrl) {
-      try { await fetch(this.resourceUrl, { method: 'DELETE' }) } catch { /* ignore */ }
+    const resourceUrl = this.resourceUrl
+    this.close()  // tear down PC immediately; don't block on the DELETE
+    if (resourceUrl) {
+      try { await fetch(resourceUrl, { method: 'DELETE' }) } catch { /* ignore */ }
     }
-    this.close()
-    this.callbacks.onDisconnected?.()
   }
 
   close(): void {
+    this.connectingInProgress = false
     this._clearIceConnectTimer()
-    if (this.healthInterval) { clearInterval(this.healthInterval); this.healthInterval = null }
-    this.pc?.close()
+    // Null pc before close() so oniceconnectionstatechange sees no PC and fires no callbacks.
+    const pc = this.pc
     this.pc = null
     this.resourceUrl = null
+    pc?.close()
   }
 
   private _clearIceConnectTimer(): void {
@@ -189,6 +194,12 @@ export class WhepClient {
   isConnected(): boolean {
     const s = this.pc?.iceConnectionState
     return s === 'connected' || s === 'completed'
+  }
+
+  /** True while a connection attempt is in progress — covers the async ICE-server fetch
+   *  before RTCPeerConnection is created, and the full ICE gather/check cycle after. */
+  isActive(): boolean {
+    return this.connectingInProgress || this.pc !== null
   }
 
   // Enable stereo for Opus — Chrome defaults to mono (stereo=0)
@@ -206,58 +217,17 @@ export class WhepClient {
     return sdp.replace(/;stereo=1/g, '').replace(/;sprop-stereo=1/g, '')
   }
 
-  // Detect video freeze after packet loss and recover by re-attaching the stream
-  private _startHealthMonitor(): void {
-    if (this.healthInterval) return
-    this.prevFramesDecoded = 0
-    this.prevPacketsLost = 0
-    this.frozenSince = 0
-    this.lossRecoveryPending = false
-
-    this.healthInterval = setInterval(() => {
-      if (!this.isConnected()) return
-      void this.pc!.getStats().then((stats) => {
-        let framesDecoded = 0, packetsLost = 0
-        stats.forEach((r) => {
-          if (r.type === 'inbound-rtp' && (r as RTCInboundRtpStreamStats & { kind?: string }).kind === 'video') {
-            framesDecoded = (r as RTCInboundRtpStreamStats).framesDecoded ?? 0
-            packetsLost = (r as RTCInboundRtpStreamStats).packetsLost ?? 0
-          }
-        })
-
-        const newLoss = packetsLost - this.prevPacketsLost
-        const newFrames = framesDecoded - this.prevFramesDecoded
-        if (newLoss > 0 && this.prevPacketsLost > 0) this.lossRecoveryPending = true
-
-        const now = Date.now()
-        if (this.prevFramesDecoded > 0 && newFrames === 0) {
-          if (!this.frozenSince) this.frozenSince = now
-        } else {
-          if (this.lossRecoveryPending && newFrames > 0) this.lossRecoveryPending = false
-          this.frozenSince = 0
-        }
-
-        if (this.frozenSince && this.lossRecoveryPending && now - this.frozenSince > 3000) {
-          this._recoverVideo()
-          this.frozenSince = 0
-          this.lossRecoveryPending = false
-        }
-
-        this.prevFramesDecoded = framesDecoded
-        this.prevPacketsLost = packetsLost
-      }).catch(() => { /* PC closing */ })
-    }, 1000)
-  }
-
-  // Re-attach video track to force decoder reset + PLI keyframe request
-  private _recoverVideo(): void {
+  // Re-fire onVideoTrack with all live tracks from the current PC receivers.
+  // Called when ICE reconnects after a 'disconnected' event so callers that
+  // cleared srcObject on disconnect get the stream re-attached automatically.
+  private _reattachTracks(): void {
     if (!this.pc) return
-    for (const receiver of this.pc.getReceivers()) {
-      if (receiver.track?.kind === 'video') {
-        this.callbacks.onVideoTrack?.(new MediaStream([receiver.track]))
-        break
-      }
-    }
+    const tracks = this.pc.getReceivers()
+      .map(r => r.track)
+      .filter((t): t is MediaStreamTrack => t !== null && t.readyState === 'live')
+    const hasVideo = tracks.some(t => t.kind === 'video')
+    if (!hasVideo) return
+    this.callbacks.onVideoTrack?.(new MediaStream(tracks))
   }
 }
 

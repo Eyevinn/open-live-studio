@@ -43,7 +43,8 @@ export const useViewerStore = create<ViewerState & ViewerActions>()(
           audioTrackCount: stream ? stream.getAudioTracks().length : 0,
         }),
 
-      clearProgramStream: () => set({ programStream: null, audioTrackCount: 0 }),
+      // Keep audioTrackCount so the track selector stays visible during reconnect.
+      clearProgramStream: () => set({ programStream: null }),
 
       setConnectionState: (connectionState) => set({ connectionState }),
 
