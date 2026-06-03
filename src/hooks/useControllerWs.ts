@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react'
-import { useProductionStore, type PipZone, type PipConfig } from '@/store/production.store'
+import { useProductionStore, type PipZone, type PipConfig, type PipTransforms } from '@/store/production.store'
 import { useAudioStore } from '@/store/audio.store'
 import { useToastStore } from '@/store/toast.store'
 
@@ -36,7 +36,7 @@ export type OutboundMessage =
   | { type: 'SOURCE_AUDIO_OFFSET_SET'; mixerInput: string; offsetMs: number }
   | { type: 'LOUDNESS_RESET' }
   | { type: 'SELECT_PVW_PIP'; pip: number }
-  | { type: 'SET_PIP'; pip: number; bg: number | null; zones: PipZone[] }
+  | { type: 'SET_PIP'; pip: number; bg: number | null; zones: PipZone[]; transforms?: PipTransforms }
 
 /**
  * Opens a WebSocket connection to /ws/productions/:id/controller.

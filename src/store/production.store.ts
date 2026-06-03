@@ -12,9 +12,22 @@ export interface PipZone {
   sources: number[]
 }
 
+/** Normalized per-source crop: fraction hidden from each edge (0.0–1.0). */
+export interface SourceCrop {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+/** Map of input index → SourceCrop. Strom 0.6.2+. */
+export type PipTransforms = Record<number, SourceCrop>
+
 export interface PipConfig {
   bg: number | null
   zones: PipZone[]
+  /** Per-source crop/zoom transforms. Strom 0.6.2+; defaults to {} on older Strom. */
+  transforms: PipTransforms
 }
 
 interface ProductionState {
@@ -179,12 +192,13 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
         set((state) => {
           state.pgmPip = pgmPip
           state.pvwPip = pvwPip
-          state.pips = pips
+          // Normalise incoming pips to always have transforms (older Strom omits it)
+          state.pips = pips.map((p) => ({ ...p, transforms: p.transforms ?? {} }))
         }),
 
       applyPipConfig: (pipIdx, config) =>
         set((state) => {
-          state.pips[pipIdx] = config
+          state.pips[pipIdx] = { ...config, transforms: config.transforms ?? {} }
         }),
 
       setPvwPip: (pip) =>

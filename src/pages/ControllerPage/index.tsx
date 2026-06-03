@@ -539,7 +539,7 @@ export function ControllerPage() {
   }, [setPvwPip, send])
 
   const handleApplyPip = useCallback((pip: number, config: PipConfig) => {
-    send({ type: 'SET_PIP', pip, bg: config.bg, zones: config.zones })
+    send({ type: 'SET_PIP', pip, bg: config.bg, zones: config.zones, transforms: config.transforms })
   }, [send])
 
   // Sources sorted by mixerInput — index 0 = key '1', index 1 = key '2', etc.

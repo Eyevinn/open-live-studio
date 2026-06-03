@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
-import { useProductionStore, type PipConfig, type PipZone } from '@/store/production.store'
+import { useProductionStore, type PipConfig, type PipZone, type SourceCrop, type PipTransforms } from '@/store/production.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { cn } from '@/lib/cn'
@@ -48,6 +48,94 @@ type DragState = {
 
 function clamp(v: number, lo: number, hi: number) { return Math.max(lo, Math.min(hi, v)) }
 
+const EMPTY_CROP: SourceCrop = { left: 0, top: 0, right: 0, bottom: 0 }
+
+function isCropZero(c: SourceCrop): boolean {
+  return c.left < 1e-4 && c.top < 1e-4 && c.right < 1e-4 && c.bottom < 1e-4
+}
+
+function CropEditor({
+  inputIdx,
+  transforms,
+  onChange,
+}: {
+  inputIdx: number
+  transforms: PipTransforms
+  onChange: (transforms: PipTransforms) => void
+}) {
+  const crop = transforms[inputIdx] ?? EMPTY_CROP
+
+  const setCropField = (field: keyof SourceCrop, value: number) => {
+    const next: SourceCrop = { ...crop, [field]: value }
+    // Ensure at least 1% visible on each axis
+    const maxL = Math.max(0, 1 - next.right - 0.01)
+    const maxR = Math.max(0, 1 - next.left - 0.01)
+    const maxT = Math.max(0, 1 - next.bottom - 0.01)
+    const maxB = Math.max(0, 1 - next.top - 0.01)
+    onChange({ ...transforms, [inputIdx]: {
+      left:   clamp(next.left,   0, maxL),
+      right:  clamp(next.right,  0, maxR),
+      top:    clamp(next.top,    0, maxT),
+      bottom: clamp(next.bottom, 0, maxB),
+    }})
+  }
+
+  const resetCrop = () => {
+    const next = { ...transforms }
+    delete next[inputIdx]
+    onChange(next)
+  }
+
+  const fields: Array<{ key: keyof SourceCrop; label: string }> = [
+    { key: 'left', label: 'L' },
+    { key: 'top', label: 'T' },
+    { key: 'right', label: 'R' },
+    { key: 'bottom', label: 'B' },
+  ]
+
+  return (
+    <div className="flex flex-col gap-1.5 px-2 py-1.5 bg-zinc-900 border border-zinc-700 rounded-sm">
+      <div className="flex items-center justify-between">
+        <span className="text-[9px] text-zinc-500 uppercase tracking-wider">Crop / Zoom</span>
+        {!isCropZero(crop) && (
+          <button
+            onClick={resetCrop}
+            className="text-[9px] text-zinc-500 hover:text-orange-400 border border-zinc-700 hover:border-zinc-500 px-1 py-0.5 leading-none"
+          >
+            Reset
+          </button>
+        )}
+      </div>
+      {isCropZero(crop) ? (
+        <span className="text-[9px] text-zinc-600 italic">No crop</span>
+      ) : (
+        <span className="text-[9px] text-zinc-400 font-mono">
+          {fields.map(({ key, label }) => `${label} ${Math.round(crop[key] * 100)}%`).join('  ')}
+        </span>
+      )}
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+        {fields.map(({ key, label }) => (
+          <label key={key} className="flex items-center gap-1.5">
+            <span className="text-[9px] text-zinc-500 w-3 shrink-0">{label}</span>
+            <input
+              type="range"
+              min={0}
+              max={0.5}
+              step={0.01}
+              value={crop[key]}
+              onChange={(e) => setCropField(key, parseFloat(e.target.value))}
+              className="flex-1 h-1 accent-orange-500 cursor-pointer"
+            />
+            <span className="text-[9px] text-zinc-400 font-mono w-8 text-right shrink-0">
+              {Math.round(crop[key] * 100)}%
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export function PipPanel({ onApply, className }: PipPanelProps) {
   const { pgmPip, pvwPip, pips, activeProductionId } = useProductionStore()
   const production = useProductionsStore((s) => s.productions.find((p) => p.id === activeProductionId))
@@ -56,7 +144,8 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
   const pgmResolution = parsePgmResolution(production?.values?.pgm_resolution)
 
   const [editingPipIdx, setEditingPipIdx] = useState(0)
-  const [draft, setDraft] = useState<PipConfig>({ bg: null, zones: [] })
+  const [draft, setDraft] = useState<PipConfig>({ bg: null, zones: [], transforms: {} })
+  const [selectedSourceIdx, setSelectedSourceIdx] = useState<number | null>(null)
   const [activeZoneIdx, setActiveZoneIdx] = useState(0)
   const [editMode, setEditMode] = useState(false)
   const [snapEnabled, setSnapEnabled] = useState(true)
@@ -75,14 +164,15 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
     setEditingPipIdx(0)
     setActiveZoneIdx(0)
     setEditMode(false)
-    setDraft({ bg: null, zones: [] })
+    setDraft({ bg: null, zones: [], transforms: {} })
+    setSelectedSourceIdx(null)
   }, [activeProductionId])
 
   // Sync draft from server pips (only when not dirty)
   useEffect(() => {
     if (isDirtyRef.current) return
     const pip = pips[editingPipIdx]
-    setDraft(pip ? structuredClone(pip) : { bg: null, zones: [] })
+    setDraft(pip ? structuredClone(pip) : { bg: null, zones: [], transforms: {} })
   }, [pips, editingPipIdx])
 
   // Reset zone selection only when switching PiP tabs
@@ -158,6 +248,7 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
       setDraft((prev) => ({
         ...prev,
         zones: [{ rect: { x: 0, y: 0, w: 1, h: 1 }, capacity: null, sources: [inputIdx] }],
+        transforms: prev.transforms ?? {},
       }))
       setActiveZoneIdx(0)
     } else {
@@ -608,28 +699,50 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
             const inActive = isInActiveZone(slot.idx)
             const asBg = isUsedAsBg(slot.idx)
             const inOther = !inActive && !asBg && isInAnyZone(slot.idx)
+            const isSelected = selectedSourceIdx === slot.idx
+            const hasCrop = !isCropZero(draft.transforms?.[slot.idx] ?? EMPTY_CROP)
             return (
               <button
                 key={slot.idx}
-                onClick={() => handleSourceClick(slot.idx)}
+                onClick={() => {
+                  handleSourceClick(slot.idx)
+                  setSelectedSourceIdx((prev) => prev === slot.idx ? null : slot.idx)
+                }}
                 disabled={asBg}
                 className={cn(
-                  'px-1.5 py-0.5 text-[10px] font-bold border',
+                  'px-1.5 py-0.5 text-[10px] font-bold border relative',
                   inActive
                     ? 'bg-orange-500 text-black border-orange-400'
                     : asBg
                       ? 'bg-zinc-800 text-zinc-600 border-zinc-700 cursor-not-allowed'
                       : inOther
                         ? 'bg-zinc-900 text-zinc-600 border-zinc-700 italic'
-                        : 'bg-zinc-900 text-zinc-300 border-zinc-700 hover:border-zinc-500 hover:text-white',
+                        : isSelected
+                          ? 'bg-zinc-700 text-zinc-200 border-zinc-500'
+                          : 'bg-zinc-900 text-zinc-300 border-zinc-700 hover:border-zinc-500 hover:text-white',
                 )}
               >
                 {slot.name}
+                {hasCrop && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-orange-500 border border-zinc-950" />
+                )}
               </button>
             )
           })}
         </div>
       </div>
+
+      {/* Crop / Zoom editor — shown when a source chip is selected */}
+      {selectedSourceIdx !== null && !isUsedAsBg(selectedSourceIdx) && (
+        <CropEditor
+          inputIdx={selectedSourceIdx}
+          transforms={draft.transforms ?? {}}
+          onChange={(transforms) => {
+            markDirty()
+            setDraft((prev) => ({ ...prev, transforms }))
+          }}
+        />
+      )}
     </div>
   )
 }
