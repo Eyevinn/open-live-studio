@@ -25,6 +25,10 @@ RUN printf 'server {\n\
     root /usr/share/nginx/html;\n\
     index index.html;\n\
     add_header X-Frame-Options "SAMEORIGIN" always;\n\
+    location = /env-config.js {\n\
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;\n\
+        add_header Pragma "no-cache" always;\n\
+    }\n\
     location / {\n\
         try_files $uri $uri/ /index.html;\n\
     }\n\
