@@ -1090,10 +1090,26 @@ function loadSections(): SectionState {
   try {
     const raw = localStorage.getItem(SECTIONS_KEY)
     if (raw) {
-      const p = JSON.parse(raw) as Partial<SectionState>
-      return {
-        main: { ...DEFAULT_SECTIONS.main, ...(p.main ?? {}) },
-        aux:  { ...DEFAULT_SECTIONS.aux,  ...(p.aux  ?? {}) },
+      const parsed: unknown = JSON.parse(raw)
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const p = parsed as Record<string, unknown>
+        const main = p.main !== null && typeof p.main === 'object' && !Array.isArray(p.main)
+          ? p.main as Record<string, unknown>
+          : {}
+        const aux = p.aux !== null && typeof p.aux === 'object' && !Array.isArray(p.aux)
+          ? p.aux as Record<string, unknown>
+          : {}
+        return {
+          main: {
+            out:    typeof main.out    === 'boolean' ? main.out    : DEFAULT_SECTIONS.main.out,
+            groups: typeof main.groups === 'boolean' ? main.groups : DEFAULT_SECTIONS.main.groups,
+            in:     typeof main.in     === 'boolean' ? main.in     : DEFAULT_SECTIONS.main.in,
+          },
+          aux: {
+            out: typeof aux.out === 'boolean' ? aux.out : DEFAULT_SECTIONS.aux.out,
+            in:  typeof aux.in  === 'boolean' ? aux.in  : DEFAULT_SECTIONS.aux.in,
+          },
+        }
       }
     }
   } catch {}

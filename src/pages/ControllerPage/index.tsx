@@ -36,13 +36,16 @@ function loadPanels(): Panels {
   try {
     const raw = localStorage.getItem(PANELS_STORAGE_KEY)
     if (raw) {
-      const p = JSON.parse(raw) as Partial<Panels>
-      return {
-        multiviewer: p.multiviewer !== false,
-        controller:  p.controller  !== false,
-        audio:       p.audio       !== false,
-        pgm:         p.pgm         !== false,
-        pip:         p.pip         === true,
+      const parsed: unknown = JSON.parse(raw)
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const p = parsed as Record<string, unknown>
+        return {
+          multiviewer: p.multiviewer !== false,
+          controller:  p.controller  !== false,
+          audio:       p.audio       !== false,
+          pgm:         p.pgm         !== false,
+          pip:         p.pip         === true,
+        }
       }
     }
   } catch {}
@@ -74,9 +77,14 @@ function loadControllerOptions(): ControllerOptions {
   try {
     const raw = localStorage.getItem(CONTROLLER_OPTIONS_KEY)
     if (raw) {
-      const p = JSON.parse(raw) as Partial<ControllerOptions>
-      const vt = Array.isArray(p.visibleTransitions) ? p.visibleTransitions.filter((t) => (ALL_TRANSITIONS as readonly string[]).includes(t)) : []
-      return { visibleTransitions: vt.length > 0 ? vt : DEFAULT_TRANSITIONS }
+      const parsed: unknown = JSON.parse(raw)
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        const p = parsed as Record<string, unknown>
+        const vt = Array.isArray(p.visibleTransitions)
+          ? (p.visibleTransitions as unknown[]).filter((t): t is string => typeof t === 'string' && (ALL_TRANSITIONS as readonly string[]).includes(t))
+          : []
+        return { visibleTransitions: vt.length > 0 ? vt : DEFAULT_TRANSITIONS }
+      }
     }
   } catch {}
   return { visibleTransitions: DEFAULT_TRANSITIONS }

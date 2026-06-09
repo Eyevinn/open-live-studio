@@ -295,10 +295,19 @@ export function PanePage() {
   const [controllerOptionsOpen, setControllerOptionsOpen] = useState(false)
   const [visibleTransitions, setVisibleTransitions] = useState<string[]>(() => {
     try {
-      const vt = (JSON.parse(localStorage.getItem(CONTROLLER_OPTIONS_KEY) ?? '{}') as { visibleTransitions?: string[] }).visibleTransitions ?? []
-      const valid = vt.filter((t) => (ALL_TRANSITIONS as readonly string[]).includes(t))
-      return valid.length > 0 ? valid : [...DEFAULT_TRANSITIONS]
-    } catch { return [...DEFAULT_TRANSITIONS] }
+      const raw = localStorage.getItem(CONTROLLER_OPTIONS_KEY)
+      if (raw) {
+        const parsed: unknown = JSON.parse(raw)
+        if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          const p = parsed as Record<string, unknown>
+          const vt = Array.isArray(p.visibleTransitions)
+            ? (p.visibleTransitions as unknown[]).filter((t): t is string => typeof t === 'string' && (ALL_TRANSITIONS as readonly string[]).includes(t))
+            : []
+          if (vt.length > 0) return vt
+        }
+      }
+    } catch {}
+    return [...DEFAULT_TRANSITIONS]
   })
 
   // Default PGM pane to first channel when channels first become available.
