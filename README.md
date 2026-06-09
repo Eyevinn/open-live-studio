@@ -1,5 +1,7 @@
 [![Try on OSC](https://img.shields.io/badge/Try%20on-Open%20Source%20Cloud-blue)](https://openlive.apps.osaas.io)
 
+![Open Live Studio — production controller showing vision mixer, multiviewer, and audio console](docs/screenshot.png)
+
 # open-live-studio
 
 Open Live Studio is the browser-based production controller for Open Live, a cloud-native live broadcast production suite. It replaces traditional hardware vision mixers, audio consoles, and multiviewers with a fully browser-based workflow. The full production suite is hosted at [openlive.apps.osaas.io](https://openlive.apps.osaas.io).
