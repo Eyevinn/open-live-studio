@@ -19,20 +19,8 @@ RUN rm -rf /usr/share/nginx/html/*
 # Copy built SPA
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# nginx config — serve index.html for all routes (SPA fallback)
-RUN printf 'server {\n\
-    listen %PORT%;\n\
-    root /usr/share/nginx/html;\n\
-    index index.html;\n\
-    add_header X-Frame-Options "SAMEORIGIN" always;\n\
-    location = /env-config.js {\n\
-        add_header Cache-Control "no-store, no-cache, must-revalidate" always;\n\
-        add_header Pragma "no-cache" always;\n\
-    }\n\
-    location / {\n\
-        try_files $uri $uri/ /index.html;\n\
-    }\n\
-}\n' > /etc/nginx/conf.d/default.conf.template
+# nginx config — serve index.html for all routes (SPA fallback) with security headers
+COPY nginx.conf.template /etc/nginx/conf.d/default.conf.template
 
 # Entrypoint: inject runtime env vars then start nginx
 COPY docker-entrypoint.sh /docker-entrypoint.sh

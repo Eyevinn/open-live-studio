@@ -1,0 +1,25 @@
+server {
+    listen %PORT%;
+    root /usr/share/nginx/html;
+    index index.html;
+
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "default-src 'none'; connect-src 'self' wss: https:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';" always;
+
+    # nginx does not inherit server-level add_header in location blocks
+    # that define their own add_header, so repeat security headers here.
+    location = /env-config.js {
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+        add_header Pragma "no-cache" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+        add_header Content-Security-Policy "default-src 'none'; connect-src 'self' wss: https:; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';" always;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}
