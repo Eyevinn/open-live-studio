@@ -2,7 +2,6 @@ import { useEffect, useRef, useState, useImperativeHandle, forwardRef } from 're
 
 const MAX_RETRIES = 5
 import { WhepClient } from '@/lib/webrtc'
-import { getApiToken } from '@/lib/sat'
 import { Badge } from '@/components/ui/Badge'
 import type { ViewerConnectionState } from '@/store/viewer.store'
 import { BASE as API_BASE } from '@/lib/base'
@@ -98,7 +97,6 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
     let cancelled = false
     let countdownTimer: ReturnType<typeof setInterval> | null = null
     let disconnectWatchdog: ReturnType<typeof setTimeout> | null = null
-    let authToken: string | undefined
     let retryCount = 0
     let generation = 0
 
@@ -204,7 +202,7 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
             triggerRetry()
           },
         },
-        { iceServersUrl: `${API_BASE}/api/v1/ice-servers`, proxyUrl: `${API_BASE}/api/v1/whep-proxy`, authToken },
+        { iceServersUrl: `${API_BASE}/api/v1/ice-servers`, proxyUrl: `${API_BASE}/api/v1/whep-proxy` },
       )
       clientRef.current = client
       void client.connect()
@@ -221,13 +219,7 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
     }
     window.addEventListener('online', handleOnline)
 
-    getApiToken()
-      .catch(() => undefined)
-      .then((token) => {
-        if (cancelled) return
-        authToken = token
-        connect()
-      })
+    connect()
 
     return () => {
       cancelled = true

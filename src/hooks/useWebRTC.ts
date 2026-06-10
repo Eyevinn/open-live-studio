@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useViewerStore } from '@/store/viewer.store'
 import { WhepClient } from '@/lib/webrtc'
-import { getApiToken } from '@/lib/sat'
 
 import { BASE as API_BASE } from '@/lib/base'
 
@@ -57,10 +56,6 @@ export function useWebRTC(whepEndpoint?: string | null): void {
         }
       }, 1000)
     }
-
-    // authToken is resolved once per endpoint mount — not reactive state,
-    // so token resolution never triggers a second connect cycle.
-    let authToken: string | undefined
 
     const triggerRetry = () => {
       if (cancelled) return
@@ -141,7 +136,7 @@ export function useWebRTC(whepEndpoint?: string | null): void {
           if (disconnectWatchdog) { clearTimeout(disconnectWatchdog); disconnectWatchdog = null }
           triggerRetry()
         },
-      }, { iceServersUrl: `${API_BASE}/api/v1/ice-servers`, proxyUrl: `${API_BASE}/api/v1/whep-proxy`, authToken })
+      }, { iceServersUrl: `${API_BASE}/api/v1/ice-servers`, proxyUrl: `${API_BASE}/api/v1/whep-proxy` })
       clientRef.current = client
       void client.connect()
     }
@@ -163,14 +158,7 @@ export function useWebRTC(whepEndpoint?: string | null): void {
     }
     window.addEventListener('online', handleOnline)
 
-    // Fetch token once, then connect. Retries reuse the same token variable.
-    getApiToken()
-      .catch(() => undefined)
-      .then((token) => {
-        if (cancelled) return
-        authToken = token
-        connect()
-      })
+    connect()
 
     return () => {
       cancelled = true
