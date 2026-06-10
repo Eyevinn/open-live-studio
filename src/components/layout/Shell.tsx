@@ -1,9 +1,11 @@
 import { Outlet } from 'react-router'
 import { NavBar } from './NavBar'
+import { useOscAuth } from '@/hooks/useOscAuth'
 import { useConnectionCheck } from '@/hooks/useConnectionCheck'
 import { ToastContainer } from '@/components/ui/ToastContainer'
 
 export function Shell() {
+  useOscAuth()
   useConnectionCheck()
 
   return (

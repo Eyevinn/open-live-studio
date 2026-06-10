@@ -1,15 +1,18 @@
 export { BASE } from './base.js'
 import { BASE } from './base.js'
+import { authenticateWithOpenLive, getApiToken, isOnOsc } from './sat.js'
 
 // Paths that manage their own error toasts — skip global handler
 const SILENT_PATHS = ['/api/v1/status', '/api/v1/reconnect']
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  await authenticateWithOpenLive()
+  const token = await getApiToken()
+  const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
   const contentHeaders: Record<string, string> = init?.body !== undefined ? { 'Content-Type': 'application/json' } : {}
 
   const res = await fetch(`${BASE}${path}`, {
-    credentials: 'include',
-    headers: { ...contentHeaders },
+    headers: { ...contentHeaders, ...authHeaders },
     ...init,
   })
   if (!res.ok) {

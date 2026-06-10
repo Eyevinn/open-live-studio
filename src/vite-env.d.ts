@@ -2,6 +2,7 @@
 
 interface ImportMetaEnv {
   readonly OPEN_LIVE_URL: string
+  readonly OSC_PAT: string
 }
 
 interface ImportMeta {

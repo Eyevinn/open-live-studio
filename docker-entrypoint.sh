@@ -1,10 +1,15 @@
 #!/bin/sh
 set -e
 
-# Write runtime env vars to env-config.js.
-# OSC_PAT is intentionally excluded — secrets must never reach the browser.
-# sed escapes backslashes and double-quotes so the URL value is valid JSON.
-_url=$(printf '%s' "${OPEN_LIVE_URL:-}" | sed 's/\\/\\\\/g; s/"/\\"/g')
-printf 'window._env_ = {"OPEN_LIVE_URL":"%s"};\n' "$_url" > /usr/share/nginx/html/env-config.js
+# Inject runtime environment variables into the SPA.
+# Vite bakes VITE_* vars at build time, so we use a runtime-loaded script
+# (/env-config.js) that docker-entrypoint.sh regenerates on every container
+# start from the current process environment.
+cat > /usr/share/nginx/html/env-config.js <<EOF
+window._env_ = {
+  OPEN_LIVE_URL: "${OPEN_LIVE_URL:-}",
+  OSC_PAT: "${OSC_PAT:-}",
+};
+EOF
 
 exec "$@"

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { BASE } from '@/lib/api'
+import { authenticateWithOpenLive, getApiToken } from '@/lib/sat'
 import { useProgramStartMs, getProgramMode, COUNTDOWN_WINDOW_MS } from '@/store/programClock.store'
 import { useProductionStore } from '@/store/production.store'
 import { useProductionsStore } from '@/store/productions.store'
@@ -7,11 +8,14 @@ import { useProductionsStore } from '@/store/productions.store'
 // ── Server time sync ──────────────────────────────────────────────────────────
 async function fetchServerOffset(): Promise<number> {
   try {
+    await authenticateWithOpenLive()
+    const token = await getApiToken()
     const before = Date.now()
     const res = await fetch(`${BASE}/api/v1/ping`, {
       method: 'HEAD',
       cache: 'no-store',
       credentials: 'same-origin',
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
     const after = Date.now()
     const serverDateStr = res.headers.get('Date')
