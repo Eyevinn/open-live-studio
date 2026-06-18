@@ -9,9 +9,7 @@ RUN pnpm install --frozen-lockfile
 
 COPY . .
 
-ARG OPEN_LIVE_URL
-ARG OSC_PAT
-RUN OPEN_LIVE_URL=$OPEN_LIVE_URL OSC_PAT=$OSC_PAT pnpm build
+RUN pnpm build
 
 # Stage 2: serve with nginx
 FROM nginx:1.27-alpine
@@ -39,4 +37,8 @@ EXPOSE 8080
 
 ENV PORT=8080
 
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+
+ENTRYPOINT ["/docker-entrypoint.sh"]
 CMD ["/bin/sh", "-c", "sed s/%PORT%/$PORT/ /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]

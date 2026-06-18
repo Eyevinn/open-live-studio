@@ -29,7 +29,7 @@ function isExpiringSoon(c: SatCache): boolean {
 }
 
 function getPat(): string | undefined {
-  return import.meta.env.OSC_PAT || undefined
+  return window._env_?.OSC_PAT || import.meta.env.OSC_PAT || undefined
 }
 
 /**
