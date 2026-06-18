@@ -123,7 +123,8 @@ function PopOutIcon() {
   )
 }
 
-function SectionLabel({ icon, children, onPopOut, onHide, actions }: { icon: ReactNode; children: string; onPopOut?: () => void; onHide?: () => void; actions?: ReactNode }) {
+
+function SectionLabel({ icon, children, tooltip, onPopOut, onHide, actions }: { icon: ReactNode; children: string; tooltip?: string; onPopOut?: () => void; onHide?: () => void; actions?: ReactNode }) {
   return (
     <div className="flex items-center gap-1.5 text-[--color-text-muted]">
       {icon}
@@ -138,6 +139,11 @@ function SectionLabel({ icon, children, onPopOut, onHide, actions }: { icon: Rea
         >
           <PopOutIcon />
         </button>
+      )}
+      {tooltip && (
+        <Tooltip content={tooltip}>
+          <span className="flex items-center justify-center w-4 h-4 rounded-full border border-zinc-400 text-white hover:border-zinc-200 transition-colors cursor-help text-[10px] font-bold leading-none shrink-0">i</span>
+        </Tooltip>
       )}
       {onHide && (
         <button
@@ -409,7 +415,7 @@ function ControllerOptionsContent({
             <div className="flex items-center gap-2 mb-2">
               <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Source timing</span>
               <Tooltip title="Video delay" content={<span className="text-[11px] text-zinc-300 max-w-[200px] leading-relaxed">V: delay the video track relative to audio. A: delay the audio track relative to video. Use to fix lip-sync issues per source.</span>}>
-                <span className="flex items-center justify-center w-4 h-4 rounded-full border border-zinc-600 text-zinc-500 hover:text-zinc-300 hover:border-zinc-400 transition-colors cursor-help text-[10px] font-bold leading-none shrink-0">i</span>
+                <span className="flex items-center justify-center w-4 h-4 rounded-full border border-zinc-400 text-white hover:border-zinc-200 transition-colors cursor-help text-[10px] font-bold leading-none shrink-0">i</span>
               </Tooltip>
             </div>
             <div className="flex flex-col border border-zinc-800 rounded overflow-hidden">
@@ -764,6 +770,7 @@ export function ControllerPage() {
                 <div className="flex-none">
                   <SectionLabel
                     icon={<MultiviewerIcon />}
+                    tooltip="Shows all camera sources in a grid. Use the audio track selector to switch between PGM, monitor, and AUX mixes. Click the speaker to toggle monitor audio. Pop out into a separate window for a dedicated confidence monitor. The position of the multiviewer relative to PGM can be swapped in the production config."
                     onPopOut={activeProductionId ? () => { window.open(`/pane/multiviewer?production=${activeProductionId}`, '_blank', 'noopener') } : undefined}
                     onHide={() => togglePanel('multiviewer')}
                     actions={
@@ -838,6 +845,7 @@ export function ControllerPage() {
                 <div className="flex-none">
                   <SectionLabel
                     icon={<MonitorIcon />}
+                    tooltip="Live programme output — exactly what is going to air. Use the audio track selector to monitor PGM, monitor bus, or AUX. Pop out into a separate window for a dedicated programme monitor."
                     onPopOut={activeProductionId ? () => { window.open(`/pane/pgm?production=${activeProductionId}`, '_blank', 'noopener') } : undefined}
                     onHide={() => togglePanel('pgm')}
                     actions={
@@ -918,7 +926,7 @@ export function ControllerPage() {
           <div className="flex flex-none pt-2 pb-3 gap-0" style={{ height: 392 }}>
             {panels.controller && (
               <div className="px-3 flex flex-col gap-2 min-w-0 flex-1 h-full">
-                <SectionLabel icon={<ControllerIcon />} onPopOut={activeProductionId ? () => { window.open(`/pane/controller?production=${activeProductionId}`, '_blank', 'noopener') } : undefined} onHide={() => togglePanel('controller')} actions={
+                <SectionLabel icon={<ControllerIcon />} tooltip="Vision mixer controls. Click a source to set it on preview, then press Cut or Auto to take it to programme. Toggle FTB to fade to black. Use DSK to layer graphics over programme. Press the gear icon to set transition types and source timing offsets." onPopOut={activeProductionId ? () => { window.open(`/pane/controller?production=${activeProductionId}`, '_blank', 'noopener') } : undefined} onHide={() => togglePanel('controller')} actions={
                   <button type="button" onClick={() => setControllerOptionsOpen(true)} title="Controller options" className="cursor-pointer hover:text-[--color-text-primary] transition-colors"><GearIcon /></button>
                 }>Controller</SectionLabel>
                 <div className="flex flex-col flex-1 gap-2 overflow-y-auto min-h-0">
@@ -932,7 +940,7 @@ export function ControllerPage() {
             )}
             {panels.fx && (
               <div className={`flex flex-col gap-2 shrink-0 h-full ${panels.controller ? 'pr-3' : 'px-3'}`} style={{ width: 280 }}>
-                <SectionLabel icon={<LooksIcon />} onHide={() => togglePanel('fx')}>Looks</SectionLabel>
+                <SectionLabel icon={<LooksIcon />} tooltip="Per-source GPU shader effects. Select a source tab, then pick an effect type and adjust its parameters. Changes apply live to the programme output. Requires a GPU node — a note is shown if unavailable." onHide={() => togglePanel('fx')}>Looks</SectionLabel>
                 <div className="border border-zinc-800 overflow-y-auto flex-1 min-h-0" style={{ background: '#0d0d0d' }}>
                   <LooksPanel
                     sources={sortedSources.map((s) => {
@@ -946,13 +954,13 @@ export function ControllerPage() {
             )}
             {panels.pip && numPips > 0 && activeProduction?.status === 'active' && (
               <div className={`${panels.controller || panels.fx ? 'pr-3' : 'px-3'} flex flex-col gap-2 shrink-0 h-full overflow-hidden`} style={{ width: 540 }}>
-                <SectionLabel icon={<PipIcon />} onPopOut={activeProductionId ? () => { window.open(`/pane/pip?production=${activeProductionId}`, '_blank', 'noopener') } : undefined} onHide={() => togglePanel('pip')}>PiP Editor</SectionLabel>
+                <SectionLabel icon={<PipIcon />} tooltip="Picture-in-Picture editor. Select a PiP slot, then drag zones on the canvas to position them. Assign sources to zones by clicking the source chips. Use Crop / Zoom to pan and zoom individual sources within a zone. Set a border colour and width per zone. Click Take to bring the PiP to programme." onPopOut={activeProductionId ? () => { window.open(`/pane/pip?production=${activeProductionId}`, '_blank', 'noopener') } : undefined} onHide={() => togglePanel('pip')}>PiP Editor</SectionLabel>
                 <PipPanel onApply={handleApplyPip} className="flex-1 overflow-y-auto min-h-0" />
               </div>
             )}
             {panels.audio && (
               <div className={`flex flex-col gap-2 flex-1 min-w-0 h-full ${panels.controller || panels.fx ? 'pr-3' : 'px-3'}`}>
-                <SectionLabel icon={<AudioIcon />} onPopOut={activeProductionId ? () => { window.open(`/pane/audio?production=${activeProductionId}`, '_blank', 'noopener') } : undefined} onHide={() => togglePanel('audio')} actions={
+                <SectionLabel icon={<AudioIcon />} tooltip="Audio mixer. Drag faders or click the level to adjust channel volume. Toggle On/Off to mute a channel. Use AUX sends to route audio to commentary or recording feeds. Group channels together to control them as one. Adjust the monitor level with the master fader. Press the gear icon to set AFV ramp times." onPopOut={activeProductionId ? () => { window.open(`/pane/audio?production=${activeProductionId}`, '_blank', 'noopener') } : undefined} onHide={() => togglePanel('audio')} actions={
                   <button type="button" onClick={() => setAudioOptionsOpen(true)} title="Audio options" className="cursor-pointer hover:text-[--color-text-primary] transition-colors"><GearIcon /></button>
                 }>Audio</SectionLabel>
                 <AudioPanel
@@ -1001,7 +1009,7 @@ export function ControllerPage() {
               Fade-in time when a channel is brought on-air after a CUT or transition.
             </span>
           }>
-            <span className="flex items-center justify-center w-4 h-4 rounded-full border border-zinc-600 text-zinc-500 hover:text-zinc-300 hover:border-zinc-400 transition-colors cursor-help text-[10px] font-bold leading-none shrink-0">i</span>
+            <span className="flex items-center justify-center w-4 h-4 rounded-full border border-zinc-400 text-white hover:border-zinc-200 transition-colors cursor-help text-[10px] font-bold leading-none shrink-0">i</span>
           </Tooltip>
         </div>
         <div className="flex items-center gap-3">
@@ -1030,7 +1038,7 @@ export function ControllerPage() {
               Fade-out time when a channel is taken off-air after a CUT or transition.
             </span>
           }>
-            <span className="flex items-center justify-center w-4 h-4 rounded-full border border-zinc-600 text-zinc-500 hover:text-zinc-300 hover:border-zinc-400 transition-colors cursor-help text-[10px] font-bold leading-none shrink-0">i</span>
+            <span className="flex items-center justify-center w-4 h-4 rounded-full border border-zinc-400 text-white hover:border-zinc-200 transition-colors cursor-help text-[10px] font-bold leading-none shrink-0">i</span>
           </Tooltip>
         </div>
         <div className="flex justify-end">
