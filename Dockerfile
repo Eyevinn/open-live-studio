@@ -13,6 +13,9 @@ RUN pnpm build
 # Stage 2: serve with nginx
 FROM nginx:1.27-alpine
 
+# Install jq for safe JSON generation in the entrypoint
+RUN apk add --no-cache jq
+
 # Remove default nginx static assets
 RUN rm -rf /usr/share/nginx/html/*
 
