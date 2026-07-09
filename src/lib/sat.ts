@@ -1,7 +1,7 @@
 /**
  * OSC Service Access Token (SAT) exchange for the Open Live API.
  *
- * OSC_PAT is baked into the bundle at build time (Docker build arg).
+ * OSC_PAT is injected at container startup via window._env_ (docker-entrypoint.sh).
  * On first API call it is exchanged for a short-lived SAT which is cached
  * and refreshed automatically 5 minutes before expiry.
  *
@@ -29,7 +29,7 @@ function isExpiringSoon(c: SatCache): boolean {
 }
 
 function getPat(): string | undefined {
-  return window._env_?.OSC_PAT || import.meta.env.OSC_PAT || undefined
+  return window._env_?.OSC_PAT || undefined
 }
 
 /**
