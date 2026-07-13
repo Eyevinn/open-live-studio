@@ -32,4 +32,17 @@ else
     > /usr/share/nginx/html/env-config.js
 fi
 
+# Generate nginx config, locking CSP connect-src to the backend origin when known.
+# Falling back to broad wildcards only when OPEN_LIVE_URL is not set.
+PORT="${PORT:-8080}"
+if [ -n "$OPEN_LIVE_URL" ]; then
+  BACKEND_WSS="$(printf '%s' "$OPEN_LIVE_URL" | sed 's|^https:|wss:|; s|^http:|ws:|')"
+  CSP_CONNECT_SRC="'self' $OPEN_LIVE_URL $BACKEND_WSS https://token.svc.prod.osaas.io"
+else
+  CSP_CONNECT_SRC="'self' wss: https:"
+fi
+sed -e "s|%PORT%|$PORT|g" \
+    -e "s|%CSP_CONNECT_SRC%|$CSP_CONNECT_SRC|g" \
+  /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf
+
 exec "$@"
