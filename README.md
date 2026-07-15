@@ -70,6 +70,7 @@ pnpm typecheck
 pnpm build
 
 # Serve the production build (OSC deployment — respects $PORT, defaults to 8080)
+# Adds security headers via serve.json. For production, prefer the Docker image when available.
 pnpm start
 
 # Preview the production build locally
