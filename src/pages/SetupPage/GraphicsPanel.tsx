@@ -12,10 +12,24 @@ function timeSince(ts: number): string {
   return `${Math.floor(secs / 60)}m ago`
 }
 
+/** Safe raster data URIs only — reject data:text/html (#41) and data:image/svg+xml (#54). */
+const SAFE_DATA_PREFIXES = [
+  'data:image/png',
+  'data:image/jpeg',
+  'data:image/jpg',
+  'data:image/gif',
+  'data:image/webp',
+] as const
+
 function isValidGraphicUrl(s: string): boolean {
-  if (s.startsWith('data:text/html') || s.startsWith('data:image/')) return true
-  try { const u = new URL(s); return u.protocol === 'http:' || u.protocol === 'https:' }
-  catch { return false }
+  if (SAFE_DATA_PREFIXES.some((p) => s.startsWith(p))) return true
+  if (s.startsWith('data:')) return false
+  try {
+    const u = new URL(s)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
 }
 
 export function GraphicsPanel() {
