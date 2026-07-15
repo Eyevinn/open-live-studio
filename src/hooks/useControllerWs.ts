@@ -5,6 +5,7 @@ import { useAudioStore } from '@/store/audio.store'
 import { useToastStore } from '@/store/toast.store'
 
 import { BASE } from '@/lib/base'
+import { authenticateWithOpenLive, getApiToken } from '@/lib/sat'
 const WS_BASE = BASE.replace(/^http/, 'ws')
 
 const WS_RECONNECT_DELAY_MS = 2000
@@ -110,8 +111,28 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     const connect = () => {
       if (cancelled) return
 
-      const ws = new WebSocket(`${WS_BASE}/ws/productions/${productionId}/controller`)
-      wsRef.current = ws
+      // #38: self-hosted has no OSC cookie — pass SAT/API token on upgrade
+      // (WS cannot set Authorization; backend accepts ?key= / ?token=)
+      void (async () => {
+        if (cancelled) return
+        try {
+          await authenticateWithOpenLive()
+        } catch {
+          /* still attempt WS; REST path may already have failed loudly */
+        }
+        if (cancelled) return
+        const token = await getApiToken().catch(() => undefined)
+        const url = new URL(`${WS_BASE}/ws/productions/${encodeURIComponent(productionId)}/controller`)
+        if (token) {
+          url.searchParams.set('token', token)
+          url.searchParams.set('key', token)
+        }
+        const ws = new WebSocket(url.toString())
+        if (cancelled) {
+          ws.close()
+          return
+        }
+        wsRef.current = ws
 
       ws.onmessage = (event) => {
         const a = actionsRef.current
@@ -277,6 +298,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
           reconnectTimer = setTimeout(connect, WS_RECONNECT_DELAY_MS)
         }
       }
+      })()
     }
 
     connect()
