@@ -19,12 +19,14 @@ if command -v jq > /dev/null 2>&1; then
       '{OPEN_LIVE_URL: $u, OSC_PAT: $p}')" \
     > /usr/share/nginx/html/env-config.js
 else
-  # Fallback: manual JSON encoding (escape backslash, double-quote, control chars)
+  # Fallback: manual JSON encoding when jq is missing (#31: escape newlines/CR)
   escape_json() {
     printf '%s' "$1" | sed \
       -e 's/\\/\\\\/g' \
       -e 's/"/\\"/g' \
-      -e 's/	/\\t/g'
+      -e 's/	/\\t/g' \
+      -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g' \
+      -e 's/\r/\\r/g'
   }
   U="$(escape_json "$OPEN_LIVE_URL")"
   P="$(escape_json "$OSC_PAT")"
