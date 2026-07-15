@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router'
+import { Navigate, useParams, useSearchParams } from 'react-router'
 import { useWebRTC } from '@/hooks/useWebRTC'
 import { useControllerWs } from '@/hooks/useControllerWs'
 import { useProductionStore } from '@/store/production.store'
@@ -176,7 +176,13 @@ const TRANSITION_LABELS: Record<string, string> = {
   slide_up: 'Push Up', slide_down: 'Push Down',
 }
 
-type Pane = 'multiviewer' | 'controller' | 'audio' | 'pgm' | 'pip'
+const VALID_PANES = ['multiviewer', 'controller', 'audio', 'pgm', 'pip'] as const
+type Pane = (typeof VALID_PANES)[number]
+
+function sanitizeProductionId(raw: string | null): string | null {
+  if (!raw) return null
+  return /^[a-zA-Z0-9_-]{1,64}$/.test(raw) ? raw : null
+}
 
 // ─── PGM confidence monitor ───────────────────────────────────────────────────
 
@@ -221,11 +227,13 @@ function AudioPaneFullscreen({ send, numAuxBuses, numGroups, showEbuMain, auxBus
 }
 
 export function PanePage() {
-  const { pane } = useParams<{ pane: Pane }>()
+  const { pane: rawPane } = useParams<{ pane: string }>()
   const [searchParams] = useSearchParams()
-  const productionId = searchParams.get('production')
+  const pane = VALID_PANES.includes(rawPane as Pane) ? (rawPane as Pane) : null
+  const productionId = sanitizeProductionId(searchParams.get('production'))
 
   // No Shell in this route — bootstrap all store data ourselves
+  // (hooks must run before any invalid-param return)
   const fetchProductions = useProductionsStore((s) => s.fetchAll)
   const fetchSources     = useSourcesStore((s) => s.fetchAll)
   const fetchGraphics    = useGraphicsStore((s) => s.fetchAll)
@@ -324,7 +332,9 @@ export function PanePage() {
     pane === 'pgm'         ? (selectedPgmUrl ?? pgmWhepEndpoint ?? null) :
     null
   )
-  const send = useControllerWs(pane !== 'multiviewer' && pane !== 'pgm' ? productionId : null)
+  const send = useControllerWs(
+    pane && productionId && pane !== 'multiviewer' && pane !== 'pgm' ? productionId : null
+  )
 
   const setElements = useAudioStore((s) => s.setElements)
   useEffect(() => {
@@ -359,6 +369,10 @@ export function PanePage() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleKeyDown])
+
+  if (!pane || !productionId) {
+    return <Navigate to="/" replace />
+  }
 
   return (
     <>
