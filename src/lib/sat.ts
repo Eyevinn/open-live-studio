@@ -72,9 +72,10 @@ export function isOnOsc(): boolean {
 }
 
 /**
- * On OSC: sets the `eyevinn-open-live.sat` cookie on `.osaas.io` so OSC's
- * reverse proxy authenticates both REST and WebSocket requests automatically.
- * On localhost: no-op — api.ts falls back to Authorization header instead.
+ * On OSC: sets the `eyevinn-open-live.sat` cookie as **host-only** (#33 — not
+ * domain=.osaas.io) so co-tenant subdomains cannot read it. OSC reverse proxy
+ * still receives the cookie for this host. On localhost: no-op — api.ts falls
+ * back to Authorization header instead.
  * Returns the SAT expiry in ms, or 0 if no PAT is configured or not on OSC.
  */
 export async function authenticateWithOpenLive(): Promise<number> {
@@ -100,10 +101,10 @@ export async function authenticateWithOpenLive(): Promise<number> {
 
   // Note: HttpOnly cannot be set via document.cookie (requires Set-Cookie response header).
   // The SAT is intentionally readable by JS so it can be sent as a Bearer token in API calls.
-  // Compensating control: strict same-origin policy + short token lifetime (1h).
+  // Compensating control: host-only cookie (#33) + short token lifetime (1h).
+  // Omit Domain attribute → host-only (not shared with sibling *.osaas.io tenants).
   document.cookie = [
     `${OPEN_LIVE_SERVICE_ID}.sat=${encodeURIComponent('Bearer ' + sat)}`,
-    `domain=${OSC_COOKIE_DOMAIN}`,
     `path=/`,
     `max-age=${maxAge}`,
     `SameSite=Lax`,
