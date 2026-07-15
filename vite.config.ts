@@ -14,6 +14,10 @@ export default defineConfig({
       '@': resolve(__dirname, 'src'),
     },
   },
+  build: {
+    // Explicit: never ship TS source maps in production (closes #56).
+    sourcemap: false,
+  },
   server: {
     proxy: {
       '/api/v1': 'http://localhost:8080',
