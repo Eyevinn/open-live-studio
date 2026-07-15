@@ -12,10 +12,16 @@ function timeSince(ts: number): string {
   return `${Math.floor(secs / 60)}m ago`
 }
 
+/** #41: no data:text/html (stored XSS). Allow http(s) and image data URIs only. */
 function isValidGraphicUrl(s: string): boolean {
-  if (s.startsWith('data:text/html') || s.startsWith('data:image/')) return true
-  try { const u = new URL(s); return u.protocol === 'http:' || u.protocol === 'https:' }
-  catch { return false }
+  if (s.startsWith('data:image/')) return true
+  if (s.startsWith('data:')) return false
+  try {
+    const u = new URL(s)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
 }
 
 export function GraphicsPanel() {
@@ -46,7 +52,7 @@ export function GraphicsPanel() {
 
   function handleAdd() {
     if (!newName.trim() || !newUrl.trim()) return
-    if (!isValidGraphicUrl(newUrl.trim())) { setAddUrlError('Must be a valid http/https URL or data URI'); return }
+    if (!isValidGraphicUrl(newUrl.trim())) { setAddUrlError('Must be a valid http/https URL or data:image URI'); return }
     void addGraphic({ name: newName.trim(), url: newUrl.trim() })
     setNewName('')
     setNewUrl('')
@@ -56,7 +62,7 @@ export function GraphicsPanel() {
 
   function handleEdit() {
     if (!editTarget || !editTarget.name.trim() || !editTarget.url.trim()) return
-    if (!isValidGraphicUrl(editTarget.url.trim())) { setEditUrlError('Must be a valid http/https URL or data URI'); return }
+    if (!isValidGraphicUrl(editTarget.url.trim())) { setEditUrlError('Must be a valid http/https URL or data:image URI'); return }
     void updateGraphic(editTarget.id, { name: editTarget.name.trim(), url: editTarget.url.trim() })
     setEditUrlError(null)
     setEditTarget(null)
