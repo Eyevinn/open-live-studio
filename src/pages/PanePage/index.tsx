@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router'
+import { useParams, useSearchParams, Navigate } from 'react-router'
 import { useWebRTC } from '@/hooks/useWebRTC'
 import { useControllerWs } from '@/hooks/useControllerWs'
 import { useProductionStore } from '@/store/production.store'
@@ -221,9 +221,17 @@ function AudioPaneFullscreen({ send, numAuxBuses, numGroups, showEbuMain, auxBus
 }
 
 export function PanePage() {
-  const { pane } = useParams<{ pane: Pane }>()
+  const { pane: rawPane } = useParams<{ pane: string }>()
   const [searchParams] = useSearchParams()
-  const productionId = searchParams.get('production')
+  const rawProductionId = searchParams.get('production')
+
+  const VALID_PANES = ['multiviewer', 'controller', 'audio', 'pgm', 'pip'] as const
+  const pane = VALID_PANES.includes(rawPane as Pane) ? (rawPane as Pane) : null
+  const productionId = /^[a-zA-Z0-9_-]{1,64}$/.test(rawProductionId ?? '') ? rawProductionId : null
+
+  if (!pane || !productionId) {
+    return <Navigate to="/" replace />
+  }
 
   // No Shell in this route — bootstrap all store data ourselves
   const fetchProductions = useProductionsStore((s) => s.fetchAll)
