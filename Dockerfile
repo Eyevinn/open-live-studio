@@ -20,18 +20,9 @@ RUN rm -rf /usr/share/nginx/html/*
 # Copy built SPA
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# nginx config — serve index.html for all routes (SPA fallback)
-COPY <<'EOF' /etc/nginx/conf.d/default.conf.template
-server {
-    listen %PORT%;
-    root /usr/share/nginx/html;
-    index index.html;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-EOF
+
+# nginx config — serve index.html for all routes (SPA fallback) with security headers
+COPY nginx.conf.template /etc/nginx/conf.d/default.conf.template
 
 EXPOSE 8080
 
