@@ -76,9 +76,8 @@ export function SourcesPanel() {
     if (!STREAM_TYPE_HAS_ADDRESS[streamType]) return null
     if (!address.trim()) return 'Address is required'
     if (streamType === 'html') {
-      if (address.startsWith('data:text/html')) return null
       try { const u = new URL(address); if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error() }
-      catch { return 'Must be a valid http:// or https:// URL, or a data:text/html URI' }
+      catch { return 'Must be a valid http:// or https:// URL' }
     } else {
       if (!/^srt:\/\/[^?#]*:\d+/.test(address.trim())) return 'Must be a valid srt:// URI'
     }
