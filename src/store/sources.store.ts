@@ -82,7 +82,9 @@ export const useSourcesStore = create<SourcesState & SourcesActions>()(
       },
 
       addSource: async (source) => {
-        const { color: _color, ...apiBody } = source
+        // Strip the client-only `color` field before sending to the API.
+        const { color, ...apiBody } = source
+        void color
         const created = await sourcesApi.create(apiBody)
         set((state) => { state.sources.push(fromApi(created)) })
       },

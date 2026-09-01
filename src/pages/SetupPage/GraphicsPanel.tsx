@@ -102,7 +102,7 @@ export function GraphicsPanel() {
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={(e) => { e.stopPropagation(); !inActiveProduction && setEditTarget({ id: g.id, name: g.name, url: g.url }) }}
+                onClick={(e) => { e.stopPropagation(); if (!inActiveProduction) setEditTarget({ id: g.id, name: g.name, url: g.url }) }}
                 disabled={inActiveProduction}
                 className="text-white hover:text-orange-500 disabled:opacity-30 disabled:cursor-not-allowed"
                 title={inActiveProduction ? 'Cannot edit graphic in an active production' : 'Edit graphic'}
