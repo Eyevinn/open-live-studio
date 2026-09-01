@@ -1,6 +1,6 @@
 export { BASE } from './base.js'
 import { BASE } from './base.js'
-import { authenticateWithOpenLive, getApiToken, isOnOsc } from './sat.js'
+import { authenticateWithOpenLive, getApiToken } from './sat.js'
 
 // Paths that manage their own error toasts — skip global handler
 const SILENT_PATHS = ['/api/v1/status', '/api/v1/reconnect']
