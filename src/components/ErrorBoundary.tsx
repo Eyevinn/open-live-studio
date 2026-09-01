@@ -16,6 +16,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, info: ErrorInfo) {
+    // eslint-disable-next-line no-console -- surfaces uncaught render errors for diagnostics
     console.error('[ErrorBoundary] Uncaught render error:', error, info.componentStack)
   }
 

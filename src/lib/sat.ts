@@ -95,6 +95,7 @@ export async function authenticateWithOpenLive(): Promise<number> {
       maxAge = Math.max(0, exp - Math.floor(Date.now() / 1000))
     }
   } catch (err) {
+    // eslint-disable-next-line no-console -- surfaces JWT parse failures for diagnostics
     console.error('[sat] Failed to parse SAT JWT for cookie expiry — using 1h default:', err)
   }
 

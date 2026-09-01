@@ -50,12 +50,18 @@ function loadPanels(): Panels {
         }
       }
     }
-  } catch {}
+  } catch {
+    // intentionally empty — malformed/inaccessible localStorage falls back to defaults
+  }
   return { multiviewer: true, controller: true, audio: true, pgm: true, pip: false, fx: false }
 }
 
 function savePanels(panels: Panels) {
-  try { localStorage.setItem(PANELS_STORAGE_KEY, JSON.stringify(panels)) } catch {}
+  try {
+    localStorage.setItem(PANELS_STORAGE_KEY, JSON.stringify(panels))
+  } catch {
+    // intentionally empty — best-effort persistence; ignore quota/availability errors
+  }
 }
 
 // ─── Panel options persistence ────────────────────────────────────────────────
@@ -76,6 +82,9 @@ const DEFAULT_TRANSITIONS = ['fade', 'slide_left', 'slide_right']
 
 const CONTROLLER_OPTIONS_KEY = 'ol-studio-controller-options'
 
+// Macros panel is deliberately hidden (implementation preserved in code, not wired into the UI yet).
+const MACROS_ENABLED = false
+
 type ControllerOptions = { visibleTransitions: string[] }
 
 function loadControllerOptions(): ControllerOptions {
@@ -91,7 +100,9 @@ function loadControllerOptions(): ControllerOptions {
         return { visibleTransitions: vt.length > 0 ? vt : DEFAULT_TRANSITIONS }
       }
     }
-  } catch {}
+  } catch {
+    // intentionally empty — malformed/inaccessible localStorage falls back to defaults
+  }
   return { visibleTransitions: DEFAULT_TRANSITIONS }
 }
 
@@ -329,7 +340,11 @@ function ControllerOptionsContent({
     // Commit transitions
     const opts = { ...controllerOptions, visibleTransitions: draftTransitions }
     setControllerOptions(opts)
-    try { localStorage.setItem(CONTROLLER_OPTIONS_KEY, JSON.stringify(opts)) } catch {}
+    try {
+      localStorage.setItem(CONTROLLER_OPTIONS_KEY, JSON.stringify(opts))
+    } catch {
+      // intentionally empty — best-effort persistence; ignore quota/availability errors
+    }
 
     // Send changed offsets via WS
     for (const { mixerInput } of assignments) {
@@ -460,7 +475,7 @@ function ControllerOptionsContent({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function ControllerPage() {
-  const { cut, auto, ftb, setPvw, pvwInput, pvwPip, pgmPip, pgmInput, pips, setPvwPip, transitionType, transitionDurationMs, activeProductionId, setActiveProduction, afvRampUpMs, afvRampDownMs, dskState, deactivatedExternally, setDeactivatedExternally } = useProductionStore()
+  const { cut, auto, ftb, setPvw, pvwInput, pvwPip, pgmPip, pgmInput, pips, setPvwPip, transitionType, transitionDurationMs, activeProductionId, setActiveProduction, afvRampUpMs, afvRampDownMs, dskState, deactivatedExternally } = useProductionStore()
   const productions = useProductionsStore((s) => s.productions)
   const fetchProductions = useProductionsStore((s) => s.fetchAll)
   const refreshOneProduction = useProductionsStore((s) => s.refreshOne)
@@ -649,7 +664,7 @@ export function ControllerPage() {
         }
       }
     }
-  }, [handleCut, handleAuto, handleFtb, dskState, send, sortedSources, cut, setPvw, pgmInput, pgmPip, afvRampUpMs, afvRampDownMs, pips, handleSelectPvw, handleSelectPvwPip])
+  }, [handleCut, handleAuto, handleFtb, dskState, send, sortedSources, cut, pgmInput, pgmPip, afvRampUpMs, afvRampDownMs, pips, handleSelectPvw, handleSelectPvwPip])
 
   useEffect(() => {
     window.addEventListener('keydown', handleKeyDown)
@@ -938,7 +953,7 @@ export function ControllerPage() {
                 <div className="flex flex-col flex-1 gap-2 overflow-y-auto min-h-0">
                   <TransitionPanel onCut={handleCut} onAuto={handleAuto} onFtb={handleFtb} onSelectPvw={handleSelectPvw} onSetOvl={handleSetOvl} onSelectPvwPip={handleSelectPvwPip} pips={pips} pgmPip={pgmPip} pvwPip={pvwPip} className="flex-1" visibleTransitions={controllerOptions.visibleTransitions} />
                   <DskPanel onToggle={handleDskToggle} />
-                  {false && activeProductionId && (
+                  {MACROS_ENABLED && activeProductionId && (
                     <MacroBar productionId={activeProductionId!} onExec={handleMacroExec} />
                   )}
                 </div>
