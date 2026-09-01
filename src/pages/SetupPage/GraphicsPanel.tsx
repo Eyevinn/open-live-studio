@@ -13,7 +13,7 @@ function timeSince(ts: number): string {
 }
 
 function isValidGraphicUrl(s: string): boolean {
-  if (s.startsWith('data:text/html') || s.startsWith('data:image/')) return true
+  if (s.startsWith('data:image/')) return true
   try { const u = new URL(s); return u.protocol === 'http:' || u.protocol === 'https:' }
   catch { return false }
 }
