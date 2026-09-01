@@ -27,6 +27,13 @@ server {
     root /usr/share/nginx/html;
     index index.html;
     add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Content-Security-Policy "default-src 'self'; connect-src 'self' wss:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none';" always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+    location = /env-config.js {
+        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
+    }
     location / {
         try_files $uri $uri/ /index.html;
     }
