@@ -269,7 +269,7 @@ const EMPTY_RECORD: Record<number, boolean> = {}
 
 // ── Channel strip ─────────────────────────────────────────────────────────────
 
-function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false, showAfl = false, showEbu = false, mixerInput = null, isPgm = false, isPvw = false, busColor = C_MAIN, grpBuses = [] }: {
+function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false, showAfl = false, showEbu = false, mixerInput = null, isPgm = false, isPvw: _isPvw = false, busColor = C_MAIN, grpBuses = [] }: {
   elementId: string
   label: string
   send: SendFn
@@ -402,7 +402,7 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
       applyPfl(elementId, false)
       send({ type: 'PFL_SET', elementId, enabled: false })
     }
-  }, [afl, pfl, elementId, level, send, applyAfl, applyPfl])
+  }, [afl, pfl, elementId, send, applyAfl, applyPfl])
 
   const { faderContainerH } = useFaderDims()
 
@@ -1112,12 +1112,18 @@ function loadSections(): SectionState {
         }
       }
     }
-  } catch {}
+  } catch {
+    // intentionally empty — malformed/inaccessible localStorage falls back to defaults
+  }
   return DEFAULT_SECTIONS
 }
 
 function saveSections(s: SectionState) {
-  try { localStorage.setItem(SECTIONS_KEY, JSON.stringify(s)) } catch {}
+  try {
+    localStorage.setItem(SECTIONS_KEY, JSON.stringify(s))
+  } catch {
+    // intentionally empty — best-effort persistence; ignore quota/availability errors
+  }
 }
 
 // ── Section bar ───────────────────────────────────────────────────────────────
