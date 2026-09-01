@@ -170,7 +170,7 @@ export const productionsApi = {
       .then((docs) => docs.map(normalizeProduction)),
 
   get: (id: string) =>
-    request<RawProduction>(`/api/v1/productions/${id}`)
+    request<RawProduction>(`/api/v1/productions/${encodeURIComponent(id)}`)
       .then(normalizeProduction),
 
   create: (body: { name: string }) =>
@@ -180,48 +180,48 @@ export const productionsApi = {
     }).then(normalizeProduction),
 
   update: (id: string, body: { name?: string; values?: Record<string, string | number | boolean>; airTime?: string | null }) =>
-    request<RawProduction>(`/api/v1/productions/${id}`, {
+    request<RawProduction>(`/api/v1/productions/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     }).then(normalizeProduction),
 
   activate: (id: string) =>
-    request<RawProduction>(`/api/v1/productions/${id}/activate`, { method: 'POST' })
+    request<RawProduction>(`/api/v1/productions/${encodeURIComponent(id)}/activate`, { method: 'POST' })
       .then(normalizeProduction),
 
   deactivate: (id: string) =>
-    request<RawProduction>(`/api/v1/productions/${id}/deactivate`, { method: 'POST' })
+    request<RawProduction>(`/api/v1/productions/${encodeURIComponent(id)}/deactivate`, { method: 'POST' })
       .then(normalizeProduction),
 
   remove: (id: string) =>
-    request<void>(`/api/v1/productions/${id}`, { method: 'DELETE' }),
+    request<void>(`/api/v1/productions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 
   assignSource: (id: string, body: ProductionSourceAssignment) =>
-    request<ProductionSourceAssignment & { _rev: string }>(`/api/v1/productions/${id}/sources`, {
+    request<ProductionSourceAssignment & { _rev: string }>(`/api/v1/productions/${encodeURIComponent(id)}/sources`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
 
   unassignSource: (id: string, mixerInput: string) =>
-    request<void>(`/api/v1/productions/${id}/sources/${encodeURIComponent(mixerInput)}`, { method: 'DELETE', silentStatuses: [404] }),
+    request<void>(`/api/v1/productions/${encodeURIComponent(id)}/sources/${encodeURIComponent(mixerInput)}`, { method: 'DELETE', silentStatuses: [404] }),
 
   assignGraphic: (id: string, body: ProductionGraphicAssignment) =>
-    request<ProductionGraphicAssignment & { _rev: string }>(`/api/v1/productions/${id}/graphics`, {
+    request<ProductionGraphicAssignment & { _rev: string }>(`/api/v1/productions/${encodeURIComponent(id)}/graphics`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
 
   unassignGraphic: (id: string, dskInput: string) =>
-    request<void>(`/api/v1/productions/${id}/graphics/${encodeURIComponent(dskInput)}`, { method: 'DELETE' }),
+    request<void>(`/api/v1/productions/${encodeURIComponent(id)}/graphics/${encodeURIComponent(dskInput)}`, { method: 'DELETE' }),
 
   assignOutput: (id: string, outputId: string) =>
-    request<ProductionOutputAssignment & { _rev: string }>(`/api/v1/productions/${id}/outputs`, {
+    request<ProductionOutputAssignment & { _rev: string }>(`/api/v1/productions/${encodeURIComponent(id)}/outputs`, {
       method: 'POST',
       body: JSON.stringify({ outputId }),
     }),
 
   unassignOutput: (id: string, outputId: string) =>
-    request<void>(`/api/v1/productions/${id}/outputs/${encodeURIComponent(outputId)}`, { method: 'DELETE' }),
+    request<void>(`/api/v1/productions/${encodeURIComponent(id)}/outputs/${encodeURIComponent(outputId)}`, { method: 'DELETE' }),
 }
 
 export const sourcesApi = {
@@ -235,13 +235,13 @@ export const sourcesApi = {
     }),
 
   update: (id: string, body: Partial<Omit<ApiSource, 'id'>>) =>
-    request<ApiSource>(`/api/v1/sources/${id}`, {
+    request<ApiSource>(`/api/v1/sources/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
 
   remove: (id: string) =>
-    request<void>(`/api/v1/sources/${id}`, { method: 'DELETE' }),
+    request<void>(`/api/v1/sources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 }
 
 // --------------- Macro types ---------------
@@ -274,36 +274,36 @@ export interface ApiAudioElement {
 
 export const macrosApi = {
   list: (productionId: string) =>
-    request<ApiMacro[]>(`/api/v1/productions/${productionId}/macros`),
+    request<ApiMacro[]>(`/api/v1/productions/${encodeURIComponent(productionId)}/macros`),
 
   create: (productionId: string, body: Omit<ApiMacro, 'id'>) =>
-    request<ApiMacro>(`/api/v1/productions/${productionId}/macros`, {
+    request<ApiMacro>(`/api/v1/productions/${encodeURIComponent(productionId)}/macros`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),
 
   update: (productionId: string, macroId: string, body: Partial<Omit<ApiMacro, 'id'>>) =>
-    request<ApiMacro>(`/api/v1/productions/${productionId}/macros/${macroId}`, {
+    request<ApiMacro>(`/api/v1/productions/${encodeURIComponent(productionId)}/macros/${encodeURIComponent(macroId)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
 
   remove: (productionId: string, macroId: string) =>
-    request<void>(`/api/v1/productions/${productionId}/macros/${macroId}`, { method: 'DELETE' }),
+    request<void>(`/api/v1/productions/${encodeURIComponent(productionId)}/macros/${encodeURIComponent(macroId)}`, { method: 'DELETE' }),
 }
 
 export const audioApi = {
   discoverElements: (productionId: string) =>
-    request<ApiAudioElement[]>(`/api/v1/productions/${productionId}/audio`),
+    request<ApiAudioElement[]>(`/api/v1/productions/${encodeURIComponent(productionId)}/audio`),
 
   getElement: (productionId: string, elementId: string) =>
     request<{ element_id: string; properties: Record<string, unknown> }>(
-      `/api/v1/productions/${productionId}/audio/${elementId}`,
+      `/api/v1/productions/${encodeURIComponent(productionId)}/audio/${encodeURIComponent(elementId)}`,
     ),
 
   updateElement: (productionId: string, elementId: string, body: { property: string; value: unknown }) =>
     request<{ element_id: string; properties: Record<string, unknown> }>(
-      `/api/v1/productions/${productionId}/audio/${elementId}`,
+      `/api/v1/productions/${encodeURIComponent(productionId)}/audio/${encodeURIComponent(elementId)}`,
       { method: 'PATCH', body: JSON.stringify(body) },
     ),
 }
@@ -338,13 +338,13 @@ export const productionConfigsApi = {
     }),
 
   update: (id: string, body: { name?: string; values?: Record<string, string | number | boolean> }) =>
-    request<ProductionConfig>(`/api/v1/production-configs/${id}`, {
+    request<ProductionConfig>(`/api/v1/production-configs/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
 
   remove: (id: string) =>
-    request<void>(`/api/v1/production-configs/${id}`, { method: 'DELETE' }),
+    request<void>(`/api/v1/production-configs/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 }
 
 export interface ApiGraphic {
@@ -366,13 +366,13 @@ export const graphicsApi = {
     }),
 
   update: (id: string, body: { name?: string; url?: string }) =>
-    request<ApiGraphic>(`/api/v1/graphics/${id}`, {
+    request<ApiGraphic>(`/api/v1/graphics/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
 
   remove: (id: string) =>
-    request<void>(`/api/v1/graphics/${id}`, { method: 'DELETE' }),
+    request<void>(`/api/v1/graphics/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 }
 
 export const outputsApi = {
@@ -386,11 +386,11 @@ export const outputsApi = {
     }),
 
   update: (id: string, body: { name?: string; url?: string }) =>
-    request<ApiOutput>(`/api/v1/outputs/${id}`, {
+    request<ApiOutput>(`/api/v1/outputs/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
 
   remove: (id: string) =>
-    request<void>(`/api/v1/outputs/${id}`, { method: 'DELETE' }),
+    request<void>(`/api/v1/outputs/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 }
