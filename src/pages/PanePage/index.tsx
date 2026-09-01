@@ -264,7 +264,7 @@ export function PanePage() {
   ]
 
   const [selectedPgmUrl, setSelectedPgmUrl] = useState<string | undefined>(undefined)
-  const [selectedMvUrl, setSelectedMvUrl] = useState<string | undefined>(undefined)
+  const [selectedMvUrl] = useState<string | undefined>(undefined)
   const { audioTrackCount } = useViewerStore()
   const [mvAudioOn, setMvAudioOn] = useState(false)
   const [mvAudioTrack, setMvAudioTrack] = useState(1)
@@ -310,7 +310,9 @@ export function PanePage() {
           if (vt.length > 0) return vt
         }
       }
-    } catch {}
+    } catch {
+      // intentionally empty — malformed/inaccessible localStorage falls back to defaults
+    }
     return [...DEFAULT_TRANSITIONS]
   })
 
@@ -545,7 +547,11 @@ export function PanePage() {
                   onChange={() => {
                     const next = checked ? visibleTransitions.filter((x) => x !== t) : [...visibleTransitions, t]
                     setVisibleTransitions(next)
-                    try { localStorage.setItem(CONTROLLER_OPTIONS_KEY, JSON.stringify({ visibleTransitions: next })) } catch {}
+                    try {
+                      localStorage.setItem(CONTROLLER_OPTIONS_KEY, JSON.stringify({ visibleTransitions: next }))
+                    } catch {
+                      // intentionally empty — best-effort persistence; ignore quota/availability errors
+                    }
                   }}
                   className="accent-orange-500"
                 />

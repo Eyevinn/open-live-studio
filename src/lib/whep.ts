@@ -115,6 +115,7 @@ export async function connectWhep(
     // Best-effort DELETE to release the WHEP server-side session
     if (whepResourceUrl) {
       fetch(whepResourceUrl, { method: 'DELETE' }).catch((err: unknown) => {
+        // eslint-disable-next-line no-console -- surfaces best-effort cleanup failures for diagnostics
         console.warn('[whep] DELETE resource failed (best-effort):', err)
       })
     }

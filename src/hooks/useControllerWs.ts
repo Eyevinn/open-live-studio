@@ -3,6 +3,7 @@ import { useProductionStore, type PipZone, type PipConfig, type PipTransforms, t
 import { useProductionsStore } from '@/store/productions.store'
 import { useAudioStore } from '@/store/audio.store'
 import { useToastStore } from '@/store/toast.store'
+import { getApiToken } from '@/lib/sat'
 
 import { BASE } from '@/lib/base'
 const WS_BASE = BASE.replace(/^http/, 'ws')
@@ -107,10 +108,14 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let reconnectCount = 0
 
-    const connect = () => {
+    const connect = async () => {
       if (cancelled) return
 
-      const ws = new WebSocket(`${WS_BASE}/ws/productions/${productionId}/controller`)
+      const token = await getApiToken().catch(() => undefined)
+      const wsUrl = new URL(`${WS_BASE}/ws/productions/${productionId}/controller`)
+      if (token) wsUrl.searchParams.set('token', token)
+
+      const ws = new WebSocket(wsUrl.toString())
       wsRef.current = ws
 
       ws.onmessage = (event) => {
