@@ -31,6 +31,9 @@ function SourceCell({
       cancelled = true
       setStream((prev) => { prev?.getTracks().forEach((t) => t.stop()); return null })
     }
+    // Depends on primitive fields, not the `source` object reference, which changes on every
+    // unrelated store update (would cause constant stream reconnects).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [source?.id, source?.color, source?.name, source?.liveCamera])
 
   if (!source) return null
