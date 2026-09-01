@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { BASE } from '@/lib/api'
 import { authenticateWithOpenLive, getApiToken } from '@/lib/sat'
-import { useProgramStartMs, getProgramMode, COUNTDOWN_WINDOW_MS } from '@/store/programClock.store'
+import { useProgramStartMs, getProgramMode } from '@/store/programClock.store'
 import { useProductionStore } from '@/store/production.store'
 import { useProductionsStore } from '@/store/productions.store'
 

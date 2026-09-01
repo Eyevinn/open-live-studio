@@ -138,6 +138,7 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
           const deadline = Date.now() + ACTIVATION_POLL_TIMEOUT_MS
           const poll = async (): Promise<void> => {
             if (Date.now() >= deadline) {
+              // eslint-disable-next-line no-console -- surfaces activation polling timeout for diagnostics
               console.warn(`[productions] Activation polling timed out for production ${id}`)
               return
             }
@@ -160,6 +161,7 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
                 await poll()
               }
             } catch (err) {
+              // eslint-disable-next-line no-console -- surfaces activation poll errors for diagnostics
               console.error(`[productions] Activation poll error for ${id}:`, err)
               // Wait before retrying to prevent burst-recursion on instant-failing errors
               await new Promise<void>((resolve) => setTimeout(resolve, ACTIVATION_POLL_ERROR_DELAY_MS))
