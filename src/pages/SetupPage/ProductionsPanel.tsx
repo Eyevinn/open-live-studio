@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { getProgramMode } from '@/store/programClock.store'
 import { Link, useNavigate } from 'react-router'
 import { useProductionsStore, type Production } from '@/store/productions.store'
@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
 import { Tooltip } from '@/components/ui/Tooltip'
-import { selectCls, inputCls, InfoTip, ConfigFieldGroup, PROP_TOOLTIPS } from '@/components/ui/ProductionConfigFields'
+import { selectCls, inputCls, InfoTip, ConfigFieldGroup } from '@/components/ui/ProductionConfigFields'
 
 // ---------------------------------------------------------------------------
 // Stream type labels — used for grouping source dropdowns
@@ -101,7 +101,6 @@ function SlotRow({ index: _index, currentSourceId, canRemove, onChange, onRemove
 // ---------------------------------------------------------------------------
 
 const DSK_SLOTS = ['dsk_in_0', 'dsk_in_1'] as const
-const DSK_LABELS: Record<string, string> = { dsk_in_0: 'DSK 1', dsk_in_1: 'DSK 2' }
 
 interface GfxSlotRowProps {
   dskInput: string
@@ -147,13 +146,12 @@ const OUTPUT_TYPE_LABELS: Record<string, string> = {
 interface OutputSlotRowProps {
   value: string
   usedIds: string[]
-  takenByOtherIds: string[]
   canRemove: boolean
   onChange: (id: string) => void
   onRemove: () => void
 }
 
-function OutputSlotRow({ value, usedIds, takenByOtherIds, canRemove, onChange, onRemove }: OutputSlotRowProps) {
+function OutputSlotRow({ value, usedIds, canRemove, onChange, onRemove }: OutputSlotRowProps) {
   const outputs = useOutputsStore((s) => s.outputs)
   return (
     <div className="flex items-center gap-2">
@@ -207,16 +205,10 @@ interface OptionsModalProps {
 
 function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
   const { assignSource, unassignSource, assignGraphic, unassignGraphic, updateValues, updateName, assignOutput, unassignOutput } = useProductionsStore()
-  const allProductions = useProductionsStore((s) => s.productions)
   const sources = useSourcesStore((s) => s.sources)
   const graphics = useGraphicsStore((s) => s.graphics)
   const catalogueOutputs = useOutputsStore((s) => s.outputs)
   const isActive = production.status === 'active'
-
-  // Output IDs already assigned to other productions (so we can hide them from this production's dropdowns)
-  const outputsTakenByOthers = allProductions
-    .filter((p) => p.id !== production.id)
-    .flatMap((p) => p.outputAssignments.map((a) => a.outputId))
 
 
   const [outputList, setOutputList] = useState<string[]>(() =>
@@ -372,8 +364,6 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
     if (cfg) { setConfigValues({ ...cfg.values }); setValuesDirty(true) }
   }
 
-  const assigned = Object.values(assignments).filter(Boolean).length
-
   const tProps = PRODUCTION_PROPERTIES
   const cfgOnChange = isActive ? undefined : handleValueChange
 
@@ -487,7 +477,7 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
               ) : (
                 <div className="flex flex-col gap-2">
                   {outputList.map((id, i) => (
-                    <OutputSlotRow key={i} value={id} usedIds={outputList} takenByOtherIds={[]} canRemove={true} onChange={(newId) => void handleOutputChange(i, newId)} onRemove={() => void handleOutputRemove(i)} />
+                    <OutputSlotRow key={i} value={id} usedIds={outputList} canRemove={true} onChange={(newId) => void handleOutputChange(i, newId)} onRemove={() => void handleOutputRemove(i)} />
                   ))}
                   {outputList.length < MAX_OUTPUTS && (
                     <button type="button" onClick={() => setOutputList((prev) => [...prev, ''])} className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity">+ New Output</button>
@@ -550,11 +540,7 @@ function defaultConfigValues(properties: TemplateProperty[]): Record<string, str
 
 function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
   const { fetchAll } = useProductionsStore()
-  const allProductions = useProductionsStore((s) => s.productions)
   const sources = useSourcesStore((s) => s.sources)
-
-  // All outputs already assigned to any existing production
-  const outputsTakenByAll = allProductions.flatMap((p) => p.outputAssignments.map((a) => a.outputId))
 
   const [name, setName] = useState('')
   const [assignments, setAssignments] = useState<Record<string, string>>({})
@@ -623,8 +609,6 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
       setSaving(false)
     }
   }
-
-  const assignedCount = Object.values(assignments).filter(Boolean).length
 
   const tProps = PRODUCTION_PROPERTIES
 
@@ -717,7 +701,7 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
               </div>
               <div className="flex flex-col gap-2">
                 {outputList.map((id, i) => (
-                  <OutputSlotRow key={i} value={id} usedIds={outputList} takenByOtherIds={[]} canRemove={true} onChange={(newId) => setOutputList((prev) => prev.map((v, j) => j === i ? newId : v))} onRemove={() => setOutputList((prev) => prev.filter((_, j) => j !== i))} />
+                  <OutputSlotRow key={i} value={id} usedIds={outputList} canRemove={true} onChange={(newId) => setOutputList((prev) => prev.map((v, j) => j === i ? newId : v))} onRemove={() => setOutputList((prev) => prev.filter((_, j) => j !== i))} />
                 ))}
                 <button type="button" onClick={() => setOutputList((prev) => [...prev, ''])} className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity">+ New Output</button>
               </div>
@@ -1171,61 +1155,6 @@ function InlineCopyButton({ label, value, displayUrl }: { label: string; value: 
       )}
       <span className="uppercase tracking-wide">{label}</span>
     </button>
-  )
-}
-
-function EndpointRow({ label, url }: { label: string; url: string }) {
-  const [copied, setCopied] = useState(false)
-  function handleCopy() {
-    void navigator.clipboard.writeText(url).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
-  }
-  return (
-    <div className="flex items-center gap-2">
-      <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-[--color-surface-raised] text-[--color-text-muted] uppercase shrink-0">
-        {label}
-      </span>
-      <span className="text-xs font-mono text-[--color-text-primary] truncate flex-1">{url}</span>
-      <button
-        type="button"
-        onClick={handleCopy}
-        className="text-xs text-[--color-text-muted] hover:text-orange-500 transition-colors shrink-0"
-        title={`Copy ${label} URI`}
-      >
-        {copied ? '✓' : '⎘'}
-      </button>
-    </div>
-  )
-}
-
-function WhipEndpointRow({ mixerInput, url }: { mixerInput: string; url: string }) {
-  const [copied, setCopied] = useState(false)
-
-  function handleCopy() {
-    void navigator.clipboard.writeText(url).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-[--color-surface-raised] text-[--color-text-muted] uppercase shrink-0">
-        WHIP
-      </span>
-      <span className="text-xs font-mono text-[--color-text-muted] shrink-0">{mixerInput}</span>
-      <span className="text-xs font-mono text-[--color-text-primary] truncate flex-1">{url}</span>
-      <button
-        type="button"
-        onClick={handleCopy}
-        className="text-xs text-[--color-text-muted] hover:text-orange-500 transition-colors shrink-0"
-        title="Copy WHIP endpoint URL"
-      >
-        {copied ? '✓' : '⎘'}
-      </button>
-    </div>
   )
 }
 
