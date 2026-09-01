@@ -1,6 +1,4 @@
 import { useRef, useImperativeHandle, forwardRef, useEffect, useState, useCallback } from 'react'
-
-const MAX_RETRIES = 5
 import { useViewerStore } from '@/store/viewer.store'
 import { VideoTile, type VideoTileHandle } from '@/components/ui/VideoTile'
 import { Badge } from '@/components/ui/Badge'
@@ -20,10 +18,8 @@ interface ProgramPreviewProps {
 
 export const ProgramPreview = forwardRef<ProgramPreviewHandle, ProgramPreviewProps>(
   function ProgramPreview({ noSignal = false, audioOn, onAudioOnChange: _onAudioOnChange, audioTrack, onAudioTrackChange: _onAudioTrackChange }, ref) {
-    const { programStream, connectionState, retryCountdown, retryAttempt, audioTrackCount } = useViewerStore()
+    const { programStream, connectionState, retryCountdown } = useViewerStore()
     const tileRef = useRef<VideoTileHandle>(null)
-    // Single-track: unmute video for direct output. Multi-track: AudioContext handles selection, keep video muted.
-    const videoMuted = !audioOn || audioTrackCount > 1
 
     // hasVideoReady: true only when the video element is actually decoding frames.
     // Resets whenever connectionState leaves 'connected' so NO SIGNAL stays visible

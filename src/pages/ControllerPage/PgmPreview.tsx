@@ -37,7 +37,6 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
   }))
   const [connectionState, setConnectionState] = useState<ViewerConnectionState>('disconnected')
   const [retryCountdown, setRetryCountdown] = useState<number | null>(null)
-  const [retryAttempt, setRetryAttempt] = useState(0)
   const [hasVideo, setHasVideo] = useState(false)
   const clientRef = useRef<WhepClient | null>(null)
 
@@ -95,6 +94,7 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
 
   useEffect(() => {
     if (!whepEndpoint) return
+    const videoEl = videoRef.current
     let cancelled = false
     let countdownTimer: ReturnType<typeof setInterval> | null = null
     let disconnectWatchdog: ReturnType<typeof setTimeout> | null = null
@@ -105,7 +105,6 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
     setAudioTrackCount(0)
     streamRef.current = null
     setHasVideo(false)
-    setRetryAttempt(0)
     setConnectionState('connecting')
 
     const startCountdown = (seconds: number, onDone: () => void) => {
@@ -131,14 +130,12 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
       if (videoRef.current) videoRef.current.srcObject = null
       setHasVideo(false)
       retryCount++
-      setRetryAttempt(retryCount)
       if (retryCount >= MAX_RETRIES) {
         setConnectionState('failed')
         if (disconnectWatchdog) { clearTimeout(disconnectWatchdog); disconnectWatchdog = null }
         disconnectWatchdog = setTimeout(() => {
           if (cancelled) return
           retryCount = MAX_RETRIES - 1
-          setRetryAttempt(retryCount)
           connect()
         }, 30_000)
       } else {
@@ -178,7 +175,6 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
             if (disconnectWatchdog) { clearTimeout(disconnectWatchdog); disconnectWatchdog = null }
             if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; setRetryCountdown(null) }
             retryCount = 0
-            setRetryAttempt(0)
             setConnectionState('connected')
           },
           onDisconnected: () => {
@@ -194,7 +190,6 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
               // Watchdog: fresh reconnect, not a WHEP retry. Reset retryCount so
               // onError gets a full budget for the new connection attempt.
               retryCount = 0
-              setRetryAttempt(0)
               connect()
             }, 5000)
           },
@@ -216,7 +211,6 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
       if (disconnectWatchdog) { clearTimeout(disconnectWatchdog); disconnectWatchdog = null }
       if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; setRetryCountdown(null) }
       retryCount = MAX_RETRIES - 1
-      setRetryAttempt(retryCount)
       connect()
     }
     window.addEventListener('online', handleOnline)
@@ -240,7 +234,7 @@ export const PgmPreview = forwardRef<PgmPreviewHandle, PgmPreviewProps>(function
         void clientRef.current.disconnect()
         clientRef.current = null
       }
-      if (videoRef.current) videoRef.current.srcObject = null
+      if (videoEl) videoEl.srcObject = null
       setConnectionState('disconnected')
     }
   }, [whepEndpoint])

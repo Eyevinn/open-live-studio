@@ -85,7 +85,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
   const {
     pgmInput, pvwInput, isFtb,
     transitionType, transitionDurationMs, tBarPosition,
-    setPgm, setTransitionType, setTransitionDuration, setTBarPosition,
+    setTransitionType, setTransitionDuration, setTBarPosition,
     activeProductionId,
   } = useProductionStore()
 

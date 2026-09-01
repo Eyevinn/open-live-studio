@@ -164,7 +164,7 @@ export function SourcesPanel() {
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={(e) => { e.stopPropagation(); !inActiveProduction && setEditTarget({ id: src.id, name: src.name, address: src.address ?? '', latency: src.latency != null ? String(src.latency) : '', streamType: src.streamType }) }}
+                onClick={(e) => { e.stopPropagation(); if (!inActiveProduction) setEditTarget({ id: src.id, name: src.name, address: src.address ?? '', latency: src.latency != null ? String(src.latency) : '', streamType: src.streamType }) }}
                 disabled={inActiveProduction}
                 className="text-white hover:text-orange-500 disabled:opacity-30 disabled:cursor-not-allowed"
                 title={inActiveProduction ? 'Cannot edit source in an active production' : 'Edit source'}
