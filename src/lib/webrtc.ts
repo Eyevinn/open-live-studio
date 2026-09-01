@@ -99,6 +99,7 @@ export class WhepClient {
       this.pc.onicecandidateerror = (e) => {
         // Log only non-sensitive fields — never log e.url (may contain TURN credentials)
         if (import.meta.env.DEV) {
+          // eslint-disable-next-line no-console -- dev-only diagnostics, gated by import.meta.env.DEV
           console.warn('[WhepClient] ICE candidate error:', e.errorCode, e.errorText)
         }
       }

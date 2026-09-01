@@ -7,9 +7,11 @@ import './index.css'
 // Global safety net for unhandled promise rejections and uncaught errors.
 // These won't crash the tab but will log clearly for debugging.
 window.addEventListener('unhandledrejection', (e) => {
+  // eslint-disable-next-line no-console -- global safety net logs for debugging
   console.error('[global] Unhandled promise rejection:', e.reason)
 })
 window.addEventListener('error', (e) => {
+  // eslint-disable-next-line no-console -- global safety net logs for debugging
   console.error('[global] Uncaught error:', e.error ?? e.message)
 })
 
