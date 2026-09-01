@@ -14,6 +14,9 @@ RUN pnpm build
 # Stage 2: serve with nginx
 FROM nginx:1.27-alpine
 
+# jq is required by docker-entrypoint.sh to safely serialize runtime env vars
+RUN apk add --no-cache jq
+
 # Remove default nginx static assets
 RUN rm -rf /usr/share/nginx/html/*
 

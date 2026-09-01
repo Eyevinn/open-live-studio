@@ -6,31 +6,23 @@ set -e
 # env var values — the heredoc approach is vulnerable to shell injection if
 # the values contain quotes or braces.
 #
-# nginx:alpine ships with jq available via the base image.
-# If jq is not present, fall back to printf with manual hex-escaping.
+# jq is a required dependency (installed in the Dockerfile). We fail closed
+# if it is missing rather than falling back to unsafe manual escaping, which
+# previously missed newlines/CR/null and allowed JS injection.
 
 OPEN_LIVE_URL="${OPEN_LIVE_URL:-}"
 OSC_PAT="${OSC_PAT:-}"
 
-if command -v jq > /dev/null 2>&1; then
-  # Safe: jq --arg passes values as literals, never interpolated
-  printf 'window._env_ = %s;\n' \
-    "$(jq -n --arg u "$OPEN_LIVE_URL" --arg p "$OSC_PAT" \
-      '{OPEN_LIVE_URL: $u, OSC_PAT: $p}')" \
-    > /usr/share/nginx/html/env-config.js
-else
-  # Fallback: manual JSON encoding (escape backslash, double-quote, control chars)
-  escape_json() {
-    printf '%s' "$1" | sed \
-      -e 's/\\/\\\\/g' \
-      -e 's/"/\\"/g' \
-      -e 's/	/\\t/g'
-  }
-  U="$(escape_json "$OPEN_LIVE_URL")"
-  P="$(escape_json "$OSC_PAT")"
-  printf 'window._env_ = {"OPEN_LIVE_URL":"%s","OSC_PAT":"%s"};\n' "$U" "$P" \
-    > /usr/share/nginx/html/env-config.js
+if ! command -v jq > /dev/null 2>&1; then
+  echo "docker-entrypoint.sh: fatal: jq is required but not installed" >&2
+  exit 1
 fi
+
+# Safe: jq --arg passes values as literals, never interpolated
+printf 'window._env_ = %s;\n' \
+  "$(jq -n --arg u "$OPEN_LIVE_URL" --arg p "$OSC_PAT" \
+    '{OPEN_LIVE_URL: $u, OSC_PAT: $p}')" \
+  > /usr/share/nginx/html/env-config.js
 
 # Render the nginx config from the template, tightening the CSP connect-src so
 # the SPA can only reach the origins it actually talks to:
