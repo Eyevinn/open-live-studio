@@ -20,25 +20,9 @@ RUN rm -rf /usr/share/nginx/html/*
 # Copy built SPA
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# nginx config — serve index.html for all routes (SPA fallback)
-COPY <<'EOF' /etc/nginx/conf.d/default.conf.template
-server {
-    listen %PORT%;
-    root /usr/share/nginx/html;
-    index index.html;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; connect-src %CSP_CONNECT_SRC%; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none';" always;
-    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
-    location = /env-config.js {
-        add_header Cache-Control "no-store, no-cache, must-revalidate" always;
-    }
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-EOF
+# nginx config — full security-header suite + SPA fallback (see nginx.conf.template).
+# The template uses the %PORT% placeholder, substituted at container start by the CMD below.
+COPY nginx.conf.template /etc/nginx/conf.d/default.conf.template
 
 EXPOSE 8080
 
