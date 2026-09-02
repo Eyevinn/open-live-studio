@@ -32,4 +32,28 @@ else
     > /usr/share/nginx/html/env-config.js
 fi
 
+# Render the nginx config from the template, tightening the CSP connect-src so
+# the SPA can only reach the origins it actually talks to:
+#   - 'self'                              static assets + /env-config.js
+#   - $OPEN_LIVE_URL (https)              open-live REST API
+#   - wss/ws origin of $OPEN_LIVE_URL     open-live controller WebSocket
+#                                         (src derives ws(s) from the same origin)
+#   - https://token.svc.prod.osaas.io     OSC SAT token exchange (hardcoded in src/lib/sat.ts)
+# When OPEN_LIVE_URL is unset we cannot know the exact backend host, so we fall
+# back to the OSC deployment origins rather than a bare wss:/https: wildcard.
+PORT="${PORT:-8080}"
+TOKEN_ORIGIN="https://token.svc.prod.osaas.io"
+if [ -n "$OPEN_LIVE_URL" ]; then
+  # Derive the WebSocket scheme/origin from the backend URL (https->wss, http->ws),
+  # mirroring src/lib/base.ts + useControllerWs.ts (BASE.replace(/^http/, 'ws')).
+  BACKEND_WS="$(printf '%s' "$OPEN_LIVE_URL" | sed -e 's|^https://|wss://|' -e 's|^http://|ws://|')"
+  CSP_CONNECT_SRC="'self' $OPEN_LIVE_URL $BACKEND_WS $TOKEN_ORIGIN"
+else
+  CSP_CONNECT_SRC="'self' wss://*.osaas.io https://*.osaas.io"
+fi
+
+sed -e "s|%PORT%|$PORT|g" \
+    -e "s|%CSP_CONNECT_SRC%|$CSP_CONNECT_SRC|g" \
+  /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf
+
 exec "$@"
