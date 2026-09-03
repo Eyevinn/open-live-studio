@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef, useState } from 'react'
-import { useParams, useSearchParams } from 'react-router'
+import { Navigate, useParams, useSearchParams } from 'react-router'
 import { useWebRTC } from '@/hooks/useWebRTC'
 import { useControllerWs } from '@/hooks/useControllerWs'
 import { useProductionStore } from '@/store/production.store'
@@ -177,6 +177,8 @@ const TRANSITION_LABELS: Record<string, string> = {
 }
 
 type Pane = 'multiviewer' | 'controller' | 'audio' | 'pgm' | 'pip'
+const VALID_PANES: readonly Pane[] = ['multiviewer', 'controller', 'audio', 'pgm', 'pip']
+const PRODUCTION_ID_RE = /^[a-zA-Z0-9_-]{1,64}$/
 
 // ─── PGM confidence monitor ───────────────────────────────────────────────────
 
@@ -221,9 +223,11 @@ function AudioPaneFullscreen({ send, numAuxBuses, numGroups, showEbuMain, auxBus
 }
 
 export function PanePage() {
-  const { pane } = useParams<{ pane: Pane }>()
+  const { pane: rawPane } = useParams<{ pane: string }>()
   const [searchParams] = useSearchParams()
-  const productionId = searchParams.get('production')
+  const pane: Pane | null = VALID_PANES.includes(rawPane as Pane) ? (rawPane as Pane) : null
+  const rawProductionId = searchParams.get('production')
+  const productionId = rawProductionId !== null && !PRODUCTION_ID_RE.test(rawProductionId) ? null : rawProductionId
 
   // No Shell in this route — bootstrap all store data ourselves
   const fetchProductions = useProductionsStore((s) => s.fetchAll)
@@ -260,7 +264,7 @@ export function PanePage() {
   ]
 
   const [selectedPgmUrl, setSelectedPgmUrl] = useState<string | undefined>(undefined)
-  const [selectedMvUrl, setSelectedMvUrl] = useState<string | undefined>(undefined)
+  const [selectedMvUrl] = useState<string | undefined>(undefined)
   const { audioTrackCount } = useViewerStore()
   const [mvAudioOn, setMvAudioOn] = useState(false)
   const [mvAudioTrack, setMvAudioTrack] = useState(1)
@@ -306,7 +310,9 @@ export function PanePage() {
           if (vt.length > 0) return vt
         }
       }
-    } catch {}
+    } catch {
+      // intentionally empty — malformed/inaccessible localStorage falls back to defaults
+    }
     return [...DEFAULT_TRANSITIONS]
   })
 
@@ -359,6 +365,9 @@ export function PanePage() {
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [handleKeyDown])
+
+  if (!pane) return <Navigate to="/" replace />
+  if (rawProductionId !== null && productionId === null) return <Navigate to="/" replace />
 
   return (
     <>
@@ -538,7 +547,11 @@ export function PanePage() {
                   onChange={() => {
                     const next = checked ? visibleTransitions.filter((x) => x !== t) : [...visibleTransitions, t]
                     setVisibleTransitions(next)
-                    try { localStorage.setItem(CONTROLLER_OPTIONS_KEY, JSON.stringify({ visibleTransitions: next })) } catch {}
+                    try {
+                      localStorage.setItem(CONTROLLER_OPTIONS_KEY, JSON.stringify({ visibleTransitions: next }))
+                    } catch {
+                      // intentionally empty — best-effort persistence; ignore quota/availability errors
+                    }
                   }}
                   className="accent-orange-500"
                 />

@@ -4,7 +4,10 @@ import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
 export default defineConfig({
-  envPrefix: ['OPEN_LIVE_', 'OSC_'],
+  envPrefix: ['OPEN_LIVE_'],
+  build: {
+    sourcemap: false,
+  },
   plugins: [
     tailwindcss(),
     react(),

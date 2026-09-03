@@ -1,7 +1,7 @@
 /**
  * OSC Service Access Token (SAT) exchange for the Open Live API.
  *
- * OSC_PAT is baked into the bundle at build time (Docker build arg).
+ * OSC_PAT is injected at container startup via window._env_ (docker-entrypoint.sh).
  * On first API call it is exchanged for a short-lived SAT which is cached
  * and refreshed automatically 5 minutes before expiry.
  *
@@ -29,7 +29,7 @@ function isExpiringSoon(c: SatCache): boolean {
 }
 
 function getPat(): string | undefined {
-  return window._env_?.OSC_PAT || import.meta.env.OSC_PAT || undefined
+  return window._env_?.OSC_PAT || undefined
 }
 
 /**
@@ -72,8 +72,8 @@ export function isOnOsc(): boolean {
 }
 
 /**
- * On OSC: sets the `eyevinn-open-live.sat` cookie on `.osaas.io` so OSC's
- * reverse proxy authenticates both REST and WebSocket requests automatically.
+ * On OSC: sets the `eyevinn-open-live.sat` cookie scoped to the current subdomain
+ * so OSC's reverse proxy authenticates both REST and WebSocket requests automatically.
  * On localhost: no-op — api.ts falls back to Authorization header instead.
  * Returns the SAT expiry in ms, or 0 if no PAT is configured or not on OSC.
  */
@@ -95,15 +95,16 @@ export async function authenticateWithOpenLive(): Promise<number> {
       maxAge = Math.max(0, exp - Math.floor(Date.now() / 1000))
     }
   } catch (err) {
+    // eslint-disable-next-line no-console -- surfaces JWT parse failures for diagnostics
     console.error('[sat] Failed to parse SAT JWT for cookie expiry — using 1h default:', err)
   }
 
   // Note: HttpOnly cannot be set via document.cookie (requires Set-Cookie response header).
   // The SAT is intentionally readable by JS so it can be sent as a Bearer token in API calls.
-  // Compensating control: strict same-origin policy + short token lifetime (1h).
+  // Compensating controls: cookie scoped to current subdomain only (no explicit domain= attribute,
+  // so browser defaults to document.location.hostname), short token lifetime (1h).
   document.cookie = [
     `${OPEN_LIVE_SERVICE_ID}.sat=${encodeURIComponent('Bearer ' + sat)}`,
-    `domain=${OSC_COOKIE_DOMAIN}`,
     `path=/`,
     `max-age=${maxAge}`,
     `SameSite=Lax`,

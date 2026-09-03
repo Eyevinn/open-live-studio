@@ -76,9 +76,8 @@ export function SourcesPanel() {
     if (!STREAM_TYPE_HAS_ADDRESS[streamType]) return null
     if (!address.trim()) return 'Address is required'
     if (streamType === 'html') {
-      if (address.startsWith('data:text/html')) return null
       try { const u = new URL(address); if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error() }
-      catch { return 'Must be a valid http:// or https:// URL, or a data:text/html URI' }
+      catch { return 'Must be a valid http:// or https:// URL' }
     } else {
       if (!/^srt:\/\/[^?#]*:\d+/.test(address.trim())) return 'Must be a valid srt:// URI'
     }
@@ -165,7 +164,7 @@ export function SourcesPanel() {
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={(e) => { e.stopPropagation(); !inActiveProduction && setEditTarget({ id: src.id, name: src.name, address: src.address ?? '', latency: src.latency != null ? String(src.latency) : '', streamType: src.streamType }) }}
+                onClick={(e) => { e.stopPropagation(); if (!inActiveProduction) setEditTarget({ id: src.id, name: src.name, address: src.address ?? '', latency: src.latency != null ? String(src.latency) : '', streamType: src.streamType }) }}
                 disabled={inActiveProduction}
                 className="text-white hover:text-orange-500 disabled:opacity-30 disabled:cursor-not-allowed"
                 title={inActiveProduction ? 'Cannot edit source in an active production' : 'Edit source'}

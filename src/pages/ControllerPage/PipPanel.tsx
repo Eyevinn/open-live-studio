@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
-import { useProductionStore, type PipConfig, type PipZone, type SourceCrop, type PipTransforms, type ZoneBorder } from '@/store/production.store'
+import { useProductionStore, type PipConfig, type SourceCrop, type PipTransforms, type ZoneBorder } from '@/store/production.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { cn } from '@/lib/cn'
@@ -57,8 +57,6 @@ function isCropZero(c: SourceCrop): boolean {
   return c.left < 1e-4 && c.top < 1e-4 && c.right < 1e-4 && c.bottom < 1e-4
 }
 
-const CROP_CANVAS_W = 280
-
 type CropRect = { x: number; y: number; w: number; h: number } // in source pixels
 type CropDrag =
   | { kind: 'move';   startRect: CropRect; startMx: number; startMy: number }
@@ -103,7 +101,6 @@ function CropEditor({
   inputIdx,
   transforms,
   onChange,
-  zoneAspect,
   srcW = 1920,
   srcH = 1080,
   headerSlot,
@@ -116,7 +113,6 @@ function CropEditor({
   inputIdx: number
   transforms: PipTransforms
   onChange: (transforms: PipTransforms) => void
-  zoneAspect: number
   srcW?: number
   srcH?: number
   headerSlot?: React.ReactNode
@@ -444,7 +440,7 @@ function CropEditor({
 }
 
 export function PipPanel({ onApply, className }: PipPanelProps) {
-  const { pgmPip, pvwPip, pips, activeProductionId } = useProductionStore()
+  const { pips, activeProductionId } = useProductionStore()
   const production = useProductionsStore((s) => s.productions.find((p) => p.id === activeProductionId))
   const sources = useSourcesStore((s) => s.sources)
 
@@ -1067,7 +1063,6 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
               inputIdx={cropSourceIdx ?? activeZoneSources[0]!}
               transforms={draft.transforms ?? {}}
               onChange={(transforms) => { markDirty(); setDraft((prev) => ({ ...prev, transforms })) }}
-              zoneAspect={(() => { const r = draft.zones[activeZoneIdx]?.rect; return r ? r.w / r.h : 16 / 9 })()}
               lockAspect={activeZoneSources.length >= 2 ? 16 / 9 : (() => { const r = draft.zones[activeZoneIdx]?.rect; return r ? (r.w * pgmResolution.w) / (r.h * pgmResolution.h) : 16 / 9 })()}
               srcW={activeZoneSources.length >= 2 ? 1920 : (production?.inputResolutions?.[cropSourceIdx ?? activeZoneSources[0]!]?.width ?? 1920)}
               srcH={activeZoneSources.length >= 2 ? 1080 : (production?.inputResolutions?.[cropSourceIdx ?? activeZoneSources[0]!]?.height ?? 1080)}

@@ -135,7 +135,7 @@ export function OutputsPanel() {
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={(e) => { e.stopPropagation(); !inActiveProd && setEditTarget({ id: o.id, name: o.name, url: o.url ?? '' }) }}
+                onClick={(e) => { e.stopPropagation(); if (!inActiveProd) setEditTarget({ id: o.id, name: o.name, url: o.url ?? '' }) }}
                 disabled={inActiveProd}
                 className="text-white hover:text-orange-500 disabled:opacity-30 disabled:cursor-not-allowed"
                 title={inActiveProd ? 'Cannot edit output in an active production' : 'Edit output'}
