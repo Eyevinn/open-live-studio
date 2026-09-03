@@ -29,7 +29,7 @@ server {
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Content-Security-Policy "default-src 'self'; connect-src 'self' wss:; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none';" always;
+    add_header Content-Security-Policy "default-src 'self'; connect-src %CSP_CONNECT_SRC%; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none';" always;
     add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
     location = /env-config.js {
         add_header Cache-Control "no-store, no-cache, must-revalidate" always;
@@ -47,5 +47,7 @@ ENV PORT=8080
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
+# docker-entrypoint.sh renders default.conf from the template (substituting
+# %PORT% and %CSP_CONNECT_SRC%) before exec'ing this CMD.
 ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["/bin/sh", "-c", "sed s/%PORT%/$PORT/ /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+CMD ["nginx", "-g", "daemon off;"]
