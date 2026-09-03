@@ -89,4 +89,6 @@ Sources and productions are polled from the backend every 5 seconds. All changes
 
 The app is deployed on [Open Source Cloud](https://www.osaas.io) using the `pnpm start` script. The `VITE_API_URL` parameter must be set in the app's OSC parameter store before deployment so Vite can bake the correct backend URL into the bundle at build time.
 
+> **The Docker image (`Dockerfile`) is the canonical production serving path.** It uses nginx with security headers (including `X-Frame-Options`) enabled by default. The `pnpm start` path exists for local preview and quickstart development; for production use, prefer the Docker image.
+
 Set `CORS_ORIGIN` on the backend to this app's OSC URL and restart the backend whenever this app's URL changes.
