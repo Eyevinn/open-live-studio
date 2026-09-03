@@ -13,7 +13,12 @@ function timeSince(ts: number): string {
 }
 
 function isValidGraphicUrl(s: string): boolean {
-  if (s.startsWith('data:text/html') || s.startsWith('data:image/')) return true
+  if (s.startsWith('data:')) {
+    // Only allow safe raster image formats. Reject svg+xml (can carry inline
+    // scripts / SMIL handlers) and text/html to avoid XSS.
+    const safeDataPrefixes = ['data:image/png', 'data:image/jpeg', 'data:image/gif', 'data:image/webp']
+    return safeDataPrefixes.some((p) => s.startsWith(p))
+  }
   try { const u = new URL(s); return u.protocol === 'http:' || u.protocol === 'https:' }
   catch { return false }
 }

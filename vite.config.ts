@@ -5,6 +5,9 @@ import { resolve } from 'path'
 
 export default defineConfig({
   envPrefix: ['OPEN_LIVE_', 'OSC_'],
+  build: {
+    sourcemap: false,
+  },
   plugins: [
     tailwindcss(),
     react(),

@@ -14,24 +14,18 @@ RUN pnpm build
 # Stage 2: serve with nginx
 FROM nginx:1.27-alpine
 
+# jq is required by docker-entrypoint.sh to safely serialize runtime env vars
+RUN apk add --no-cache jq
+
 # Remove default nginx static assets
 RUN rm -rf /usr/share/nginx/html/*
 
 # Copy built SPA
 COPY --from=builder /app/dist /usr/share/nginx/html
 
-# nginx config — serve index.html for all routes (SPA fallback)
-COPY <<'EOF' /etc/nginx/conf.d/default.conf.template
-server {
-    listen %PORT%;
-    root /usr/share/nginx/html;
-    index index.html;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-}
-EOF
+# nginx config — full security-header suite + SPA fallback (see nginx.conf.template).
+# The template uses the %PORT% placeholder, substituted at container start by the CMD below.
+COPY nginx.conf.template /etc/nginx/conf.d/default.conf.template
 
 EXPOSE 8080
 
@@ -40,5 +34,7 @@ ENV PORT=8080
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
+# docker-entrypoint.sh renders default.conf from the template (substituting
+# %PORT% and %CSP_CONNECT_SRC%) before exec'ing this CMD.
 ENTRYPOINT ["/docker-entrypoint.sh"]
-CMD ["/bin/sh", "-c", "sed s/%PORT%/$PORT/ /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
+CMD ["nginx", "-g", "daemon off;"]
