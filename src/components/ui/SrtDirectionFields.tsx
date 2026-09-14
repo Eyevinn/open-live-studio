@@ -87,7 +87,7 @@ export function ListenerFields({
           <p className="text-xs text-[--color-text-muted]">Checking how ports are assigned…</p>
         ) : mode.kind === 'auto' ? (
           <p className="text-xs text-[--color-text-muted]">
-            Assigned automatically on save: the lowest free port in this instance&apos;s range {mode.first}–{mode.last}.
+            Assigned on save from this instance&apos;s range {mode.first}–{mode.last}.
           </p>
         ) : mode.kind === 'pending' ? (
           <p className="text-xs text-amber-400">
