@@ -50,8 +50,8 @@ function isSrt(t: StreamType): boolean {
   return t === 'srt' || t === 'efp'
 }
 
-const LISTENER_LABEL = 'Sender connects to us'
-const CALLER_LABEL = 'We connect to the sender'
+const LISTENER_LABEL = 'Listener'
+const CALLER_LABEL = 'Caller'
 
 interface EditState {
   id: string

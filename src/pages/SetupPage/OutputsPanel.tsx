@@ -17,8 +17,8 @@ const OUTPUT_TYPE_LABELS: Record<OutputType, string> = {
   whep: 'WHEP',
 }
 
-const LISTENER_LABEL = 'Viewers connect to us'
-const CALLER_LABEL = 'We send to a destination'
+const LISTENER_LABEL = 'Listener'
+const CALLER_LABEL = 'Caller'
 
 function timeSince(ts: number): string {
   const secs = Math.floor((Date.now() - ts) / 1000)
