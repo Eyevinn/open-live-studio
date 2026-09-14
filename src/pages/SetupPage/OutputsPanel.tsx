@@ -1,3 +1,4 @@
+import { SrtPortHint, SRT_ASSIGN_LISTENER } from '@/components/ui/SrtPortHint'
 import { useState, useEffect } from 'react'
 import { useOutputsStore, type OutputType } from '@/store/outputs.store'
 import { useProductionsStore } from '@/store/productions.store'
@@ -47,12 +48,12 @@ export function OutputsPanel() {
 
   const [newName, setNewName] = useState('')
   const [newType, setNewType] = useState<OutputType>('mpegtssrt')
-  const [newUrl, setNewUrl] = useState('srt://:43524?mode=listener')
+  const [newUrl, setNewUrl] = useState(SRT_ASSIGN_LISTENER)
 
   function resetAdd() {
     setNewName('')
     setNewType('mpegtssrt')
-    setNewUrl('srt://:43524?mode=listener')
+    setNewUrl(SRT_ASSIGN_LISTENER)
     setAddUrlError(null)
   }
 
@@ -63,7 +64,7 @@ export function OutputsPanel() {
   async function handleAdd() {
     if (!newName.trim() || !newUrl.trim()) return
     if (!isValidSrtUrl(newUrl.trim())) { setAddUrlError('Must be a valid srt:// URI'); return }
-    const duplicate = outputs.find((o) => o.url?.trim() === newUrl.trim())
+    const duplicate = newUrl.trim() !== SRT_ASSIGN_LISTENER && outputs.find((o) => o.url?.trim() === newUrl.trim())
     if (duplicate) { setAddUrlError(`Address already used by "${duplicate.name}"`); return }
     await addOutput({ name: newName.trim(), outputType: newType, url: newUrl.trim() })
     resetAdd()
@@ -75,7 +76,7 @@ export function OutputsPanel() {
     const url = editTarget.url.trim()
     if (url) {
       if (!isValidSrtUrl(url)) { setEditUrlError('Must be a valid srt:// URI'); return }
-      const duplicate = outputs.find((o) => o.id !== editTarget.id && o.url?.trim() === url)
+      const duplicate = url !== SRT_ASSIGN_LISTENER && outputs.find((o) => o.id !== editTarget.id && o.url?.trim() === url)
       if (duplicate) { setEditUrlError(`Address already used by "${duplicate.name}"`); return }
     }
     await updateOutput(editTarget.id, { name: editTarget.name.trim(), url: url || undefined })
@@ -198,7 +199,7 @@ export function OutputsPanel() {
                 <button
                   key={t}
                   type="button"
-                  onClick={() => { setNewType(t); setNewUrl('srt://:43524?mode=listener') }}
+                  onClick={() => { setNewType(t); setNewUrl(SRT_ASSIGN_LISTENER) }}
                   className={`py-2 rounded text-sm border transition-colors ${
                     newType === t
                       ? 'bg-[var(--color-accent)] border-[var(--color-accent)] text-white'
@@ -216,10 +217,11 @@ export function OutputsPanel() {
               type="text"
               value={newUrl}
               onChange={(e) => { setNewUrl(e.target.value); setAddUrlError(null) }}
-              placeholder="srt://:43524?mode=listener"
+              placeholder="srt://:0?mode=listener"
               className={inputCls}
             />
             {addUrlError && <p className="text-xs text-red-400 mt-1">{addUrlError}</p>}
+            <SrtPortHint />
           </div>
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="ghost" onClick={() => { resetAdd(); setAddOpen(false) }}>Cancel</Button>
@@ -252,6 +254,7 @@ export function OutputsPanel() {
                 className={inputCls}
               />
               {editUrlError && <p className="text-xs text-red-400 mt-1">{editUrlError}</p>}
+              <SrtPortHint />
             </div>
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="ghost" onClick={() => { setEditTarget(null); setEditUrlError(null) }}>Cancel</Button>

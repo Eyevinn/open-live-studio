@@ -1,3 +1,4 @@
+import { SrtPortHint } from '@/components/ui/SrtPortHint'
 import { useState, useEffect } from 'react'
 import { useSourcesStore } from '@/store/sources.store'
 import { useProductionsStore } from '@/store/productions.store'
@@ -42,6 +43,10 @@ const STREAM_TYPE_HAS_LATENCY: Record<StreamType, boolean> = {
 
 const STREAM_TYPE_ADDRESS_PLACEHOLDER: Partial<Record<StreamType, string>> = {
   html: 'https://example.com/overlay',
+  // Caller form reaches out to a sender; the hostless listener form waits for one
+  // on this instance's Strom, and port 0 lets the server pick a free port.
+  srt: 'srt://sender.example.com:9000?mode=caller or srt://:0?mode=listener',
+  efp: 'srt://sender.example.com:9000?mode=caller or srt://:0?mode=listener',
 }
 
 const CREATABLE_STREAM_TYPES: StreamType[] = ['srt', 'efp', 'html']
@@ -232,6 +237,7 @@ export function SourcesPanel() {
                   className="w-full px-3 py-2 rounded bg-[--color-surface-raised] border border-[--color-border-strong] text-sm text-[--color-text-primary] focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500/30"
                 />
                 {editAddressError && <p className="text-xs text-red-400 mt-1">{editAddressError}</p>}
+                {(editTarget.streamType === 'srt' || editTarget.streamType === 'efp') && <SrtPortHint />}
               </div>
             )}
             {STREAM_TYPE_HAS_LATENCY[editTarget.streamType] && (
@@ -297,6 +303,7 @@ export function SourcesPanel() {
                 className="w-full px-3 py-2 rounded bg-[--color-surface-raised] border border-[--color-border-strong] text-sm text-[--color-text-primary] focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500/30"
               />
               {addAddressError && <p className="text-xs text-red-400 mt-1">{addAddressError}</p>}
+              {(newStreamType === 'srt' || newStreamType === 'efp') && <SrtPortHint />}
             </div>
           )}
           {STREAM_TYPE_HAS_LATENCY[newStreamType] && (
