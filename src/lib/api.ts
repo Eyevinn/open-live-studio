@@ -323,8 +323,17 @@ export const statusApi = {
   reconnect: () => request<{ ok: boolean; db: boolean; strom: boolean }>('/api/v1/reconnect', { method: 'POST' }),
 }
 
+/** What the backend says about its Strom. Older backends report only `stromHost`. */
+export interface ServerInfo {
+  stromHost: string
+  /** SRT listener ports this instance may bind on the shared Strom; null unless `srtPortLease` is `leased`. */
+  srtPortRange?: { first: number; last: number } | null
+  /** `pending` means the range is not known yet; `unsupported`/`disabled` mean any port goes. */
+  srtPortLease?: 'leased' | 'pending' | 'unsupported' | 'disabled'
+}
+
 export const serverInfoApi = {
-  get: () => request<{ stromHost: string }>('/api/v1/server-info'),
+  get: () => request<ServerInfo>('/api/v1/server-info'),
 }
 
 export const productionConfigsApi = {

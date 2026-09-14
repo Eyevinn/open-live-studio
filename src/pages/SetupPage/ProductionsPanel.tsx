@@ -10,6 +10,8 @@ import { productionsApi, productionConfigsApi, serverInfoApi } from '@/lib/api'
 import type { ProductionConfig, ProductionGraphicAssignment } from '@/lib/api'
 import { PRODUCTION_PROPERTIES, type TemplateProperty } from '@/lib/production-schema'
 import { Button } from '@/components/ui/Button'
+import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
+import { toCallerUrl } from '@/lib/srt'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
 import { Tooltip } from '@/components/ui/Tooltip'
@@ -128,15 +130,6 @@ function GfxSlotRow({ dskInput: _dskInput, currentGraphicId, onChange }: GfxSlot
 
 const VIRTUAL_OUTPUT_ID = '__whep__'
 
-function toCallerUrl(url: string, stromHost?: string): string {
-  let result = url.replace(/mode=listener/i, 'mode=caller')
-  // SRT listener URIs have an empty host (srt://:port) because Strom binds on all
-  // interfaces. Fill in the Strom server's hostname so callers get a usable address.
-  if (stromHost && /^srt:\/\/:/.test(result)) {
-    result = result.replace(/^srt:\/\/:/, `srt://${stromHost}:`)
-  }
-  return result
-}
 
 const OUTPUT_TYPE_LABELS: Record<string, string> = {
   mpegtssrt: 'MPEG-TS/SRT',
@@ -1127,36 +1120,6 @@ const VIRTUAL_SOURCE_NAMES: Record<string, string> = {
   '__test2__': 'Colors',
 }
 
-function InlineCopyButton({ label, value, displayUrl }: { label: string; value: string; displayUrl?: string }) {
-  const [copied, setCopied] = useState(false)
-  function handleCopy(e: React.MouseEvent) {
-    e.stopPropagation()
-    void navigator.clipboard.writeText(value).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    })
-  }
-  return (
-    <button
-      type="button"
-      onClick={handleCopy}
-      title={displayUrl ?? value}
-      className="inline-flex items-center gap-1 shrink-0 text-[10px] font-mono px-1.5 py-0.5 rounded bg-[--color-surface-raised] border border-[--color-border] text-[--color-text-muted] hover:text-orange-500 hover:border-[--color-accent]/40 transition-colors cursor-pointer"
-    >
-      {copied ? (
-        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M4 12l6 6L20 6" stroke="var(--color-pvw)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      ) : (
-        <svg width="9" height="9" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <rect x="8" y="8" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="2" />
-          <path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        </svg>
-      )}
-      <span className="uppercase tracking-wide">{label}</span>
-    </button>
-  )
-}
 
 function SourceAssignmentBadge({ assignment }: { assignment: { sourceId: string; mixerInput: string } }) {
   const source = useSourcesStore((s) => s.sources.find((src) => src.id === assignment.sourceId))
