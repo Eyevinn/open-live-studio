@@ -49,13 +49,13 @@ Copy `.env.example` to `.env`:
 
 | Variable | Description | Default |
 |---|---|---|
-| `VITE_API_URL` | URL of the open-live backend API | `http://localhost:3000` |
+| `OPEN_LIVE_URL` | URL of the open-live backend API | `http://localhost:3000` |
 
-> **`VITE_API_URL` is a build-time variable** — Vite bakes it into the bundle at compile time. For OSC deployments, set it in the app's parameter store _before_ building so it is picked up during the build step. Changing it after the build has no effect until a rebuild.
+> **`OPEN_LIVE_URL` is resolved at runtime, not baked in at build time.** `src/lib/base.ts` resolves the backend URL as `window._env_?.OPEN_LIVE_URL || import.meta.env.OPEN_LIVE_URL || 'http://localhost:3000'`, so the **runtime** `window._env_` value takes precedence. Both serving paths write `window._env_` when the container/process starts: the Docker image's `docker-entrypoint.sh` generates `env-config.js` in the served root, and the non-Docker `pnpm start` script writes `dist/env-config.js`. Changing `OPEN_LIVE_URL` therefore takes effect on restart — no rebuild required. For OSC deployments, set it in the app's parameter store; it is injected into the container environment at start.
+
+> **Why not `VITE_API_URL`?** `vite.config.ts` sets `envPrefix: ['OPEN_LIVE_']`, which **replaces** Vite's default `VITE_` prefix. A `VITE_`-prefixed variable is never exposed to the bundle, so only `OPEN_LIVE_`-prefixed variables are picked up.
 
 > **Never commit `.env`** — it is gitignored. Use `.env.example` as the reference.
-
-> **`.env.production`** is committed and sets the default `VITE_API_URL` for production builds. The OSC parameter store value overrides it at build time if set.
 
 ## Commands
 
@@ -87,7 +87,7 @@ Sources and productions are polled from the backend every 5 seconds. All changes
 
 ## OSC deployment
 
-The app is deployed on [Open Source Cloud](https://www.osaas.io) using the `pnpm start` script. The `VITE_API_URL` parameter must be set in the app's OSC parameter store before deployment so Vite can bake the correct backend URL into the bundle at build time.
+The app is deployed on [Open Source Cloud](https://www.osaas.io) using the `pnpm start` script. Set the `OPEN_LIVE_URL` parameter in the app's OSC parameter store; it is read from the container environment at start and written into `window._env_` (via `docker-entrypoint.sh` for the Docker image, or `pnpm start` for the non-Docker path), so the correct backend URL is picked up at runtime without a rebuild.
 
 > **The Docker image (`Dockerfile`) is the canonical production serving path.** It uses nginx with security headers (including `X-Frame-Options`) enabled by default. The `pnpm start` path exists for local preview and quickstart development; for production use, prefer the Docker image.
 
