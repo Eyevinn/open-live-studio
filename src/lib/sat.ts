@@ -1,18 +1,33 @@
 /**
- * OSC Service Access Token (SAT) exchange for the Open Live API.
+ * OSC Service Access Token (SAT) acquisition for the Open Live API.
  *
- * OSC_PAT is injected at container startup via window._env_ (docker-entrypoint.sh).
- * On first API call it is exchanged for a short-lived SAT which is cached
- * and refreshed automatically 5 minutes before expiry.
+ * The studio NEVER holds the long-lived OSC Personal Access Token (PAT). The
+ * PAT stays server-side in the open-live backend. The studio obtains a
+ * short-lived SAT from the backend's server-side SAT-exchange endpoint
+ * (`POST /api/v1/auth/token`, open-live PR #228) and caches it, refreshing
+ * automatically 5 minutes before expiry.
  *
- * When no PAT is configured (local dev), getApiToken() returns undefined
- * and API requests are sent without an Authorization header.
+ * How the studio authenticates TO that endpoint:
+ *   - OSC-hosted: the OSC reverse-proxy auth wall fronts the backend (the same
+ *     wall that serves this SPA). The exchange request rides that session via
+ *     `credentials: 'include'`; no client-side secret is needed or held.
+ *   - Self-hosted: the backend's `API_KEY` guards `/api/v1/*`. The studio does
+ *     NOT embed that key (doing so would recreate the plaintext-secret bug this
+ *     change fixes); a same-origin/proxy session in front of the deployment is
+ *     expected to gate access. See the PR body for the deployment contract.
+ *
+ * When the backend has no PAT configured (local dev, 503) or the studio is not
+ * authorised, getApiToken() returns undefined and API requests are sent without
+ * an Authorization header.
  */
 
-const TOKEN_EXCHANGE_URL = 'https://token.svc.prod.osaas.io/servicetoken'
-const OPEN_LIVE_SERVICE_ID = 'eyevinn-open-live'
+import { BASE } from './base.js'
+
+const SAT_ENDPOINT = '/api/v1/auth/token'
 const REFRESH_BUFFER_MS = 5 * 60 * 1000
 const OSC_COOKIE_DOMAIN = '.osaas.io'
+// Cookie name the OSC reverse proxy expects for open-live REST/WS auth.
+const OPEN_LIVE_SERVICE_ID = 'eyevinn-open-live'
 
 interface SatCache {
   token: string
@@ -22,41 +37,42 @@ interface SatCache {
 let cache: SatCache | null = null
 // In-flight promise so concurrent callers await the same exchange request
 // instead of each firing their own, which would produce N requests on page load.
-let inflight: Promise<string> | null = null
+let inflight: Promise<string | undefined> | null = null
 
 function isExpiringSoon(c: SatCache): boolean {
   return Date.now() >= c.expiresAt - REFRESH_BUFFER_MS
 }
 
-function getPat(): string | undefined {
-  return window._env_?.OSC_PAT || undefined
-}
-
 /**
- * Returns a valid SAT Bearer token for the Open Live API, or undefined if no
- * PAT is configured.  Throws if the exchange fails (misconfigured PAT).
+ * Returns a valid SAT Bearer token for the Open Live API, or undefined if the
+ * backend cannot mint one (no PAT configured server-side, or not authorised).
+ * Throws only on unexpected exchange failures (misconfigured backend).
  */
 export async function getApiToken(): Promise<string | undefined> {
-  const pat = getPat()
-  if (!pat) return undefined
-
   if (cache && !isExpiringSoon(cache)) return cache.token
 
   if (!inflight) {
-    inflight = fetch(TOKEN_EXCHANGE_URL, {
+    inflight = fetch(`${BASE}${SAT_ENDPOINT}`, {
       method: 'POST',
+      // Ride the OSC proxy / same-origin session; the studio holds no secret.
+      credentials: 'include',
       headers: {
         'Content-Type': 'application/json',
         accept: 'application/json',
-        'x-pat-jwt': `Bearer ${pat}`,
       },
-      body: JSON.stringify({ serviceId: OPEN_LIVE_SERVICE_ID }),
+      // The endpoint takes no caller-supplied input: the serviceId and target
+      // are fixed server-side (anti-SSRF). Body is an empty object.
+      body: JSON.stringify({}),
     })
       .then(async (res) => {
+        // 503 = backend has no PAT configured (e.g. local dev) → behave as
+        // "no auth": callers send requests without an Authorization header.
+        if (res.status === 503) return undefined
         if (!res.ok) {
-          const body = await res.text()
+          const body = await res.text().catch(() => '')
           throw new Error(`SAT exchange failed (${res.status}): ${body.slice(0, 200)}`)
         }
+        // Contract (open-live#228): { token: string, expiry: number(seconds) }.
         const data = (await res.json()) as { token: string; expiry: number }
         cache = { token: data.token, expiresAt: data.expiry * 1000 }
         return cache.token
@@ -75,7 +91,7 @@ export function isOnOsc(): boolean {
  * On OSC: sets the `eyevinn-open-live.sat` cookie scoped to the current subdomain
  * so OSC's reverse proxy authenticates both REST and WebSocket requests automatically.
  * On localhost: no-op — api.ts falls back to Authorization header instead.
- * Returns the SAT expiry in ms, or 0 if no PAT is configured or not on OSC.
+ * Returns the SAT expiry in ms, or 0 if no SAT is available or not on OSC.
  */
 export async function authenticateWithOpenLive(): Promise<number> {
   if (!isOnOsc()) return 0
