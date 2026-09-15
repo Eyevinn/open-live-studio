@@ -1,6 +1,7 @@
 import { NavLink } from 'react-router'
 import { cn } from '@/lib/cn'
 import { ConnectionStatus } from '@/components/ui/ConnectionStatus'
+import { Tooltip } from '@/components/ui/Tooltip'
 
 function OpenLiveLogo() {
   return (
@@ -39,8 +40,8 @@ function ProductionsIcon() {
 }
 
 const NAV_ITEMS = [
-  { to: '/setup',       label: 'I/O',         Icon: IOIcon },
-  { to: '/productions', label: 'Productions', Icon: ProductionsIcon },
+  { to: '/setup',       label: 'I/O',         description: 'Configure sources, outputs and other production I/O', Icon: IOIcon },
+  { to: '/productions', label: 'Productions', description: 'Browse and manage your productions',                    Icon: ProductionsIcon },
 ]
 
 export function NavBar() {
@@ -53,11 +54,11 @@ export function NavBar() {
 
       {/* Nav items */}
       <div className="flex-1 flex flex-col gap-1 p-1.5 pt-3">
-        {NAV_ITEMS.map(({ to, label, Icon }) => (
+        {NAV_ITEMS.map(({ to, label, description, Icon }) => (
           <NavLink
             key={to}
             to={to}
-            title={label}
+            aria-label={label}
             className={({ isActive }) =>
               cn(
                 'flex items-center justify-center py-3 rounded transition-all',
@@ -67,7 +68,9 @@ export function NavBar() {
               )
             }
           >
-            <Icon />
+            <Tooltip title={label} content={description}>
+              <Icon />
+            </Tooltip>
           </NavLink>
         ))}
       </div>
