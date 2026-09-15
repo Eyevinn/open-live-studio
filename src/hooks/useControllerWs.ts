@@ -11,6 +11,12 @@ const WS_BASE = BASE.replace(/^http/, 'ws')
 const WS_RECONNECT_DELAY_MS = 2000
 const WS_MAX_RECONNECTS = 5
 
+// Tag for the persistent connection toast, so it upserts (never stacks) and
+// can be cleared on a successful (re)connect.
+const WS_TOAST_TAG = 'controller-ws'
+const SESSION_EXPIRED_MSG = 'Session expired — reload to sign in'
+const CONNECTION_LOST_MSG = 'Controller connection lost — session may have expired. Reload to sign in.'
+
 export type OutboundMessage =
   | { type: 'CUT'; mixerInput: string; afvRampUpMs?: number; afvRampDownMs?: number }
   | { type: 'TRANSITION'; mixerInput: string; transitionType: string; durationMs?: number; afvRampUpMs?: number; afvRampDownMs?: number }
@@ -78,6 +84,8 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   const applyFxState              = useProductionStore((s) => s.applyFxState)
   const setDeactivatedExternally  = useProductionStore((s) => s.setDeactivatedExternally)
   const addToast                  = useToastStore((s) => s.addToast)
+  const upsertToastByTag          = useToastStore((s) => s.upsertToastByTag)
+  const removeToastsByTag         = useToastStore((s) => s.removeToastsByTag)
   const markInactive              = useProductionsStore((s) => s.markInactive)
 
   const actionsRef = useRef({
@@ -88,7 +96,8 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     applyGrpSend, applyGrpMaster, applyMonitorMaster, resetGrpState,
     applyMeter, applyLoudness,
     applySourceOffset, applySourceAudioOffset, resetSourceOffsets, applyAfvRamp,
-    applyPipState, applyFxState, setDeactivatedExternally, addToast, markInactive,
+    applyPipState, applyFxState, setDeactivatedExternally, addToast,
+    upsertToastByTag, removeToastsByTag, markInactive,
   })
   actionsRef.current = {
     setPgm, setPvw, setTBarPosition, setDskState,
@@ -98,7 +107,8 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     applyGrpSend, applyGrpMaster, applyMonitorMaster, resetGrpState,
     applyMeter, applyLoudness,
     applySourceOffset, applySourceAudioOffset, resetSourceOffsets, applyAfvRamp,
-    applyPipState, applyFxState, setDeactivatedExternally, addToast, markInactive,
+    applyPipState, applyFxState, setDeactivatedExternally, addToast,
+    upsertToastByTag, removeToastsByTag, markInactive,
   }
 
   useEffect(() => {
@@ -107,6 +117,13 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     let cancelled = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let reconnectCount = 0
+    // Whether the current socket ever reached OPEN. A close *without* a prior
+    // open is how a rejected upgrade (e.g. the OSC reverse proxy answering the
+    // handshake with HTTP 401) surfaces to the browser — the status code is
+    // not readable client-side, but "never opened" is a strong auth-failure
+    // signal, since a genuine network drop of an established connection would
+    // have opened first.
+    let everOpened = false
 
     const connect = async () => {
       if (cancelled) return
@@ -115,8 +132,15 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
       const wsUrl = new URL(`${WS_BASE}/ws/productions/${productionId}/controller`)
       if (token) wsUrl.searchParams.set('token', token)
 
+      everOpened = false
       const ws = new WebSocket(wsUrl.toString())
       wsRef.current = ws
+
+      ws.onopen = () => {
+        everOpened = true
+        // A successful (re)connect clears any stale connection warning.
+        actionsRef.current.removeToastsByTag(WS_TOAST_TAG)
+      }
 
       ws.onmessage = (event) => {
         const a = actionsRef.current
@@ -277,9 +301,32 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
 
       ws.onclose = () => {
         wsRef.current = null
-        if (!cancelled && reconnectCount < WS_MAX_RECONNECTS) {
+        if (cancelled) return
+
+        const a = actionsRef.current
+        const showSessionToast = (message: string) => {
+          a.upsertToastByTag(WS_TOAST_TAG, message, 'error', { persistent: true })
+        }
+
+        // Fail fast on a likely auth failure: the socket closed without ever
+        // opening, which is how the OSC proxy's 401 on the upgrade appears
+        // client-side. Retrying will never succeed while the session cookie is
+        // expired, so surface the session-expired message immediately instead
+        // of burning the silent backoff/retry budget.
+        if (!everOpened) {
+          showSessionToast(SESSION_EXPIRED_MSG)
+          return
+        }
+
+        if (reconnectCount < WS_MAX_RECONNECTS) {
           reconnectCount++
           reconnectTimer = setTimeout(connect, WS_RECONNECT_DELAY_MS)
+        } else {
+          // Reconnect budget exhausted after a previously-healthy connection:
+          // the UI must stop looking connected. We cannot read the WS close
+          // status, so we cannot be certain this is a session expiry vs. a
+          // network drop — surface a message that covers both.
+          showSessionToast(CONNECTION_LOST_MSG)
         }
       }
     }
@@ -291,6 +338,9 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
       if (reconnectTimer) clearTimeout(reconnectTimer)
       wsRef.current?.close()
       wsRef.current = null
+      // Clear any connection warning we raised so it doesn't linger after the
+      // hook unmounts (e.g. navigating away from the production).
+      actionsRef.current.removeToastsByTag(WS_TOAST_TAG)
     }
   }, [productionId])
 
