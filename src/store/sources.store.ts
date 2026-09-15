@@ -14,6 +14,8 @@ export interface Source {
   color: string
   liveCamera?: boolean
   latency?: number
+  /** Id of the gateway that registered this source, if gateway-owned (open-live #263). */
+  gatewayId?: string
 }
 
 interface SourcesState {
@@ -43,6 +45,7 @@ function fromApi(s: ApiSource): Source {
     color: SOURCE_COLOR,
     liveCamera: s.liveCamera,
     latency: s.latency,
+    gatewayId: s.gatewayId,
   }
 }
 
