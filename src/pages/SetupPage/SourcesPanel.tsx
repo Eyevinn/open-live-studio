@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useSourcesStore } from '@/store/sources.store'
 import { useProductionsStore } from '@/store/productions.store'
+import { useGatewaysStore } from '@/store/gateways.store'
 import { useServerInfo } from '@/hooks/useServerInfo'
 import type { StreamType } from '@/lib/api'
+import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
 import { buildListenerAddress, isCallerAddress, listenerPort, passphraseOf, srtDirection, toCallerUrl, type SrtDirection } from '@/lib/srt'
 import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
@@ -72,6 +74,8 @@ interface EditState {
 export function SourcesPanel() {
   const { sources, isLoading, lastFetchedAt, removeSource, addSource, updateSource, fetchAll } = useSourcesStore()
   const productions = useProductionsStore((s) => s.productions)
+  const gateways = useGatewaysStore((s) => s.gateways)
+  const fetchGateways = useGatewaysStore((s) => s.fetchAll)
   const { info } = useServerInfo()
   const portMode = useListenerPortMode()
 
@@ -80,6 +84,17 @@ export function SourcesPanel() {
     const id = setInterval(() => void fetchAll(), 15000)
     return () => clearInterval(id)
   }, [fetchAll])
+
+  // Gateway-fed sources: poll gateways so the "via <gateway>" chip, live uplink
+  // stats and offline banner stay fresh (open-live #263, read-only Phase 1).
+  useEffect(() => {
+    void fetchGateways()
+    const id = setInterval(() => void fetchGateways(), 5000)
+    return () => clearInterval(id)
+  }, [fetchGateways])
+
+  // source id -> { gateway, input } for gateway-owned sources.
+  const gatewayBySource = indexGatewaysBySource(gateways)
   const [addOpen, setAddOpen] = useState(false)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const [editTarget, setEditTarget] = useState<EditState | null>(null)
@@ -221,26 +236,54 @@ export function SourcesPanel() {
           const inActiveProduction = activeSourceIds.has(src.id)
           const listener = isSrt(src.streamType) && !!src.address && srtDirection(src.address) === 'listener'
           const ingest = listener ? toCallerUrl(src.address, info?.stromHost) : null
+          // Gateway-owned sources are recreated by the gateway on every heartbeat,
+          // so Edit/Delete are locked in Studio (open-live #263, read-only Phase 1).
+          const link = src.gatewayId ? gatewayBySource.get(src.id) : undefined
+          const gateway = link?.gateway
+          const gatewayOwned = !!src.gatewayId
+          const gatewayOffline = gatewayOwned && (!gateway || gateway.health !== 'healthy')
+          const uplink = link?.input?.uplink ?? null
+          const locked = inActiveProduction || gatewayOwned
+          const editTitle = gatewayOwned
+            ? 'Managed by its gateway; edit it on the gateway box'
+            : inActiveProduction ? 'Cannot edit source in an active production' : 'Edit source'
+          const deleteTitle = gatewayOwned
+            ? 'Managed by its gateway; the gateway recreates it each tick'
+            : inActiveProduction ? 'Cannot delete source in an active production' : 'Delete source'
           return (
             <div
               key={src.id}
               className={`flex items-center gap-3 px-3 py-2.5 rounded bg-[--color-surface-3] border transition-colors ${
-                inActiveProduction
+                locked
                   ? 'border-[--color-border] hover:border-zinc-600 cursor-not-allowed'
                   : 'border-[--color-border] hover:border-orange-500 cursor-pointer'
               }`}
-              onClick={() => !inActiveProduction && openEdit(src)}
+              onClick={() => !locked && openEdit(src)}
             >
-              <StatusDot color={inActiveProduction ? 'red' : 'gray'} />
+              <StatusDot color={gatewayOffline ? 'yellow' : inActiveProduction ? 'red' : 'gray'} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium text-[--color-text-primary] truncate">{src.name}</span>
                   <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-[--color-surface-raised] text-[--color-text-muted] uppercase">
                     {STREAM_TYPE_LABELS[src.streamType]}
                   </span>
-                  {ingest && <InlineCopyButton label="Ingest address" value={ingest} />}
+                  {gatewayOwned && (
+                    <span
+                      className="text-xs font-mono px-1.5 py-0.5 rounded bg-indigo-900 text-indigo-200 border border-indigo-700"
+                      title={gateway ? `Registered by gateway ${gateway.name}` : 'Registered by a gateway'}
+                    >
+                      via {gateway?.name ?? 'gateway'}
+                    </span>
+                  )}
+                  {ingest && !gatewayOwned && <InlineCopyButton label="Ingest address" value={ingest} />}
                 </div>
-                {STREAM_TYPE_HAS_ADDRESS[src.streamType] && (
+                {gatewayOwned && uplink ? (
+                  <span className="text-xs text-[--color-text-muted] font-mono truncate block">
+                    {(uplink.bitrateKbps / 1000).toFixed(1)} Mbps · {uplink.rtt_ms} ms RTT
+                    {uplink.dropped > 0 && <span className="ml-1 text-yellow-400">· {uplink.dropped} dropped</span>}
+                    {listener && ` · port ${listenerPort(src.address) ?? '—'}`}
+                  </span>
+                ) : STREAM_TYPE_HAS_ADDRESS[src.streamType] && (
                   <span className="text-xs text-[--color-text-muted] font-mono truncate block">
                     {ingest ? `sender dials ${ingest}${passphraseOf(src.address) ? ' with the passphrase' : ''}` : src.address}
                     {src.latency != null && src.latency !== 125 && (
@@ -248,24 +291,29 @@ export function SourcesPanel() {
                     )}
                   </span>
                 )}
+                {gatewayOffline && (
+                  <span className="text-xs text-yellow-400 block mt-0.5">
+                    offline gateway{gateway?.lastSeenAt ? ` — last seen ${heartbeatAge(gateway.lastSeenAt)}` : ' — never seen'}
+                  </span>
+                )}
               </div>
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={(e) => { e.stopPropagation(); if (!inActiveProduction) openEdit(src) }}
-                disabled={inActiveProduction}
+                onClick={(e) => { e.stopPropagation(); if (!locked) openEdit(src) }}
+                disabled={locked}
                 className="text-white hover:text-orange-500 disabled:opacity-30 disabled:cursor-not-allowed"
-                title={inActiveProduction ? 'Cannot edit source in an active production' : 'Edit source'}
+                title={editTitle}
               >
                 Edit
               </Button>
               <Button
                 size="sm"
                 variant="ghost"
-                onClick={(e) => { e.stopPropagation(); setDeleteTargetId(src.id) }}
-                disabled={inActiveProduction}
+                onClick={(e) => { e.stopPropagation(); if (!gatewayOwned) setDeleteTargetId(src.id) }}
+                disabled={locked}
                 className="text-white hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed"
-                title={inActiveProduction ? 'Cannot delete source in an active production' : 'Delete source'}
+                title={deleteTitle}
               >
                 Delete
               </Button>
