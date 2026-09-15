@@ -1,5 +1,7 @@
 import { useEffect, useCallback, useState, useRef, type ReactNode } from 'react'
 import { useIsTablet } from '@/hooks/useTabletLayout'
+import { useIsPhone } from '@/hooks/usePhoneLayout'
+import { OperatorLiteNotice } from '@/components/ui/OperatorLiteNotice'
 import { cn } from '@/lib/cn'
 import { useSearchParams, useNavigate } from 'react-router'
 import { useWebRTC } from '@/hooks/useWebRTC'
@@ -477,6 +479,7 @@ function ControllerOptionsContent({
 
 export function ControllerPage() {
   const isTablet = useIsTablet()
+  const isPhone = useIsPhone()
   const { cut, auto, ftb, setPvw, pvwInput, pvwPip, pgmPip, pgmInput, pips, setPvwPip, transitionType, transitionDurationMs, activeProductionId, setActiveProduction, afvRampUpMs, afvRampDownMs, dskState, deactivatedExternally } = useProductionStore()
   const productions = useProductionsStore((s) => s.productions)
   const fetchProductions = useProductionsStore((s) => s.fetchAll)
@@ -669,9 +672,11 @@ export function ControllerPage() {
   }, [handleCut, handleAuto, handleFtb, dskState, send, sortedSources, cut, pgmInput, pgmPip, afvRampUpMs, afvRampDownMs, pips, handleSelectPvw, handleSelectPvwPip])
 
   useEffect(() => {
+    // Phone tier (<768px) is read-only — no keyboard shortcuts that mutate state (#105).
+    if (isPhone) return
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleKeyDown])
+  }, [handleKeyDown, isPhone])
 
   useEffect(() => {
     const onFsChange = () => {
@@ -779,6 +784,12 @@ export function ControllerPage() {
         }
       />
 
+      {/* Phone tier (<768px): the mixer / studio controller is NOT rendered — show
+          the operator-lite notice instead. Read-only status stays on Productions/Tally.
+          See docs/decisions/ADR-001-phone-tier-responsive-mode.md (#105). */}
+      {isPhone ? (
+        <OperatorLiteNotice />
+      ) : (
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {/* Video monitors row — Multiviewer + PGM side by side on desktop, stacked on tablet.
             Each panel is a flex-col: label on top, video fills remaining height.
@@ -1002,6 +1013,7 @@ export function ControllerPage() {
           </div>
         )}
       </div>
+      )}
     </div>
 
     {/* ── Audio options modal ──────────────────────────────────────────────── */}

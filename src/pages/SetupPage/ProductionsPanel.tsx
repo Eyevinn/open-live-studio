@@ -16,6 +16,7 @@ import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { selectCls, inputCls, InfoTip, ConfigFieldGroup } from '@/components/ui/ProductionConfigFields'
+import { useIsPhone } from '@/hooks/usePhoneLayout'
 
 // ---------------------------------------------------------------------------
 // Stream type labels — used for grouping source dropdowns
@@ -754,6 +755,8 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
 // ---------------------------------------------------------------------------
 
 export function ProductionsPanel() {
+  // Phone tier (<768px): read-only. Hide every state-mutating control (#105).
+  const isPhone = useIsPhone()
   const { productions, isLoading, removeProduction, updateStatus, fetchAll } = useProductionsStore()
   const { activeProductionId, setActiveProduction } = useProductionStore()
   const outputs = useOutputsStore((s) => s.outputs)
@@ -821,7 +824,9 @@ export function ProductionsPanel() {
           </span>
           {isLoading && <span className="text-xs text-[--color-accent]">Refreshing…</span>}
         </div>
-        <Button size="sm" variant="active" onClick={() => setAddOpen(true)}>+ New Production</Button>
+        {!isPhone && (
+          <Button size="sm" variant="active" onClick={() => setAddOpen(true)}>+ New Production</Button>
+        )}
       </div>
 
       {/* Production list */}
@@ -855,7 +860,9 @@ export function ProductionsPanel() {
               onClick={() => {
                 if (isActivating) return
                 if (isActive) void navigate(`/studio?production=${prod.id}`)
-                else setOptionsId(prod.id)
+                // Phone tier: opening the options/config modal would expose a
+                // state-mutating form, so inactive rows are inert at <768px (#105).
+                else if (!isPhone) setOptionsId(prod.id)
               }}
             >
               <StatusDot
@@ -992,7 +999,10 @@ export function ProductionsPanel() {
                     Studio
                   </Link>
                 )}
-                {isActive ? (
+                {/* Phone tier (<768px): hide state-mutating controls
+                    (activate/deactivate, options/config, delete). The read-only
+                    Studio link and status stay glanceable (#105). */}
+                {!isPhone && (isActive ? (
                   <Button
                     size="sm"
                     variant="ghost"
@@ -1020,7 +1030,9 @@ export function ProductionsPanel() {
                   >
                     {isActivating ? 'Activating...' : 'Activate'}
                   </Button>
-                )}
+                ))}
+                {!isPhone && (
+                <>
                 <Button
                   size="sm"
                   variant="ghost"
@@ -1043,6 +1055,8 @@ export function ProductionsPanel() {
                 >
                   Delete
                 </Button>
+                </>
+                )}
               </div>
             </div>
           )

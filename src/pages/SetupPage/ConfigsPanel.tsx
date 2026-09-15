@@ -5,6 +5,7 @@ import { PRODUCTION_PROPERTIES } from '@/lib/production-schema'
 import { ConfigFieldGroup, inputCls } from '@/components/ui/ProductionConfigFields'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
+import { useIsPhone } from '@/hooks/usePhoneLayout'
 
 const tProps = PRODUCTION_PROPERTIES
 
@@ -143,6 +144,8 @@ function EditConfigModal({ config, onSave, onClose }: { config: ProductionConfig
 // ---------------------------------------------------------------------------
 
 export function ConfigsPanel() {
+  // Phone tier (<768px): read-only. Hide every state-mutating control (#105).
+  const isPhone = useIsPhone()
   const [configs, setConfigs] = useState<ProductionConfig[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [addOpen, setAddOpen] = useState(false)
@@ -176,7 +179,9 @@ export function ConfigsPanel() {
           {configs.length} {configs.length === 1 ? 'config' : 'configs'}
           {isLoading && <span className="ml-2 text-[--color-accent]">Loading…</span>}
         </span>
-        <Button size="sm" variant="active" onClick={() => setAddOpen(true)}>+ New Config</Button>
+        {!isPhone && (
+          <Button size="sm" variant="active" onClick={() => setAddOpen(true)}>+ New Config</Button>
+        )}
       </div>
 
       {configs.length === 0 && !isLoading && (
@@ -187,8 +192,10 @@ export function ConfigsPanel() {
         {configs.map((cfg) => (
           <div
             key={cfg._id}
-            className="flex items-center gap-3 px-4 py-3 rounded bg-[--color-surface-3] border border-[--color-border] hover:border-orange-500 transition-colors cursor-pointer"
-            onClick={() => setEditTarget(cfg)}
+            className={`flex items-center gap-3 px-4 py-3 rounded bg-[--color-surface-3] border border-[--color-border] transition-colors ${isPhone ? 'cursor-default' : 'hover:border-orange-500 cursor-pointer'}`}
+            // Phone tier: the config editor is a state-mutating form, so rows are
+            // inert (glanceable list only) at <768px (#105).
+            onClick={() => { if (!isPhone) setEditTarget(cfg) }}
           >
             <div className="flex-1 min-w-0">
               <span className="text-sm font-medium text-[--color-text-primary] truncate block">{cfg.name}</span>
@@ -196,17 +203,20 @@ export function ConfigsPanel() {
                 {Object.entries(cfg.values).map(([, v]) => String(v)).join(' · ')}
               </span>
             </div>
-            <div className="flex gap-2 shrink-0">
-              <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); setEditTarget(cfg) }}>Edit</Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={(e) => { e.stopPropagation(); setDeleteTarget(cfg) }}
-                className="text-white hover:text-red-400"
-              >
-                Delete
-              </Button>
-            </div>
+            {/* Phone tier (<768px): hide state-mutating controls (edit/delete) (#105). */}
+            {!isPhone && (
+              <div className="flex gap-2 shrink-0">
+                <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); setEditTarget(cfg) }}>Edit</Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={(e) => { e.stopPropagation(); setDeleteTarget(cfg) }}
+                  className="text-white hover:text-red-400"
+                >
+                  Delete
+                </Button>
+              </div>
+            )}
           </div>
         ))}
       </div>

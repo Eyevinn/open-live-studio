@@ -9,6 +9,7 @@ import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
 import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
 import { DirectionToggle, ListenerFields, inputCls, labelCls, listenerPortFor, listenerReady, useListenerPortMode } from '@/components/ui/SrtDirectionFields'
+import { useIsPhone } from '@/hooks/usePhoneLayout'
 
 function timeSince(ts: number): string {
   const secs = Math.floor((Date.now() - ts) / 1000)
@@ -70,6 +71,8 @@ interface EditState {
 }
 
 export function SourcesPanel() {
+  // Phone tier (<768px): read-only. Hide every state-mutating control (#105).
+  const isPhone = useIsPhone()
   const { sources, isLoading, lastFetchedAt, removeSource, addSource, updateSource, fetchAll } = useSourcesStore()
   const productions = useProductionsStore((s) => s.productions)
   const { info } = useServerInfo()
@@ -213,7 +216,9 @@ export function SourcesPanel() {
           </span>
           {isLoading && <span className="text-xs text-[--color-accent]">Refreshing…</span>}
         </div>
-        <Button size="sm" variant="active" onClick={() => setAddOpen(true)}>+ New Source</Button>
+        {!isPhone && (
+          <Button size="sm" variant="active" onClick={() => setAddOpen(true)}>+ New Source</Button>
+        )}
       </div>
 
       <div className="flex flex-col gap-1">
@@ -225,11 +230,13 @@ export function SourcesPanel() {
             <div
               key={src.id}
               className={`flex items-center gap-3 px-3 py-2.5 rounded bg-[--color-surface-3] border transition-colors ${
-                inActiveProduction
-                  ? 'border-[--color-border] hover:border-zinc-600 cursor-not-allowed'
+                inActiveProduction || isPhone
+                  ? 'border-[--color-border] hover:border-zinc-600 cursor-default'
                   : 'border-[--color-border] hover:border-orange-500 cursor-pointer'
               }`}
-              onClick={() => !inActiveProduction && openEdit(src)}
+              // Phone tier: opening the edit form would expose a state-mutating
+              // form, so rows are inert (glanceable status only) at <768px (#105).
+              onClick={() => { if (!inActiveProduction && !isPhone) openEdit(src) }}
             >
               <StatusDot color={inActiveProduction ? 'red' : 'gray'} />
               <div className="flex-1 min-w-0">
@@ -249,26 +256,32 @@ export function SourcesPanel() {
                   </span>
                 )}
               </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={(e) => { e.stopPropagation(); if (!inActiveProduction) openEdit(src) }}
-                disabled={inActiveProduction}
-                className="text-white hover:text-orange-500 disabled:opacity-30 disabled:cursor-not-allowed"
-                title={inActiveProduction ? 'Cannot edit source in an active production' : 'Edit source'}
-              >
-                Edit
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={(e) => { e.stopPropagation(); setDeleteTargetId(src.id) }}
-                disabled={inActiveProduction}
-                className="text-white hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed"
-                title={inActiveProduction ? 'Cannot delete source in an active production' : 'Delete source'}
-              >
-                Delete
-              </Button>
+              {/* Phone tier (<768px): hide state-mutating controls (edit/delete);
+                  source status stays glanceable and read-only (#105). */}
+              {!isPhone && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={(e) => { e.stopPropagation(); if (!inActiveProduction) openEdit(src) }}
+                    disabled={inActiveProduction}
+                    className="text-white hover:text-orange-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                    title={inActiveProduction ? 'Cannot edit source in an active production' : 'Edit source'}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={(e) => { e.stopPropagation(); setDeleteTargetId(src.id) }}
+                    disabled={inActiveProduction}
+                    className="text-white hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed"
+                    title={inActiveProduction ? 'Cannot delete source in an active production' : 'Delete source'}
+                  >
+                    Delete
+                  </Button>
+                </>
+              )}
             </div>
           )
         })}
