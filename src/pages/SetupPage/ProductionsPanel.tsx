@@ -394,7 +394,7 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
                   </div>
                   {isActive
                     ? <span className="text-sm text-[--color-text-primary] font-mono">{production.airTime ? new Date(production.airTime).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'short' }) : <span className="text-[--color-text-muted] italic text-xs">Not set</span>}</span>
-                    : <input type="datetime-local" value={airTimeLocal} onChange={(e) => void handleAirTimeChange(e.target.value)} className={selectCls} />
+                    : <input type="datetime-local" value={airTimeLocal} onChange={(e) => void handleAirTimeChange(e.target.value)} className={`${selectCls} [color-scheme:dark]`} />
                   }
                 </div>
               </div>
@@ -634,7 +634,7 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
                     <label className="text-xs text-[--color-text-muted]">Air Time <span className="font-normal normal-case">(optional)</span></label>
                     <InfoTip text="Optional scheduled air time. An 'On Air' badge appears on the production card once this time is reached." />
                   </div>
-                  <input type="datetime-local" value={airTimeLocal} onChange={(e) => setAirTimeLocal(e.target.value)} className={selectCls} />
+                  <input type="datetime-local" value={airTimeLocal} onChange={(e) => setAirTimeLocal(e.target.value)} className={`${selectCls} [color-scheme:dark]`} />
                 </div>
               </div>
             </div>
