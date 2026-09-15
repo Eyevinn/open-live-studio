@@ -23,7 +23,10 @@ export function Modal({ open, title, onClose, children, className }: ModalProps)
   if (!open) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+      onClick={onClose}
+    >
       <div
         className={cn(
           'bg-[#1e1e1e] border border-[var(--color-border-strong)] rounded-xl shadow-[0_4px_24px_rgba(0,0,0,0.4)] w-full max-w-lg mx-4 flex flex-col',
@@ -33,7 +36,7 @@ export function Modal({ open, title, onClose, children, className }: ModalProps)
       >
         <div className="flex items-center justify-between px-6 pt-6 pb-5 shrink-0">
           <h2 className="text-base font-bold text-[--color-text-primary]">{title}</h2>
-          <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
+          <Button variant="ghost" size="md" aria-label="Close" onClick={onClose} className="px-2 py-2 text-lg leading-none">✕</Button>
         </div>
         <div className="overflow-y-auto px-6 pb-6">
           {children}
