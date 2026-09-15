@@ -278,6 +278,47 @@ select optgroup {
   color: #ebebeb;
 }
 
+/* ── Tablet responsive layout (768–1024 px) — Tier 1 (#104) ─────────────────
+   These rules override inline styles that Tailwind utilities cannot reach
+   because inline styles always win over class-based rules in specificity.
+   Desktop (>1024px) layout is completely unchanged.
+── */
+
+/* Bottom controller+audio row: fixed 392px tall on desktop, auto-height with
+   wrapping on tablet so panels stack rather than overflow horizontally. */
+.bottom-panel-row {
+  /* desktop default is height:392 set via inline style — no override needed */
+}
+
+@media (max-width: 1024px) {
+  .bottom-panel-row {
+    height: auto !important;
+    flex-wrap: wrap;
+    overflow-y: auto;
+    min-height: 200px;
+  }
+
+  /* All direct children of the bottom panel row: release the h-full binding so
+     panels size to their content when the row wraps rather than stretching to
+     a now-undefined parent height. */
+  .bottom-panel-row > * {
+    height: auto !important;
+  }
+
+  /* Looks (280px) and PiP (540px) panels: release fixed width, fill row. */
+  .panel-col-fixed {
+    width: 100% !important;
+    min-width: 0;
+    flex-shrink: 1;
+  }
+
+  /* Inner scrollable content areas that use flex-1 need an explicit min-height
+     when their parent is no longer constrained to 392px. */
+  .panel-col-fixed .min-h-0 {
+    min-height: 200px;
+  }
+}
+
 /* Production select styling */
 select.broadcast-select {
   background-color: #111111;

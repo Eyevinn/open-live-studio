@@ -1,4 +1,5 @@
 import { useEffect, useCallback, useState, useRef, type ReactNode } from 'react'
+import { useIsTablet } from '@/hooks/useTabletLayout'
 import { cn } from '@/lib/cn'
 import { useSearchParams, useNavigate } from 'react-router'
 import { useWebRTC } from '@/hooks/useWebRTC'
@@ -374,9 +375,9 @@ function ControllerOptionsContent({
   const leftColStyle: React.CSSProperties = { width: 96, minWidth: 96, background: '#18181b', borderRight: '1px solid #1e1e1e' }
 
   return (
-    <div className="flex flex-col gap-4" style={{ minWidth: 640 }}>
+    <div className="flex flex-col gap-4">
 
-      <div className="flex gap-4 items-start">
+      <div className="flex flex-wrap gap-4 items-start">
 
         {/* ── Transitions ─────────────────────────────────────────────────────── */}
         <div className="flex flex-col flex-1 min-w-0">
@@ -426,7 +427,7 @@ function ControllerOptionsContent({
 
         {/* ── Source timing ───────────────────────────────────────────────────── */}
         {assignments.length > 0 && (
-          <div className="flex flex-col shrink-0" style={{ width: 300 }}>
+          <div className="flex flex-col shrink-0 max-lg:shrink max-lg:w-full" style={{ width: 300 }}>
             <div className="flex items-center gap-2 mb-2">
               <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Source timing</span>
               <Tooltip title="Video delay" content={<span className="text-[11px] text-zinc-300 max-w-[200px] leading-relaxed">V: delay the video track relative to audio. A: delay the audio track relative to video. Use to fix lip-sync issues per source.</span>}>
@@ -475,6 +476,7 @@ function ControllerOptionsContent({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export function ControllerPage() {
+  const isTablet = useIsTablet()
   const { cut, auto, ftb, setPvw, pvwInput, pvwPip, pgmPip, pgmInput, pips, setPvwPip, transitionType, transitionDurationMs, activeProductionId, setActiveProduction, afvRampUpMs, afvRampDownMs, dskState, deactivatedExternally } = useProductionStore()
   const productions = useProductionsStore((s) => s.productions)
   const fetchProductions = useProductionsStore((s) => s.fetchAll)
@@ -778,12 +780,12 @@ export function ControllerPage() {
       />
 
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {/* Video monitors row — Multiviewer + PGM side by side when both enabled.
+        {/* Video monitors row — Multiviewer + PGM side by side on desktop, stacked on tablet.
             Each panel is a flex-col: label on top, video fills remaining height.
             flex-1 min-w-0 splits horizontal space so max-w-full on the videos
             prevents overflow regardless of how many panels are visible. */}
         {(panels.multiviewer || panels.pgm) && (
-          <div className="flex-1 min-h-0 px-4 pt-2 pb-2 overflow-hidden flex flex-row items-stretch gap-6">
+          <div className="flex-1 min-h-0 px-4 pt-2 pb-2 overflow-hidden flex flex-row max-lg:flex-col items-stretch gap-6">
 
             {/* Multiviewer — unmounts fully when disabled, killing the WebRTC connection */}
             {panels.multiviewer && (
@@ -942,9 +944,9 @@ export function ControllerPage() {
           </div>
         )}
 
-        {/* Controller + Audio row */}
+        {/* Controller + Audio row — fixed height on desktop, wraps and grows on tablet */}
         {showBottomRow && (
-          <div className="flex flex-none pt-2 pb-3 gap-0" style={{ height: 392 }}>
+          <div className="flex flex-none pt-2 pb-3 gap-0 bottom-panel-row" style={{ height: 392 }}>
             {panels.controller && (
               <div className="px-3 flex flex-col gap-2 min-w-0 flex-1 h-full">
                 <SectionLabel icon={<ControllerIcon />} tooltip="Vision mixer controls. Click a source to set it on preview, then press Cut or Auto to take it to programme. Toggle FTB to fade to black. Use DSK to layer graphics over programme. Press the gear icon to set transition types and source timing offsets." onPopOut={activeProductionId ? () => { window.open(`/pane/controller?production=${activeProductionId}`, '_blank', 'noopener') } : undefined} onHide={() => togglePanel('controller')} actions={
@@ -960,7 +962,7 @@ export function ControllerPage() {
               </div>
             )}
             {panels.fx && (
-              <div className={`flex flex-col gap-2 shrink-0 h-full ${panels.controller ? 'pr-3' : 'px-3'}`} style={{ width: 280 }}>
+              <div className={`flex flex-col gap-2 panel-col-fixed h-full ${panels.controller ? 'pr-3' : 'px-3'}`} style={{ width: 280 }}>
                 <SectionLabel icon={<LooksIcon />} tooltip="Per-source GPU shader effects. Select a source tab, then pick an effect type and adjust its parameters. Changes apply live to the programme output. Requires a GPU node — a note is shown if unavailable." onHide={() => togglePanel('fx')}>Looks</SectionLabel>
                 <div className="border border-zinc-800 overflow-y-auto flex-1 min-h-0" style={{ background: '#0d0d0d' }}>
                   <LooksPanel
@@ -974,7 +976,7 @@ export function ControllerPage() {
               </div>
             )}
             {panels.pip && numPips > 0 && activeProduction?.status === 'active' && (
-              <div className={`${panels.controller || panels.fx ? 'pr-3' : 'px-3'} flex flex-col gap-2 shrink-0 h-full overflow-hidden`} style={{ width: 540 }}>
+              <div className={`${panels.controller || panels.fx ? 'pr-3' : 'px-3'} flex flex-col gap-2 panel-col-fixed h-full overflow-hidden`} style={{ width: 540 }}>
                 <SectionLabel icon={<PipIcon />} tooltip="Picture-in-Picture editor. Select a PiP slot, then drag zones on the canvas to position them. Assign sources to zones by clicking the source chips. Use Crop / Zoom to pan and zoom individual sources within a zone. Set a border colour and width per zone. Click Take to bring the PiP to programme." onPopOut={activeProductionId ? () => { window.open(`/pane/pip?production=${activeProductionId}`, '_blank', 'noopener') } : undefined} onHide={() => togglePanel('pip')}>PiP Editor</SectionLabel>
                 <PipPanel onApply={handleApplyPip} className="flex-1 overflow-y-auto min-h-0" />
               </div>
@@ -989,6 +991,7 @@ export function ControllerPage() {
                   numAuxBuses={activeProduction?.values?.num_aux_buses !== undefined ? parseInt(String(activeProduction.values.num_aux_buses), 10) : 2}
                   numGroups={activeProduction?.values?.num_groups !== undefined ? parseInt(String(activeProduction.values.num_groups), 10) : 2}
                   showEbuMain={activeProduction?.values?.ebu_main === true}
+                  faderHeight={isTablet ? 160 : undefined}
                   auxBusPre={activeProduction?.values ? Object.fromEntries(
                     Array.from({ length: activeProduction.values.num_aux_buses !== undefined ? parseInt(String(activeProduction.values.num_aux_buses), 10) : 2 }, (_, i) => i + 1)
                       .map((bus) => [bus, activeProduction.values![`aux${bus}_pre`] !== false])
