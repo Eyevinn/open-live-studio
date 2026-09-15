@@ -46,7 +46,7 @@ const NAV_ITEMS = [
 
 export function NavBar() {
   return (
-    <nav className="flex flex-col items-stretch bg-[--color-surface-2] border-r border-[--color-border] flex-shrink-0" style={{ width: 60 }}>
+    <nav className="flex flex-col items-stretch w-[60px] shrink-0 bg-[--color-surface-2] border-r border-[--color-border]">
       {/* Logo — h-14 matches PageHeader height so the border-b lines up */}
       <NavLink to="/productions" className="h-14 flex items-center justify-center border-b border-[--color-border] cursor-pointer hover:bg-zinc-900 transition-colors">
         <OpenLiveLogo />
