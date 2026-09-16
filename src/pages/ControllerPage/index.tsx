@@ -16,6 +16,7 @@ import { PipPanel } from './PipPanel'
 import { LooksPanel } from './LooksPanel'
 import { AudioPanel } from './AudioPanel'
 import { TimerBar } from './TimerBar'
+import { IdleWarningBanner } from './IdleWarningBanner'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Tooltip } from '@/components/ui/Tooltip'
@@ -783,6 +784,11 @@ export function ControllerPage() {
           </div>
         }
       />
+
+      {/* Pre-deactivation idle-timeout warning, surfaced where the operator
+          actually works (#130). Not rendered on the phone tier, which shows the
+          operator-lite notice instead of the mixer. */}
+      {!isPhone && <IdleWarningBanner send={send} />}
 
       {/* Phone tier (<768px): the mixer / studio controller is NOT rendered — show
           the operator-lite notice instead. Read-only status stays on Productions/Tally.

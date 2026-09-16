@@ -8,14 +8,17 @@ import { getApiToken } from '@/lib/sat'
 import { BASE } from '@/lib/base'
 const WS_BASE = BASE.replace(/^http/, 'ws')
 
-const WS_RECONNECT_DELAY_MS = 2000
-const WS_MAX_RECONNECTS = 5
+// Reconnect uses exponential backoff, capped, and — critically — never gives up
+// permanently (#130). A present operator whose tab was briefly backgrounded must
+// not be silently counted as absent because the client stopped reconnecting.
+const WS_RECONNECT_BASE_DELAY_MS = 1000
+const WS_RECONNECT_MAX_DELAY_MS = 15000
 
 // Tag for the persistent connection toast, so it upserts (never stacks) and
 // can be cleared on a successful (re)connect.
 const WS_TOAST_TAG = 'controller-ws'
 const SESSION_EXPIRED_MSG = 'Session expired — reload to sign in'
-const CONNECTION_LOST_MSG = 'Controller connection lost — session may have expired. Reload to sign in.'
+const CONNECTION_LOST_MSG = 'Controller connection lost — reconnecting…'
 
 export type OutboundMessage =
   | { type: 'CUT'; mixerInput: string; afvRampUpMs?: number; afvRampDownMs?: number }
@@ -46,6 +49,11 @@ export type OutboundMessage =
   | { type: 'SELECT_PVW_PIP'; pip: number }
   | { type: 'SET_PIP'; pip: number; bg: number | null; zones: PipZone[]; transforms?: PipTransforms }
   | { type: 'SET_EFFECT'; target: EffectTarget; effect: VideoEffect }
+  // Explicit "keep this production alive" signal that resets the backend idle
+  // timer and cancels a pending idle-timeout warning (#130). Paired backend work
+  // (open-live#290) defines the exact handshake; KEEP_ALIVE follows the existing
+  // UPPER_SNAKE convention and is the reasonable name until #290 finalises it.
+  | { type: 'KEEP_ALIVE' }
 
 /**
  * Opens a WebSocket connection to /ws/productions/:id/controller.
@@ -82,7 +90,8 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   const applyAfvRamp           = useProductionStore((s) => s.applyAfvRamp)
   const applyPipState          = useProductionStore((s) => s.applyPipState)
   const applyFxState              = useProductionStore((s) => s.applyFxState)
-  const setDeactivatedExternally  = useProductionStore((s) => s.setDeactivatedExternally)
+  const setDeactivated            = useProductionStore((s) => s.setDeactivated)
+  const setIdleWarning            = useProductionStore((s) => s.setIdleWarning)
   const addToast                  = useToastStore((s) => s.addToast)
   const upsertToastByTag          = useToastStore((s) => s.upsertToastByTag)
   const removeToastsByTag         = useToastStore((s) => s.removeToastsByTag)
@@ -96,7 +105,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     applyGrpSend, applyGrpMaster, applyMonitorMaster, resetGrpState,
     applyMeter, applyLoudness,
     applySourceOffset, applySourceAudioOffset, resetSourceOffsets, applyAfvRamp,
-    applyPipState, applyFxState, setDeactivatedExternally, addToast,
+    applyPipState, applyFxState, setDeactivated, setIdleWarning, addToast,
     upsertToastByTag, removeToastsByTag, markInactive,
   })
   actionsRef.current = {
@@ -107,7 +116,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     applyGrpSend, applyGrpMaster, applyMonitorMaster, resetGrpState,
     applyMeter, applyLoudness,
     applySourceOffset, applySourceAudioOffset, resetSourceOffsets, applyAfvRamp,
-    applyPipState, applyFxState, setDeactivatedExternally, addToast,
+    applyPipState, applyFxState, setDeactivated, setIdleWarning, addToast,
     upsertToastByTag, removeToastsByTag, markInactive,
   }
 
@@ -138,6 +147,8 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
 
       ws.onopen = () => {
         everOpened = true
+        // A healthy connection resets the backoff so the next drop starts fast.
+        reconnectCount = 0
         // A successful (re)connect clears any stale connection warning.
         actionsRef.current.removeToastsByTag(WS_TOAST_TAG)
       }
@@ -279,11 +290,41 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
                 )
               }
               break
-            case 'PRODUCTION_DEACTIVATED':
+            case 'IDLE_WARNING': {
+              // Pre-deactivation idle-timeout warning from the backend (#130,
+              // paired with open-live#290). The backend message contract may
+              // still be in flight, so accept the countdown defensively under
+              // several plausible field names and derive a wall-clock deadline:
+              //   - deadlineMs / deadline: absolute epoch ms
+              //   - remainingMs:           ms until deactivation
+              //   - remainingSec:          seconds until deactivation
+              // If none is present, fall back to the existing idle deadline
+              // (idleExpiresAt) already tracked per-production on the REST model.
+              let deadlineMs: number | null = null
+              if (typeof msg['deadlineMs'] === 'number') deadlineMs = msg['deadlineMs'] as number
+              else if (typeof msg['deadline'] === 'number') deadlineMs = msg['deadline'] as number
+              else if (typeof msg['remainingMs'] === 'number') deadlineMs = Date.now() + (msg['remainingMs'] as number)
+              else if (typeof msg['remainingSec'] === 'number') deadlineMs = Date.now() + (msg['remainingSec'] as number) * 1000
+              if (deadlineMs !== null) a.setIdleWarning({ deadlineMs })
+              break
+            }
+            case 'IDLE_WARNING_CLEARED':
+              // Backend confirmed the idle timer was reset (e.g. via KEEP_ALIVE
+              // or renewed activity); dismiss the mixer-view warning.
+              a.setIdleWarning(null)
+              break
+            case 'PRODUCTION_DEACTIVATED': {
               if (productionId) a.markInactive(productionId)
               a.resetSourceOffsets()
-              a.setDeactivatedExternally(true)
+              // Attribute the deactivation correctly (#130): an idle auto-timeout
+              // must NOT be reported as "deactivated by another user". The backend
+              // marks idle teardown with endedReason: 'idle' / autoDeactivated;
+              // accept either signal defensively across a few field names.
+              const reasonField = msg['reason'] ?? msg['endedReason']
+              const isIdle = reasonField === 'idle' || msg['autoDeactivated'] === true
+              a.setDeactivated(isIdle ? 'idle' : 'external')
               break
+            }
             case 'ERROR':
               if (typeof msg['error'] === 'string') {
                 a.addToast(msg['error'])
@@ -318,24 +359,50 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
           return
         }
 
-        if (reconnectCount < WS_MAX_RECONNECTS) {
-          reconnectCount++
-          reconnectTimer = setTimeout(connect, WS_RECONNECT_DELAY_MS)
-        } else {
-          // Reconnect budget exhausted after a previously-healthy connection:
-          // the UI must stop looking connected. We cannot read the WS close
-          // status, so we cannot be certain this is a session expiry vs. a
-          // network drop — surface a message that covers both.
-          showSessionToast(CONNECTION_LOST_MSG)
-        }
+        // A previously-healthy connection dropped. Keep retrying indefinitely
+        // with capped exponential backoff (#130) — never give up permanently, so
+        // a present operator whose tab was backgrounded is not silently treated
+        // as absent. Surface a non-alarming "reconnecting" notice meanwhile; a
+        // successful reconnect clears it in onopen.
+        showSessionToast(CONNECTION_LOST_MSG)
+        const delay = Math.min(
+          WS_RECONNECT_BASE_DELAY_MS * 2 ** reconnectCount,
+          WS_RECONNECT_MAX_DELAY_MS,
+        )
+        reconnectCount++
+        reconnectTimer = setTimeout(connect, delay)
       }
     }
+
+    // Reconnect promptly when the operator returns to the tab or the network
+    // comes back, rather than waiting out the current backoff delay. This is the
+    // key recovery path for the reported scenario: the tab was backgrounded, the
+    // socket dropped, and refocusing must re-establish the connection (#130).
+    const reconnectNow = () => {
+      if (cancelled) return
+      if (wsRef.current) return // already connected or connecting
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
+      reconnectCount = 0
+      void connect()
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') reconnectNow()
+    }
+    window.addEventListener('online', reconnectNow)
+    window.addEventListener('focus', reconnectNow)
+    document.addEventListener('visibilitychange', onVisibility)
 
     connect()
 
     return () => {
       cancelled = true
       if (reconnectTimer) clearTimeout(reconnectTimer)
+      window.removeEventListener('online', reconnectNow)
+      window.removeEventListener('focus', reconnectNow)
+      document.removeEventListener('visibilitychange', onVisibility)
       wsRef.current?.close()
       wsRef.current = null
       // Clear any connection warning we raised so it doesn't linger after the
