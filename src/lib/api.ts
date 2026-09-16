@@ -59,6 +59,12 @@ export interface ApiSource {
   status: 'active' | 'inactive'
   liveCamera?: boolean
   latency?: number
+  /**
+   * Id of the Gateway (open-live `GatewayDoc._id`) that registered this source,
+   * if any. Present only on gateway-owned sources; the gateway recreates these
+   * each heartbeat, so Studio locks Edit/Delete for them (open-live #263).
+   */
+  gatewayId?: string
 }
 
 export interface ProductionSourceAssignment {
@@ -242,6 +248,60 @@ export const sourcesApi = {
 
   remove: (id: string) =>
     request<void>(`/api/v1/sources/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+}
+
+// --------------- Gateway types (open-live #263, OL-5/OL-6 Studio Gateways Phase 1) ---------------
+
+/**
+ * Gateway health, derived compute-on-read on the backend from the last heartbeat.
+ * Matches the open-live `GatewayHealth` vocabulary exactly — there is deliberately
+ * no `degraded` value.
+ */
+export type GatewayHealth = 'healthy' | 'down' | 'unknown'
+
+/** Strom FlowState vocabulary reported per gateway input (open-live `GatewayInputFlowState`). */
+export type GatewayInputFlowState = 'idle' | 'playing' | 'paused'
+
+export interface GatewayUplink {
+  bitrateKbps: number
+  rtt_ms: number
+  dropped: number
+}
+
+export interface GatewayInputStatus {
+  inputId: string
+  name: string
+  flowState: GatewayInputFlowState
+  /** References the Open Live source (`ApiSource.id`) this input registered, if any. */
+  sourceId: string | null
+  uplink: GatewayUplink | null
+}
+
+/**
+ * A venue gateway box as returned by `GET /api/v1/gateways`. The snapshot fields
+ * (`host`, `stromVersion`, `deviceCount`, `streamingCount`, `inputs`) reflect the
+ * last heartbeat and are absent until the first heartbeat arrives.
+ */
+export interface ApiGateway {
+  id: string
+  name: string
+  health: GatewayHealth
+  lastSeenAt: string | null
+  host?: string
+  stromVersion?: string
+  deviceCount?: number
+  streamingCount?: number
+  inputs?: GatewayInputStatus[]
+  createdAt: string
+  updatedAt: string
+}
+
+export const gatewaysApi = {
+  list: () =>
+    request<ApiGateway[]>('/api/v1/gateways'),
+
+  get: (id: string) =>
+    request<ApiGateway>(`/api/v1/gateways/${encodeURIComponent(id)}`),
 }
 
 // --------------- Macro types ---------------
