@@ -17,7 +17,16 @@ const TABS: { id: Tab; label: string }[] = [
 export function ProductionsPage() {
   const [activeTab, setActiveTab] = useState<Tab>('productions')
   const deactivatedExternally = useProductionStore((s) => s.deactivatedExternally)
+  const deactivationReason = useProductionStore((s) => s.deactivationReason)
   const setDeactivatedExternally = useProductionStore((s) => s.setDeactivatedExternally)
+
+  // Attribute the deactivation to what actually happened (#130): an idle
+  // auto-timeout must not be reported as another user deactivating it.
+  const isIdle = deactivationReason === 'idle'
+  const deactivatedTitle = isIdle ? 'Production went idle' : 'Production deactivated'
+  const deactivatedMessage = isIdle
+    ? 'This production was automatically deactivated after being idle. Reactivate it to continue.'
+    : 'This production was deactivated by another user.'
 
   return (
     <div className="flex flex-col h-full">
@@ -49,10 +58,10 @@ export function ProductionsPage() {
       </div>
 
       {deactivatedExternally && (
-        <Modal open title="Production deactivated" onClose={() => setDeactivatedExternally(false)} className="max-w-sm">
+        <Modal open title={deactivatedTitle} onClose={() => setDeactivatedExternally(false)} className="max-w-sm">
           <div className="flex flex-col gap-4">
             <p className="text-sm text-[--color-text-primary]">
-              This production was deactivated by another user.
+              {deactivatedMessage}
             </p>
             <div className="flex justify-end">
               <Button onClick={() => setDeactivatedExternally(false)}>OK</Button>

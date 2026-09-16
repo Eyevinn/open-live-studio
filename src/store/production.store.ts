@@ -102,6 +102,20 @@ interface ProductionState {
   masterEffect: VideoEffect
   /** Set when a PRODUCTION_DEACTIVATED message is received while this client is in the studio. */
   deactivatedExternally: boolean
+  /**
+   * Why the production was deactivated out from under this client. Drives the
+   * post-deactivation message so an idle auto-timeout isn't wrongly attributed
+   * to another user (#130). `'idle'` = idle-timeout auto-deactivation,
+   * `'external'` = deactivated by another user / other cause.
+   */
+  deactivationReason: 'idle' | 'external' | null
+  /**
+   * Pre-deactivation idle warning surfaced in the mixer view (#130). Populated
+   * from the backend idle-warning WS signal (paired backend work: open-live#290).
+   * `deadlineMs` is the wall-clock epoch (ms) at which auto-deactivation fires,
+   * so the countdown stays accurate across re-renders and clock ticks.
+   */
+  idleWarning: { deadlineMs: number } | null
 }
 
 interface ProductionActions {
@@ -129,6 +143,10 @@ interface ProductionActions {
   /** Server-authoritative FX state setter — called by WS handler on FX_STATE */
   applyFxState: (fxAvailable: boolean, inputEffects: VideoEffect[], masterEffect: VideoEffect) => void
   setDeactivatedExternally: (value: boolean) => void
+  /** Record why the production was deactivated; also flips deactivatedExternally on. */
+  setDeactivated: (reason: 'idle' | 'external') => void
+  /** Set (or clear with null) the pending idle-timeout warning shown in the mixer view. */
+  setIdleWarning: (warning: { deadlineMs: number } | null) => void
 }
 
 export const useProductionStore = create<ProductionState & ProductionActions>()(
@@ -154,6 +172,8 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
       inputEffects: {},
       masterEffect: { type: 'none' as const },
       deactivatedExternally: false,
+      deactivationReason: null,
+      idleWarning: null,
 
       // Actions
       cut: () =>
@@ -217,6 +237,8 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
           state.pgmPip = null
           state.pvwPip = null
           state.pips = []
+          state.idleWarning = null
+          state.deactivationReason = null
         })
         // Clear audio strips synchronously so the new production never renders with
         // a previous production's elements. React 18 batches these two store updates
@@ -279,7 +301,21 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
         }),
 
       setDeactivatedExternally: (value) =>
-        set((state) => { state.deactivatedExternally = value }),
+        set((state) => {
+          state.deactivatedExternally = value
+          if (!value) state.deactivationReason = null
+        }),
+
+      setDeactivated: (reason) =>
+        set((state) => {
+          state.deactivatedExternally = true
+          state.deactivationReason = reason
+          // A completed deactivation supersedes any pending idle warning.
+          state.idleWarning = null
+        }),
+
+      setIdleWarning: (warning) =>
+        set((state) => { state.idleWarning = warning }),
     })),
     { name: 'production', enabled: import.meta.env.DEV },
   ),
