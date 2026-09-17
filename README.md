@@ -57,6 +57,18 @@ Copy `.env.example` to `.env`:
 
 > **Never commit `.env`** — it is gitignored. Use `.env.example` as the reference.
 
+### Idle auto-deactivation (`IDLE_TIMEOUT_SEC`)
+
+An active production is automatically deactivated by the backend after it has had **zero controller subscribers** for a set period. That period is controlled by the **backend** environment variable `IDLE_TIMEOUT_SEC` (defined in [open-live](https://github.com/Eyevinn/open-live) `src/config.ts`, default `300` seconds). It is **not** a Studio variable — set it on the open-live backend (for OSC deployments, in the backend app's parameter store), then restart the backend.
+
+Studio surfaces this timeout so an operator is never caught out by it:
+
+- The **Productions** list shows a per-row countdown badge as a production nears its idle deadline.
+- A **session-wide banner** (mixer, I/O and Productions views) warns when the selected production is within the last minute of its idle window with no viewers, with a one-click link back to the mixer.
+- The **mixer view** additionally offers a one-click *Keep active* action.
+
+While any Studio view for a production is open, Studio holds a lightweight keep-alive that resets this backend timer, so routine setup work does not trigger a deactivation. Lowering `IDLE_TIMEOUT_SEC` reclaims idle-but-active GPU capacity sooner; raising it is more forgiving of brief operator absences.
+
 ## Commands
 
 ```bash

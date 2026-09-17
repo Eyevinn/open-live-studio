@@ -1,5 +1,6 @@
 import { Outlet } from 'react-router'
 import { NavBar } from './NavBar'
+import { GlobalIdleBanner } from './GlobalIdleBanner'
 import { useOscAuth } from '@/hooks/useOscAuth'
 import { useConnectionCheck } from '@/hooks/useConnectionCheck'
 import { useSessionKeepAlive } from '@/hooks/useSessionKeepAlive'
@@ -19,6 +20,9 @@ export function Shell() {
       <NavBar />
 
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+        {/* Idle-timeout warning surfaced across every Studio view — the mixer's
+            own IdleWarningBanner suppresses this one to avoid duplication (#140). */}
+        <GlobalIdleBanner />
         <main className="flex-1 min-h-0 overflow-hidden flex flex-col">
           <Outlet />
         </main>
