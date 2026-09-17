@@ -8,6 +8,49 @@ import { getApiToken } from '@/lib/sat'
 import { BASE } from '@/lib/base'
 const WS_BASE = BASE.replace(/^http/, 'ws')
 
+// ─── Controller-connection registry ────────────────────────────────────────────
+//
+// The full mixer connection (this hook) and the session-level keep-alive
+// (useSessionKeepAlive) must never both hold a socket for the same production —
+// that would double the controller-subscriber count for no benefit. This
+// module-level registry lets the session keep-alive detect when a full mixer
+// connection is already live for a production and stand down accordingly (#139).
+const activeControllerProductions = new Map<string, number>()
+const registryListeners = new Set<() => void>()
+
+function notifyRegistry() {
+  for (const listener of registryListeners) listener()
+}
+
+/** Increment the live-connection refcount for a production and notify listeners. */
+function acquireControllerConnection(productionId: string) {
+  activeControllerProductions.set(productionId, (activeControllerProductions.get(productionId) ?? 0) + 1)
+  notifyRegistry()
+}
+
+/** Decrement the refcount; drop the key at zero and notify listeners. */
+function releaseControllerConnection(productionId: string) {
+  const next = (activeControllerProductions.get(productionId) ?? 0) - 1
+  if (next <= 0) activeControllerProductions.delete(productionId)
+  else activeControllerProductions.set(productionId, next)
+  notifyRegistry()
+}
+
+/** True when a full mixer controller connection is currently held for `productionId`. */
+export function hasControllerConnection(productionId: string): boolean {
+  return (activeControllerProductions.get(productionId) ?? 0) > 0
+}
+
+/**
+ * Subscribe to registry changes. Returns an unsubscribe function. Used by the
+ * session-level keep-alive to re-evaluate whether it still needs to hold its own
+ * subscription whenever a mixer connection opens or closes.
+ */
+export function subscribeControllerRegistry(listener: () => void): () => void {
+  registryListeners.add(listener)
+  return () => { registryListeners.delete(listener) }
+}
+
 // Reconnect uses exponential backoff, capped, and — critically — never gives up
 // permanently (#130). A present operator whose tab was briefly backgrounded must
 // not be silently counted as absent because the client stopped reconnecting.
@@ -122,6 +165,11 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
 
   useEffect(() => {
     if (!productionId) return
+
+    // Announce to the registry that a full mixer connection is held for this
+    // production for the lifetime of this effect, so the session-level
+    // keep-alive stands down and we never double the subscriber count (#139).
+    acquireControllerConnection(productionId)
 
     let cancelled = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -405,6 +453,9 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
       document.removeEventListener('visibilitychange', onVisibility)
       wsRef.current?.close()
       wsRef.current = null
+      // Release the registry entry so the session-level keep-alive takes over
+      // once the mixer view has unmounted (#139).
+      releaseControllerConnection(productionId)
       // Clear any connection warning we raised so it doesn't linger after the
       // hook unmounts (e.g. navigating away from the production).
       actionsRef.current.removeToastsByTag(WS_TOAST_TAG)
