@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react'
-import { useProductionStore, type PipZone, type PipConfig, type PipTransforms, type VideoEffect, type EffectTarget } from '@/store/production.store'
+import { useProductionStore, type PipZone, type PipConfig, type PipTransforms, type VideoEffect, type EffectTarget, type ClipState } from '@/store/production.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useAudioStore } from '@/store/audio.store'
 import { useToastStore } from '@/store/toast.store'
@@ -92,6 +92,13 @@ export type OutboundMessage =
   | { type: 'SELECT_PVW_PIP'; pip: number }
   | { type: 'SET_PIP'; pip: number; bg: number | null; zones: PipZone[]; transforms?: PipTransforms }
   | { type: 'SET_EFFECT'; target: EffectTarget; effect: VideoEffect }
+  // Clip cue/play control (epic open-live#206, studio#145). Drives the shipped
+  // controller-WS clip commands; the backend broadcasts CLIP_STATE in response.
+  | { type: 'CLIP_CUE'; mixerInput: string; clipId?: string }
+  | { type: 'CLIP_PLAY'; mixerInput: string }
+  | { type: 'CLIP_PAUSE'; mixerInput: string }
+  | { type: 'CLIP_STOP'; mixerInput: string }
+  | { type: 'CLIP_SEEK'; mixerInput: string; positionMs: number }
   // Explicit "keep this production alive" signal that resets the backend idle
   // timer and cancels a pending idle-timeout warning (#130). Paired backend work
   // (open-live#290) defines the exact handshake; KEEP_ALIVE follows the existing
@@ -133,6 +140,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   const applyAfvRamp           = useProductionStore((s) => s.applyAfvRamp)
   const applyPipState          = useProductionStore((s) => s.applyPipState)
   const applyFxState              = useProductionStore((s) => s.applyFxState)
+  const applyClipState            = useProductionStore((s) => s.applyClipState)
   const setDeactivated            = useProductionStore((s) => s.setDeactivated)
   const setIdleWarning            = useProductionStore((s) => s.setIdleWarning)
   const addToast                  = useToastStore((s) => s.addToast)
@@ -148,7 +156,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     applyGrpSend, applyGrpMaster, applyMonitorMaster, resetGrpState,
     applyMeter, applyLoudness,
     applySourceOffset, applySourceAudioOffset, resetSourceOffsets, applyAfvRamp,
-    applyPipState, applyFxState, setDeactivated, setIdleWarning, addToast,
+    applyPipState, applyFxState, applyClipState, setDeactivated, setIdleWarning, addToast,
     upsertToastByTag, removeToastsByTag, markInactive,
   })
   actionsRef.current = {
@@ -159,7 +167,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     applyGrpSend, applyGrpMaster, applyMonitorMaster, resetGrpState,
     applyMeter, applyLoudness,
     applySourceOffset, applySourceAudioOffset, resetSourceOffsets, applyAfvRamp,
-    applyPipState, applyFxState, setDeactivated, setIdleWarning, addToast,
+    applyPipState, applyFxState, applyClipState, setDeactivated, setIdleWarning, addToast,
     upsertToastByTag, removeToastsByTag, markInactive,
   }
 
@@ -340,6 +348,23 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
                 )
               }
               break
+            case 'CLIP_STATE': {
+              // Live clip playback state (epic open-live#206, studio#145). The
+              // backend spreads a ClipState onto the frame, so fields sit at the
+              // top level. mixerInput + state are required; the rest are optional.
+              const validStates = ['idle', 'cued', 'playing', 'paused', 'stopped', 'completed', 'error']
+              if (typeof msg['mixerInput'] === 'string' && typeof msg['state'] === 'string' && validStates.includes(msg['state'] as string)) {
+                a.applyClipState({
+                  mixerInput: msg['mixerInput'] as string,
+                  state: msg['state'] as ClipState['state'],
+                  ...(typeof msg['clipId'] === 'string' ? { clipId: msg['clipId'] as string } : {}),
+                  ...(typeof msg['positionMs'] === 'number' ? { positionMs: msg['positionMs'] as number } : {}),
+                  ...(typeof msg['durationMs'] === 'number' ? { durationMs: msg['durationMs'] as number } : {}),
+                  ...(typeof msg['error'] === 'string' ? { error: msg['error'] as string } : {}),
+                })
+              }
+              break
+            }
             case 'IDLE_WARNING': {
               // Pre-deactivation idle-timeout warning from the backend (#130,
               // paired with open-live#290). The backend message contract may

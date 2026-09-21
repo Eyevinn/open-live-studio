@@ -14,6 +14,7 @@ import { DskPanel } from './DskPanel'
 import { MacroBar } from './MacroBar'
 import { PipPanel } from './PipPanel'
 import { LooksPanel } from './LooksPanel'
+import { ClipPanel } from './ClipPanel'
 import { AudioPanel } from './AudioPanel'
 import { TimerBar } from './TimerBar'
 import { IdleWarningBanner } from './IdleWarningBanner'
@@ -35,7 +36,7 @@ import { ToastContainer } from '@/components/ui/ToastContainer'
 
 const PANELS_STORAGE_KEY = 'ol-studio-panels'
 
-type Panels = { multiviewer: boolean; controller: boolean; audio: boolean; pgm: boolean; pip: boolean; fx: boolean }
+type Panels = { multiviewer: boolean; controller: boolean; audio: boolean; pgm: boolean; pip: boolean; fx: boolean; clip: boolean }
 
 function loadPanels(): Panels {
   try {
@@ -51,13 +52,14 @@ function loadPanels(): Panels {
           pgm:         p.pgm         !== false,
           pip:         p.pip         === true,
           fx:          p.fx          === true,
+          clip:        p.clip        === true,
         }
       }
     }
   } catch {
     // intentionally empty — malformed/inaccessible localStorage falls back to defaults
   }
-  return { multiviewer: true, controller: true, audio: true, pgm: true, pip: false, fx: false }
+  return { multiviewer: true, controller: true, audio: true, pgm: true, pip: false, fx: false, clip: false }
 }
 
 function savePanels(panels: Panels) {
@@ -728,18 +730,40 @@ export function ControllerPage() {
     </svg>
   )
 
+  // Film-strip / play glyph for the clip bin panel.
+  const ClipIcon = () => (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" width="20" height="20">
+      <rect x="1.5" y="3" width="13" height="10" rx="1"/>
+      <line x1="1.5" y1="6" x2="14.5" y2="6" strokeOpacity="0.4"/>
+      <line x1="1.5" y1="10" x2="14.5" y2="10" strokeOpacity="0.4"/>
+      <path d="M6.5 6.5v3l3-1.5-3-1.5Z" fill="currentColor" stroke="none"/>
+    </svg>
+  )
+
   const numPips = activeProduction?.values?.num_pips !== undefined ? parseInt(String(activeProduction.values.num_pips), 10) : 0
+
+  // Clip-type sources assigned to this production, in mixerInput order. Drives
+  // the clip cueing/playback operator panel (epic open-live#206, studio#145).
+  const clipSources = sortedSources
+    .map((assignment) => {
+      const src = sources.find((s) => s.id === assignment.sourceId)
+      return { mixerInput: assignment.mixerInput, name: src?.name ?? assignment.mixerInput, streamType: src?.streamType }
+    })
+    .filter((s) => s.streamType === 'clip')
+    .map(({ mixerInput, name }) => ({ mixerInput, name }))
+  const hasClips = clipSources.length > 0
 
   const PANEL_ICONS = [
     { key: 'multiviewer', Icon: MultiviewerIcon },
     { key: 'pgm',         Icon: MonitorIcon     },
     { key: 'controller',  Icon: ControllerIcon  },
     ...(numPips > 0 ? [{ key: 'pip', Icon: PipIcon } as const] : []),
+    ...(hasClips ? [{ key: 'clip', Icon: ClipIcon } as const] : []),
     { key: 'audio',       Icon: AudioIcon        },
     { key: 'fx',          Icon: LooksIcon        },
   ] as const
 
-  const showBottomRow = panels.controller || panels.audio || (panels.pip && numPips > 0) || panels.fx
+  const showBottomRow = panels.controller || panels.audio || (panels.pip && numPips > 0) || panels.fx || (panels.clip && hasClips)
 
   return (
     <>
@@ -989,6 +1013,14 @@ export function ControllerPage() {
                     })}
                     send={send}
                   />
+                </div>
+              </div>
+            )}
+            {panels.clip && hasClips && (
+              <div className={`flex flex-col gap-2 panel-col-fixed h-full ${panels.controller || panels.fx ? 'pr-3' : 'px-3'}`} style={{ width: 320 }}>
+                <SectionLabel icon={<ClipIcon />} tooltip="Clip bin. Cue a clip to preload it (preview-ready, does not go to air), then Play, Pause, Stop, or scrub. Live state and playhead come from the server. Take a cued clip to programme with the vision-mixer controls." onHide={() => togglePanel('clip')}>Clips</SectionLabel>
+                <div className="border border-zinc-800 overflow-y-auto flex-1 min-h-0 p-1.5" style={{ background: '#0d0d0d' }}>
+                  <ClipPanel clips={clipSources} send={send} />
                 </div>
               </div>
             )}
