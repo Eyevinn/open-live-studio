@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { useProductionStore } from '@/store/production.store'
-import { getApiToken } from '@/lib/sat'
+import { getApiToken, wsAuthProtocols } from '@/lib/sat'
 import { BASE } from '@/lib/base'
 import { hasControllerConnection, subscribeControllerRegistry } from '@/hooks/useControllerWs'
 
@@ -103,9 +103,11 @@ export function useSessionKeepAlive(): void {
       if (cancelled || hasControllerConnection(productionId)) return
 
       const wsUrl = new URL(`${WS_BASE}/ws/productions/${productionId}/controller`)
-      if (token) wsUrl.searchParams.set('token', token)
 
-      const socket = new WebSocket(wsUrl.toString())
+      // The SAT travels as a WS subprotocol (osc.bearer.<token>), not a
+      // ?token= query param — the OSC ingress gate has never accepted the
+      // latter on a WS upgrade (issue #144). See lib/sat.ts.
+      const socket = new WebSocket(wsUrl.toString(), wsAuthProtocols(token))
       ws = socket
 
       socket.onopen = () => {

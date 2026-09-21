@@ -29,6 +29,32 @@ const OSC_COOKIE_DOMAIN = '.osaas.io'
 // Cookie name the OSC reverse proxy expects for open-live REST/WS auth.
 const OPEN_LIVE_SERVICE_ID = 'eyevinn-open-live'
 
+// osc.bearer / osc.bearer.<token> — WS subprotocol convention (issue #144,
+// osaas-lib-orchestrator#263, @osaas/orchestrator@4.11.0) that lets the OSC
+// ingress gate's /authenticate auth_request accept a WS upgrade the same way
+// it accepts REST: previously only the eyevinn-open-live.sat cookie,
+// Authorization header, or x-jwt header. That cookie is scoped to the
+// document host (#33's domain= removal) so it never reaches the backend
+// subdomain on a cross-origin WS upgrade, and the `?token=` query param the
+// gate has never supported is rejected before the request reaches open-live.
+// Browsers cannot set arbitrary headers on a WS handshake, but can offer
+// subprotocols via `new WebSocket(url, protocols)` — mirrors open-live's own
+// self-hosted `openlive.bearer.<API_KEY>` scheme (open-live#49), generalized
+// by the platform so any OSC service can use it.
+const WS_SUBPROTOCOL_MARKER = 'osc.bearer'
+const WS_SUBPROTOCOL_KEY_PREFIX = 'osc.bearer.'
+
+/**
+ * WS subprotocols to pass as the second argument to `new WebSocket(url, protocols)`
+ * for the given SAT, or undefined when there is no token (self-hosted / not
+ * authorised) — in which case the socket connects without offering any
+ * subprotocol, same as before this scheme existed.
+ */
+export function wsAuthProtocols(token: string | undefined): string[] | undefined {
+  if (!token) return undefined
+  return [WS_SUBPROTOCOL_MARKER, `${WS_SUBPROTOCOL_KEY_PREFIX}${token}`]
+}
+
 interface SatCache {
   token: string
   expiresAt: number
