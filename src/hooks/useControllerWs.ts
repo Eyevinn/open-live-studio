@@ -3,7 +3,7 @@ import { useProductionStore, type PipZone, type PipConfig, type PipTransforms, t
 import { useProductionsStore } from '@/store/productions.store'
 import { useAudioStore } from '@/store/audio.store'
 import { useToastStore } from '@/store/toast.store'
-import { getApiToken } from '@/lib/sat'
+import { getApiToken, wsAuthProtocols } from '@/lib/sat'
 
 import { BASE } from '@/lib/base'
 const WS_BASE = BASE.replace(/^http/, 'ws')
@@ -187,10 +187,12 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
 
       const token = await getApiToken().catch(() => undefined)
       const wsUrl = new URL(`${WS_BASE}/ws/productions/${productionId}/controller`)
-      if (token) wsUrl.searchParams.set('token', token)
 
       everOpened = false
-      const ws = new WebSocket(wsUrl.toString())
+      // The SAT travels as a WS subprotocol (osc.bearer.<token>), not a
+      // ?token= query param — the OSC ingress gate has never accepted the
+      // latter on a WS upgrade (issue #144). See lib/sat.ts.
+      const ws = new WebSocket(wsUrl.toString(), wsAuthProtocols(token))
       wsRef.current = ws
 
       ws.onopen = () => {
