@@ -27,6 +27,7 @@ const STREAM_TYPE_LABELS: Record<StreamType, string> = {
   test1: 'Pinwheel',
   test2: 'Colors',
   html: 'HTML',
+  clip: 'Clip',
 }
 
 const STREAM_TYPE_HAS_ADDRESS: Record<StreamType, boolean> = {
@@ -36,6 +37,7 @@ const STREAM_TYPE_HAS_ADDRESS: Record<StreamType, boolean> = {
   test1: false,
   test2: false,
   html: true,
+  clip: false,
 }
 
 const STREAM_TYPE_HAS_LATENCY: Record<StreamType, boolean> = {
@@ -45,6 +47,7 @@ const STREAM_TYPE_HAS_LATENCY: Record<StreamType, boolean> = {
   test1: false,
   test2: false,
   html: false,
+  clip: false,
 }
 
 const CREATABLE_STREAM_TYPES: StreamType[] = ['srt', 'efp', 'html']

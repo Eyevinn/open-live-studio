@@ -71,6 +71,25 @@ export type VideoEffect =
 /** Target for a video effect: an input index or the master output. */
 export type EffectTarget = { input: number } | 'master'
 
+// ─── Clip playback (epic open-live#206, studio#145) ──────────────────────────────
+
+/** Clip playback state machine, mirroring the backend `ClipState.state`. */
+export type ClipPlaybackState =
+  | 'idle' | 'cued' | 'playing' | 'paused' | 'stopped' | 'completed' | 'error'
+
+/**
+ * Live playback state for a single clip-type source, keyed by its mixerInput.
+ * Fed by the controller WS `CLIP_STATE` broadcast (and its connect-time sync);
+ * the shape matches the backend `ClipState` contract exactly.
+ */
+export interface ClipState {
+  mixerInput: string
+  state: ClipPlaybackState
+  clipId?: string
+  positionMs?: number
+  durationMs?: number
+  error?: string
+}
 
 interface ProductionState {
   /** Active mixer input on program, e.g. "video_in_0" */
@@ -100,6 +119,12 @@ interface ProductionState {
   inputEffects: Record<number, VideoEffect>
   /** Master output video effect. */
   masterEffect: VideoEffect
+  /**
+   * Live clip playback state per clip-type source, keyed by mixerInput. Synced
+   * from the controller WS `CLIP_STATE` broadcast (epic open-live#206, studio#145).
+   * Reset on production change; the connect-time sync repopulates it.
+   */
+  clipStates: Record<string, ClipState>
   /** Set when a PRODUCTION_DEACTIVATED message is received while this client is in the studio. */
   deactivatedExternally: boolean
   /**
@@ -142,6 +167,8 @@ interface ProductionActions {
   setPvwPip: (pip: number | null) => void
   /** Server-authoritative FX state setter — called by WS handler on FX_STATE */
   applyFxState: (fxAvailable: boolean, inputEffects: VideoEffect[], masterEffect: VideoEffect) => void
+  /** Server-authoritative clip state setter — called by WS handler on CLIP_STATE */
+  applyClipState: (clip: ClipState) => void
   setDeactivatedExternally: (value: boolean) => void
   /** Record why the production was deactivated; also flips deactivatedExternally on. */
   setDeactivated: (reason: 'idle' | 'external') => void
@@ -171,6 +198,7 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
       fxAvailable: false,
       inputEffects: {},
       masterEffect: { type: 'none' as const },
+      clipStates: {},
       deactivatedExternally: false,
       deactivationReason: null,
       idleWarning: null,
@@ -237,6 +265,7 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
           state.pgmPip = null
           state.pvwPip = null
           state.pips = []
+          state.clipStates = {}
           state.idleWarning = null
           state.deactivationReason = null
         })
@@ -298,6 +327,11 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
           state.fxAvailable = fxAvailable
           state.inputEffects = Object.fromEntries(inputEffects.map((e, i) => [i, e]))
           state.masterEffect = masterEffect
+        }),
+
+      applyClipState: (clip) =>
+        set((state) => {
+          state.clipStates[clip.mixerInput] = clip
         }),
 
       setDeactivatedExternally: (value) =>
