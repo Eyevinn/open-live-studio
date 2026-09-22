@@ -3,7 +3,8 @@ import { useSourcesStore } from '@/store/sources.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useGatewaysStore } from '@/store/gateways.store'
 import { useServerInfo } from '@/hooks/useServerInfo'
-import type { StreamType } from '@/lib/api'
+import type { HtmlSourceAuth, StreamType } from '@/lib/api'
+import { openHtmlAuthPopup, originOf, maskCredential } from '@/lib/htmlSourceAuthPopup'
 import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
 import { buildListenerAddress, isCallerAddress, listenerPort, passphraseOf, srtDirection, toCallerUrl, type SrtDirection } from '@/lib/srt'
 import { Button } from '@/components/ui/Button'
@@ -209,6 +210,27 @@ function ClipReferenceFields({
   )
 }
 
+// ─── Authenticated HTML sources (studio#129, backing open-live #332 spec) ─────
+// The accepted spec (`open-live` docs/specs/authenticated-html-sources.md) makes
+// v1's authentication a scoped, rotatable **header credential** (Design B) —
+// stored encrypted at rest, write-only over the API, masked on read. The issue's
+// original "forward live session cookies" sketch (Design A) was rejected outright
+// and has NO backend endpoint, so it is deliberately not built here.
+//
+// The "Interactive (Popup)" affordance opens the provider's login page in a
+// popup and captures a token the page voluntarily posts back (origin-validated),
+// which the operator applies as the header credential. HttpOnly cookies are, by
+// design, unreadable from the popup — no cookie is ever harvested or forwarded.
+const DEFAULT_HEADER_NAME = 'Authorization'
+// Header-name allowlist mirrors the backend's token-header rule (RFC 7230 tchar,
+// max 64), so the operator gets inline feedback before the PATCH round-trips.
+const HEADER_NAME_RE = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}$/
+
+/** Whether a source already has a stored header credential (masked echo from the API). */
+function hasStoredHeaderValue(auth: HtmlSourceAuth | undefined): boolean {
+  return auth?.mode === 'header' && auth.header?.valueSet === true
+}
+
 interface EditState {
   id: string
   name: string
@@ -225,12 +247,24 @@ interface EditState {
   passphrase: string
   /** Clip type: the reference parsed from the stored `address` JSON. */
   clipRef: ClipRefState
+  /** HTML auth (studio#129): whether the interactive-popup credential flow is enabled. */
+  authEnabled: boolean
+  /** HTML auth: the header name to send the credential under (e.g. Authorization). */
+  authHeaderName: string
+  /**
+   * HTML auth: the freshly-entered or popup-captured credential value, WRITE-ONLY.
+   * Never populated from the API (the backend masks it) and never rendered raw —
+   * only `maskCredential()` is shown. Cleared on save.
+   */
+  authHeaderValue: string
+  /** HTML auth: whether a credential is already stored server-side (masked echo). */
+  authHasStoredValue: boolean
 }
 
 export function SourcesPanel() {
   // Phone tier (<768px): read-only. Hide every state-mutating control (#105).
   const isPhone = useIsPhone()
-  const { sources, isLoading, lastFetchedAt, removeSource, addSource, updateSource, fetchAll } = useSourcesStore()
+  const { sources, isLoading, lastFetchedAt, removeSource, addSource, updateSource, updateSourceAuth, rotateSourceAuth, fetchAll } = useSourcesStore()
   const productions = useProductionsStore((s) => s.productions)
   const gateways = useGatewaysStore((s) => s.gateways)
   const fetchGateways = useGatewaysStore((s) => s.fetchAll)
@@ -266,6 +300,9 @@ export function SourcesPanel() {
   const [newClipRef, setNewClipRef] = useState<ClipRefState>({ ...emptyClipRef })
   const [addAddressError, setAddAddressError] = useState<string | null>(null)
   const [editAddressError, setEditAddressError] = useState<string | null>(null)
+  // HTML-auth (studio#129) inline error + in-flight guard for the popup/save flow.
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [authBusy, setAuthBusy] = useState(false)
 
   // Source IDs currently assigned to an active or activating production
   const activeSourceIds = new Set(
@@ -340,9 +377,10 @@ export function SourcesPanel() {
     setAddOpen(false)
   }
 
-  function openEdit(src: { id: string; name: string; address?: string; latency?: number; streamType: StreamType }) {
+  function openEdit(src: { id: string; name: string; address?: string; latency?: number; streamType: StreamType; auth?: HtmlSourceAuth }) {
     const stored = src.address ?? ''
     const direction: SrtDirection = isSrt(src.streamType) ? srtDirection(stored) : 'caller'
+    const storedValueSet = hasStoredHeaderValue(src.auth)
     setEditTarget({
       id: src.id,
       name: src.name,
@@ -355,8 +393,15 @@ export function SourcesPanel() {
       manualPort: '',
       passphrase: '',
       clipRef: src.streamType === 'clip' ? parseClipRef(stored) : { ...emptyClipRef },
+      // Enable the auth section if a header credential is already configured.
+      authEnabled: src.auth?.mode === 'header' || storedValueSet,
+      authHeaderName: src.auth?.header?.name ?? DEFAULT_HEADER_NAME,
+      authHeaderValue: '',
+      authHasStoredValue: storedValueSet,
     })
     setEditAddressError(null)
+    setAuthError(null)
+    setAuthBusy(false)
   }
 
   const editIsListener = !!editTarget && isSrt(editTarget.streamType) && editTarget.direction === 'listener'
@@ -402,6 +447,90 @@ export function SourcesPanel() {
     })
     setEditAddressError(null)
     setEditTarget(null)
+  }
+
+  /**
+   * Opens the interactive login popup for the source being edited and, on a
+   * successful origin-validated token capture, drops the token into the
+   * write-only credential field. The token is never logged or rendered raw —
+   * only its masked form is shown once it lands in `authHeaderValue`.
+   */
+  async function handleOpenInteractiveWindow() {
+    if (!editTarget) return
+    setAuthError(null)
+    const expected = originOf(editTarget.stored || editTarget.address)
+    if (expected === null) {
+      setAuthError('Set a valid https:// address first — the popup must know which origin to trust.')
+      return
+    }
+    setAuthBusy(true)
+    try {
+      const result = await openHtmlAuthPopup({
+        loginUrl: editTarget.stored || editTarget.address,
+        // Never a wildcard: the popup only trusts the source's own origin.
+        allowedOrigins: [expected],
+      })
+      if (result.ok) {
+        // Capture into the write-only field; do NOT log the token.
+        setEditTarget((prev) => (prev ? { ...prev, authHeaderValue: result.token } : prev))
+      } else if (result.reason === 'blocked') {
+        setAuthError('Popup was blocked by the browser — allow popups for Studio and retry.')
+      } else if (result.reason === 'timeout') {
+        setAuthError('Timed out waiting for the login to complete.')
+      } else if (result.reason === 'no-allowed-origins') {
+        setAuthError('No trusted origin could be derived from the address.')
+      }
+      // `closed` (operator dismissed the popup) is silent — just re-enable.
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  /** Persists the header credential via the real PATCH auth endpoint (Design B). */
+  async function handleSaveAuth() {
+    if (!editTarget) return
+    setAuthError(null)
+    const name = editTarget.authHeaderName.trim()
+    if (!HEADER_NAME_RE.test(name)) {
+      setAuthError('Invalid header name (letters, digits and RFC token symbols, max 64).')
+      return
+    }
+    const value = editTarget.authHeaderValue
+    if (!value && !editTarget.authHasStoredValue) {
+      setAuthError('Enter or capture a credential value first.')
+      return
+    }
+    setAuthBusy(true)
+    try {
+      await updateSourceAuth(editTarget.id, {
+        mode: 'header',
+        header: { name, ...(value ? { value } : {}) },
+      })
+      // Wipe the write-only value from component state once persisted.
+      setEditTarget((prev) => (prev ? { ...prev, authHeaderValue: '', authHasStoredValue: true } : prev))
+    } catch {
+      // The api layer already surfaces a toast; keep an inline hint too.
+      setAuthError('Could not save the credential. It may be blocked while the source is on air.')
+    } finally {
+      setAuthBusy(false)
+    }
+  }
+
+  /** Clears the stored header credential via the rotate endpoint (empty value). */
+  async function handleClearAuth() {
+    if (!editTarget) return
+    setAuthError(null)
+    setAuthBusy(true)
+    try {
+      await rotateSourceAuth(editTarget.id, '')
+      setEditTarget((prev) =>
+        prev ? { ...prev, authHeaderValue: '', authHasStoredValue: false, authEnabled: false } : prev,
+      )
+    } catch {
+      setAuthError('Could not clear the credential. It may be blocked while the source is on air.')
+    } finally {
+      setAuthBusy(false)
+    }
   }
 
   const deleteTarget = deleteTargetId ? sources.find((s) => s.id === deleteTargetId) : null
@@ -597,6 +726,93 @@ export function SourcesPanel() {
                   className={inputCls}
                 />
                 {editAddressError && <p className="text-xs text-red-400 mt-1">{editAddressError}</p>}
+              </div>
+            )}
+            {editTarget.streamType === 'html' && (
+              <div className="flex flex-col gap-2 rounded border border-[--color-border] bg-[--color-surface-2] p-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={editTarget.authEnabled}
+                    onChange={(e) => { setEditTarget({ ...editTarget, authEnabled: e.target.checked }); setAuthError(null) }}
+                    className="accent-[var(--color-accent)]"
+                  />
+                  <span className="text-sm text-[--color-text-primary]">Interactive (Popup)</span>
+                </label>
+                <p className="text-xs text-[--color-text-muted]">
+                  Log in through a popup, then store a scoped header credential (e.g. a bearer
+                  token) the server-side renderer sends with the page request. The credential is
+                  encrypted at rest and never shown again. Live session cookies are never captured
+                  or forwarded.
+                </p>
+                {editTarget.authEnabled && (
+                  <>
+                    <div>
+                      <label className={labelCls}>Header name</label>
+                      <input
+                        type="text"
+                        value={editTarget.authHeaderName}
+                        placeholder={DEFAULT_HEADER_NAME}
+                        onChange={(e) => { setEditTarget({ ...editTarget, authHeaderName: e.target.value }); setAuthError(null) }}
+                        className={inputCls}
+                      />
+                    </div>
+                    <div>
+                      <label className={labelCls}>Credential value</label>
+                      {/* Write-only: never re-populated from the API, only the masked
+                          form of a freshly-entered/captured value is echoed. */}
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        value={editTarget.authHeaderValue}
+                        placeholder={editTarget.authHasStoredValue ? '•••••••• (stored — leave blank to keep)' : 'Bearer …'}
+                        onChange={(e) => { setEditTarget({ ...editTarget, authHeaderValue: e.target.value }); setAuthError(null) }}
+                        className={inputCls}
+                      />
+                      {editTarget.authHeaderValue && (
+                        <p className="text-xs text-[--color-text-muted] mt-1 font-mono">
+                          captured: {maskCredential(editTarget.authHeaderValue)}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => { void handleOpenInteractiveWindow() }}
+                        disabled={authBusy}
+                        className="text-white hover:text-orange-500 disabled:opacity-30"
+                      >
+                        Open Interactive Window
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="active"
+                        onClick={() => { void handleSaveAuth() }}
+                        disabled={authBusy}
+                      >
+                        Save Credential
+                      </Button>
+                      {editTarget.authHasStoredValue && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => { void handleClearAuth() }}
+                          disabled={authBusy}
+                          className="text-white hover:text-red-400 disabled:opacity-30"
+                        >
+                          Clear
+                        </Button>
+                      )}
+                    </div>
+                    {authError && <p className="text-xs text-red-400">{authError}</p>}
+                    <p className="text-xs text-[--color-text-muted] opacity-70">
+                      Note: server-side rendering of the credential is gated on an upstream renderer
+                      capability (spec ADR-003, OQ2). Until then the credential is stored but not yet
+                      applied at render time.
+                    </p>
+                  </>
+                )}
               </div>
             )}
             {STREAM_TYPE_HAS_LATENCY[editTarget.streamType] && (

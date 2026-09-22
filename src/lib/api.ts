@@ -51,6 +51,45 @@ async function request<T>(path: string, init?: RequestOptions): Promise<T> {
 
 export type StreamType = 'srt' | 'efp' | 'whip' | 'test1' | 'test2' | 'html' | 'clip'
 
+/**
+ * Authenticated-HTML-source material, mirroring the accepted spec
+ * (`open-live` `docs/specs/authenticated-html-sources.md`, backend PR #332).
+ *
+ * IMPORTANT contract notes — do not invent fields:
+ *  - `header.value` is **write-only**: it is accepted on PATCH, encrypted at
+ *    rest, and NEVER returned by the API. On read the backend echoes only
+ *    `header.valueSet` (whether a value is stored).
+ *  - `profile` material is server-issued and gated (Design C); its provisioning
+ *    endpoint returns `501` in v1, so Studio does not drive it here.
+ *
+ * The live-cookie-forwarding design (issue #129's original sketch, "Design A")
+ * was **rejected outright** by the spec — there is no `/session` endpoint and no
+ * cookie is ever forwarded. See the header-credential (Design B) flow instead.
+ */
+export interface HtmlSourceAuth {
+  mode: 'header' | 'profile'
+  header?: {
+    name: string
+    /** Read-only echo: whether a credential value is stored. Value never returned. */
+    valueSet?: boolean
+  }
+  profile?: {
+    profileId: string
+    status: 'unprovisioned' | 'provisioned' | 'expired'
+    lastProvisionedAt?: string
+  }
+}
+
+/** Write-only `auth` payload for PATCH — `header.value` accepted, never echoed back. */
+export interface HtmlSourceAuthInput {
+  mode: 'header' | 'profile'
+  header?: {
+    name: string
+    /** Write-only: sent once, encrypted at rest server-side. Empty string clears it. */
+    value?: string
+  }
+}
+
 export interface ApiSource {
   id: string
   name: string
@@ -65,6 +104,12 @@ export interface ApiSource {
    * each heartbeat, so Studio locks Edit/Delete for them (open-live #263).
    */
   gatewayId?: string
+  /**
+   * Authenticated-HTML-source material (open-live #332). Present only on
+   * `streamType: 'html'` sources that have been configured. `header.value` is
+   * never present here — the API masks it to `header.valueSet`.
+   */
+  auth?: HtmlSourceAuth
 }
 
 export interface ProductionSourceAssignment {
@@ -244,6 +289,29 @@ export const sourcesApi = {
     request<ApiSource>(`/api/v1/sources/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
+    }),
+
+  /**
+   * Set/replace the authenticated-HTML-source `auth` object (Design B — header
+   * credential). Hits the real `PATCH /api/v1/sources/:id` surface that backend
+   * PR #332 extended. `header.value` is write-only; the response masks it to
+   * `header.valueSet`. `409` if the source is in an active production.
+   */
+  updateAuth: (id: string, auth: HtmlSourceAuthInput) =>
+    request<ApiSource>(`/api/v1/sources/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ auth }),
+    }),
+
+  /**
+   * Rotate or clear the stored header credential (open-live #332,
+   * `POST /api/v1/sources/:id/auth/rotate`). Send a new value, or an empty
+   * string / no value to clear it. Mirrors the gateway-token rotate (ADR-001).
+   */
+  rotateAuth: (id: string, value?: string) =>
+    request<ApiSource>(`/api/v1/sources/${encodeURIComponent(id)}/auth/rotate`, {
+      method: 'POST',
+      body: JSON.stringify(value !== undefined ? { value } : {}),
     }),
 
   remove: (id: string) =>
