@@ -50,14 +50,164 @@ const STREAM_TYPE_HAS_LATENCY: Record<StreamType, boolean> = {
   clip: false,
 }
 
-const CREATABLE_STREAM_TYPES: StreamType[] = ['srt', 'efp', 'html']
+const CREATABLE_STREAM_TYPES: StreamType[] = ['srt', 'efp', 'html', 'clip']
 
 function isSrt(t: StreamType): boolean {
   return t === 'srt' || t === 'efp'
 }
 
+// ─── Clip source reference (studio#148, backing open-live clip-reference.ts) ──
+// A `clip` source has no SRT/EFP/HTML address; instead the operator picks a
+// reference the backend can resolve, serialized as JSON into the same
+// `SourceDoc.address` field. Mirrors the `open-live` `ClipReference` union
+// (issue open-live#275, epic #206): `url` and `s3` are implemented and
+// validated; `tams` returns 501 in v1, so it is intentionally not offered here.
+type ClipRefType = 'url' | 's3'
+
+const CLIP_REF_LABELS: Record<ClipRefType, string> = {
+  url: 'URL',
+  s3: 'S3',
+}
+
+// Bucket names follow the DNS-compatible S3/MinIO rule set the backend enforces
+// (3–63 chars, lowercase alnum plus dots/hyphens, alphanumeric at both ends).
+const S3_BUCKET_RE = /^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/
+
+interface ClipRefState {
+  type: ClipRefType
+  url: string
+  bucket: string
+  key: string
+}
+
+const emptyClipRef: ClipRefState = { type: 'url', url: '', bucket: '', key: '' }
+
+/**
+ * Validates a clip reference against the same rules the backend applies, so the
+ * operator gets inline feedback before the create/update round-trips. Returns an
+ * error string, or null when valid.
+ */
+function validateClipRef(ref: ClipRefState): string | null {
+  if (ref.type === 'url') {
+    if (!ref.url.trim()) return 'Clip URL is required'
+    try {
+      const u = new URL(ref.url.trim())
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error()
+    } catch {
+      return 'Must be a valid http:// or https:// URL'
+    }
+    return null
+  }
+  if (!ref.bucket.trim()) return 'Bucket is required'
+  if (!S3_BUCKET_RE.test(ref.bucket.trim()) || /^\d{1,3}(\.\d{1,3}){3}$/.test(ref.bucket.trim())) {
+    return 'Invalid bucket — 3–63 lowercase chars (a–z, 0–9, dot, hyphen), alphanumeric at both ends'
+  }
+  if (!ref.key.trim()) return 'Object key is required'
+  if (ref.key.startsWith('/')) return 'Object key must not start with "/"'
+  return null
+}
+
+/** Serializes a validated clip reference to the JSON string stored in `address`. */
+function serializeClipRef(ref: ClipRefState): string {
+  return ref.type === 'url'
+    ? JSON.stringify({ type: 'url', url: ref.url.trim() })
+    : JSON.stringify({ type: 's3', bucket: ref.bucket.trim(), key: ref.key.trim() })
+}
+
+/** Best-effort parse of a stored clip-reference JSON string back into form state. */
+function parseClipRef(stored: string): ClipRefState {
+  try {
+    const parsed = JSON.parse(stored) as Partial<ClipRefState & { url: string; bucket: string; key: string }>
+    if (parsed.type === 's3') {
+      return { type: 's3', url: '', bucket: parsed.bucket ?? '', key: parsed.key ?? '' }
+    }
+    if (parsed.type === 'url') {
+      return { type: 'url', url: parsed.url ?? '', bucket: '', key: '' }
+    }
+  } catch {
+    // Unparseable / legacy address: fall through to an empty URL reference.
+  }
+  return { ...emptyClipRef }
+}
+
 const LISTENER_LABEL = 'Listener'
 const CALLER_LABEL = 'Caller'
+
+/**
+ * Clip-reference form fields: a `url` / `s3` type selector plus the variant's
+ * inputs. Shared by the New Source and Edit dialogs so both build the same
+ * `ClipReference` the backend resolves (studio#148). `error` is the inline
+ * validation message surfaced under the fields.
+ */
+function ClipReferenceFields({
+  value,
+  onChange,
+  error,
+}: {
+  value: ClipRefState
+  onChange: (next: ClipRefState) => void
+  error: string | null
+}) {
+  return (
+    <>
+      <div>
+        <label className={labelCls}>Reference Type</label>
+        <div className="grid grid-cols-2 gap-2">
+          {(Object.keys(CLIP_REF_LABELS) as ClipRefType[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => onChange({ ...value, type: t })}
+              className={`py-2 rounded text-sm border transition-colors ${
+                value.type === t
+                  ? 'bg-[var(--color-accent)] border-[var(--color-accent)] text-white'
+                  : 'bg-[var(--color-surface-2)] border-[var(--color-border-strong)] text-[var(--color-text-muted)] hover:text-orange-500'
+              }`}
+            >
+              {CLIP_REF_LABELS[t]}
+            </button>
+          ))}
+        </div>
+      </div>
+      {value.type === 'url' ? (
+        <div>
+          <label className={labelCls}>Clip URL</label>
+          <input
+            type="text"
+            value={value.url}
+            placeholder="https://example.com/clip.mp4"
+            onChange={(e) => onChange({ ...value, url: e.target.value })}
+            className={inputCls}
+          />
+        </div>
+      ) : (
+        <>
+          <div>
+            <label className={labelCls}>Bucket</label>
+            <input
+              type="text"
+              value={value.bucket}
+              placeholder="my-clips"
+              onChange={(e) => onChange({ ...value, bucket: e.target.value })}
+              className={inputCls}
+            />
+          </div>
+          <div>
+            <label className={labelCls}>Object Key</label>
+            <input
+              type="text"
+              value={value.key}
+              placeholder="highlights/clip.mp4"
+              onChange={(e) => onChange({ ...value, key: e.target.value })}
+              className={inputCls}
+            />
+          </div>
+        </>
+      )}
+      {error && <p className="text-xs text-red-400 mt-1">{error}</p>}
+    </>
+  )
+}
 
 interface EditState {
   id: string
@@ -73,6 +223,8 @@ interface EditState {
   port: number | null
   manualPort: string
   passphrase: string
+  /** Clip type: the reference parsed from the stored `address` JSON. */
+  clipRef: ClipRefState
 }
 
 export function SourcesPanel() {
@@ -111,6 +263,7 @@ export function SourcesPanel() {
   const [newManualPort, setNewManualPort] = useState('')
   const [newPassphrase, setNewPassphrase] = useState('')
   const [newLatency, setNewLatency] = useState('')
+  const [newClipRef, setNewClipRef] = useState<ClipRefState>({ ...emptyClipRef })
   const [addAddressError, setAddAddressError] = useState<string | null>(null)
   const [editAddressError, setEditAddressError] = useState<string | null>(null)
 
@@ -142,6 +295,7 @@ export function SourcesPanel() {
     setNewManualPort('')
     setNewPassphrase('')
     setNewLatency('')
+    setNewClipRef({ ...emptyClipRef })
     setAddAddressError(null)
   }
 
@@ -150,6 +304,20 @@ export function SourcesPanel() {
 
   function handleAdd() {
     if (!addReady) return
+    if (newStreamType === 'clip') {
+      const refErr = validateClipRef(newClipRef)
+      if (refErr) { setAddAddressError(refErr); return }
+      addSource({
+        name: newName.trim(),
+        address: serializeClipRef(newClipRef),
+        streamType: 'clip',
+        status: 'inactive',
+        color: '#27272a',
+      })
+      resetAdd()
+      setAddOpen(false)
+      return
+    }
     const addrErr = validateAddress(newAddress, newStreamType, newDirection)
     if (addrErr) { setAddAddressError(addrErr); return }
     let address = newAddress.trim()
@@ -186,6 +354,7 @@ export function SourcesPanel() {
       port: direction === 'listener' ? listenerPort(stored) : null,
       manualPort: '',
       passphrase: '',
+      clipRef: src.streamType === 'clip' ? parseClipRef(stored) : { ...emptyClipRef },
     })
     setEditAddressError(null)
   }
@@ -195,6 +364,18 @@ export function SourcesPanel() {
 
   function handleEdit() {
     if (!editTarget || !editReady) return
+    if (editTarget.streamType === 'clip') {
+      const refErr = validateClipRef(editTarget.clipRef)
+      if (refErr) { setEditAddressError(refErr); return }
+      const serialized = serializeClipRef(editTarget.clipRef)
+      void updateSource(editTarget.id, {
+        name: editTarget.name.trim(),
+        ...(serialized !== editTarget.stored ? { address: serialized } : {}),
+      })
+      setEditAddressError(null)
+      setEditTarget(null)
+      return
+    }
     const addrErr = validateAddress(editTarget.address, editTarget.streamType, editTarget.direction)
     if (addrErr) { setEditAddressError(addrErr); return }
     let address: string | undefined
@@ -382,7 +563,13 @@ export function SourcesPanel() {
                 callerLabel={CALLER_LABEL}
               />
             )}
-            {editIsListener ? (
+            {editTarget.streamType === 'clip' ? (
+              <ClipReferenceFields
+                value={editTarget.clipRef}
+                onChange={(clipRef) => { setEditTarget({ ...editTarget, clipRef }); setEditAddressError(null) }}
+                error={editAddressError}
+              />
+            ) : editIsListener ? (
               <>
                 <ListenerFields
                   mode={portMode}
@@ -452,7 +639,7 @@ export function SourcesPanel() {
                 <button
                   key={t}
                   type="button"
-                  onClick={() => { setNewStreamType(t); setNewAddress(''); setAddAddressError(null) }}
+                  onClick={() => { setNewStreamType(t); setNewAddress(''); setNewClipRef({ ...emptyClipRef }); setAddAddressError(null) }}
                   className={`py-2 rounded text-sm border transition-colors ${
                     newStreamType === t
                       ? 'bg-[var(--color-accent)] border-[var(--color-accent)] text-white'
@@ -472,7 +659,13 @@ export function SourcesPanel() {
               callerLabel={CALLER_LABEL}
             />
           )}
-          {newIsListener ? (
+          {newStreamType === 'clip' ? (
+            <ClipReferenceFields
+              value={newClipRef}
+              onChange={(ref) => { setNewClipRef(ref); setAddAddressError(null) }}
+              error={addAddressError}
+            />
+          ) : newIsListener ? (
             <ListenerFields
               mode={portMode}
               manualPort={newManualPort}
