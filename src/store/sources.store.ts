@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
-import { sourcesApi, type ApiSource, type StreamType } from '@/lib/api'
+import { sourcesApi, type ApiSource, type HtmlSourceAuth, type HtmlSourceAuthInput, type StreamType } from '@/lib/api'
 
 export type SourceStatus = 'active' | 'inactive'
 
@@ -16,6 +16,11 @@ export interface Source {
   latency?: number
   /** Id of the gateway that registered this source, if gateway-owned (open-live #263). */
   gatewayId?: string
+  /**
+   * Authenticated-HTML-source material (open-live #332). The credential value is
+   * never present — only `header.valueSet` echoes that one is stored.
+   */
+  auth?: HtmlSourceAuth
 }
 
 interface SourcesState {
@@ -31,6 +36,13 @@ interface SourcesActions {
   removeSource: (id: string) => Promise<void>
   updateSource: (id: string, fields: Partial<Pick<Source, 'name' | 'address' | 'latency'>>) => Promise<void>
   updateStatus: (id: string, status: SourceStatus) => Promise<void>
+  /**
+   * Set/replace the HTML-source header credential (Design B). The credential
+   * value is write-only; the returned/stored source carries only `valueSet`.
+   */
+  updateSourceAuth: (id: string, auth: HtmlSourceAuthInput) => Promise<void>
+  /** Rotate or (with no/empty value) clear the stored header credential. */
+  rotateSourceAuth: (id: string, value?: string) => Promise<void>
 }
 
 const SOURCE_COLOR = '#27272a'
@@ -46,6 +58,7 @@ function fromApi(s: ApiSource): Source {
     liveCamera: s.liveCamera,
     latency: s.latency,
     gatewayId: s.gatewayId,
+    auth: s.auth,
   }
 }
 
@@ -114,6 +127,24 @@ export const useSourcesStore = create<SourcesState & SourcesActions>()(
         set((state) => {
           const source = state.sources.find((s) => s.id === id)
           if (source) source.status = updated.status
+        })
+      },
+
+      updateSourceAuth: async (id, auth) => {
+        // The response masks the credential to `header.valueSet`; we store that
+        // masked `auth` object only — the raw value never re-enters the store.
+        const updated = await sourcesApi.updateAuth(id, auth)
+        set((state) => {
+          const source = state.sources.find((s) => s.id === id)
+          if (source) source.auth = updated.auth
+        })
+      },
+
+      rotateSourceAuth: async (id, value) => {
+        const updated = await sourcesApi.rotateAuth(id, value)
+        set((state) => {
+          const source = state.sources.find((s) => s.id === id)
+          if (source) source.auth = updated.auth
         })
       },
     })),
