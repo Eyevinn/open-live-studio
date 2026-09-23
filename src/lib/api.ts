@@ -530,10 +530,14 @@ export const statusApi = {
 /** What the backend says about its Strom. Older backends report only `stromHost`. */
 export interface ServerInfo {
   stromHost: string
-  /** SRT listener ports this instance may bind on the shared Strom; null unless `srtPortLease` is `leased`. */
-  srtPortRange?: { first: number; last: number } | null
-  /** `pending` means the range is not known yet; `unsupported`/`disabled` mean any port goes. */
-  srtPortLease?: 'leased' | 'pending' | 'unsupported' | 'disabled'
+  /**
+   * SRT listener ports this instance reserved on the shared Strom; null unless
+   * `srtPortState` is `reserved`. An explicit list, not a range: Strom's pool
+   * can have holes, so these are not necessarily contiguous.
+   */
+  srtPorts?: number[] | null
+  /** `pending` means no ports are held yet; `unsupported`/`disabled` mean any port goes. */
+  srtPortState?: 'reserved' | 'pending' | 'unsupported' | 'disabled'
 }
 
 export const serverInfoApi = {
