@@ -15,6 +15,7 @@ import { MacroBar } from './MacroBar'
 import { PipPanel } from './PipPanel'
 import { LooksPanel } from './LooksPanel'
 import { ClipPanel } from './ClipPanel'
+import { GuestPanel } from './GuestPanel'
 import { AudioPanel } from './AudioPanel'
 import { TimerBar } from './TimerBar'
 import { IdleWarningBanner } from './IdleWarningBanner'
@@ -36,7 +37,7 @@ import { ToastContainer } from '@/components/ui/ToastContainer'
 
 const PANELS_STORAGE_KEY = 'ol-studio-panels'
 
-type Panels = { multiviewer: boolean; controller: boolean; audio: boolean; pgm: boolean; pip: boolean; fx: boolean; clip: boolean }
+type Panels = { multiviewer: boolean; controller: boolean; audio: boolean; pgm: boolean; pip: boolean; fx: boolean; clip: boolean; guests: boolean }
 
 function loadPanels(): Panels {
   try {
@@ -53,13 +54,14 @@ function loadPanels(): Panels {
           pip:         p.pip         === true,
           fx:          p.fx          === true,
           clip:        p.clip        === true,
+          guests:      p.guests      === true,
         }
       }
     }
   } catch {
     // intentionally empty — malformed/inaccessible localStorage falls back to defaults
   }
-  return { multiviewer: true, controller: true, audio: true, pgm: true, pip: false, fx: false, clip: false }
+  return { multiviewer: true, controller: true, audio: true, pgm: true, pip: false, fx: false, clip: false, guests: false }
 }
 
 function savePanels(panels: Panels) {
@@ -740,6 +742,15 @@ export function ControllerPage() {
     </svg>
   )
 
+  // People / call glyph for the guest-calling panel (epic open-live#208, studio#138).
+  const GuestsIcon = () => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="20" height="20">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" />
+    </svg>
+  )
+
   const numPips = activeProduction?.values?.num_pips !== undefined ? parseInt(String(activeProduction.values.num_pips), 10) : 0
 
   // Clip-type sources assigned to this production, in mixerInput order. Drives
@@ -759,11 +770,12 @@ export function ControllerPage() {
     { key: 'controller',  Icon: ControllerIcon  },
     ...(numPips > 0 ? [{ key: 'pip', Icon: PipIcon } as const] : []),
     ...(hasClips ? [{ key: 'clip', Icon: ClipIcon } as const] : []),
+    { key: 'guests',      Icon: GuestsIcon       },
     { key: 'audio',       Icon: AudioIcon        },
     { key: 'fx',          Icon: LooksIcon        },
   ] as const
 
-  const showBottomRow = panels.controller || panels.audio || (panels.pip && numPips > 0) || panels.fx || (panels.clip && hasClips)
+  const showBottomRow = panels.controller || panels.audio || (panels.pip && numPips > 0) || panels.fx || (panels.clip && hasClips) || panels.guests
 
   return (
     <>
@@ -1021,6 +1033,14 @@ export function ControllerPage() {
                 <SectionLabel icon={<ClipIcon />} tooltip="Clip bin. Cue a clip to preload it (preview-ready, does not go to air), then Play, Pause, Stop, or scrub. Live state and playhead come from the server. Take a cued clip to programme with the vision-mixer controls." onHide={() => togglePanel('clip')}>Clips</SectionLabel>
                 <div className="border border-zinc-800 overflow-y-auto flex-1 min-h-0 p-1.5" style={{ background: '#0d0d0d' }}>
                   <ClipPanel clips={clipSources} send={send} />
+                </div>
+              </div>
+            )}
+            {panels.guests && activeProductionId && (
+              <div className={`flex flex-col gap-2 panel-col-fixed h-full ${panels.controller || panels.fx || (panels.clip && hasClips) ? 'pr-3' : 'px-3'}`} style={{ width: 320 }}>
+                <SectionLabel icon={<GuestsIcon />} tooltip="Guest calling. Create a production-scoped invite and share the join link. Joined guests appear here and in the multiviewer — take them to air with the vision-mixer controls. Switch a guest's return-feed mode between full program (PGM) and mix-minus (PGM-N1, program without the guest's own audio). Talkback is shown when an intercom line is present. Endpoints/WS events come from the guest-calling spec and must be verified against staging." onHide={() => togglePanel('guests')}>Guests</SectionLabel>
+                <div className="border border-zinc-800 overflow-y-auto flex-1 min-h-0 p-1.5" style={{ background: '#0d0d0d' }}>
+                  <GuestPanel productionId={activeProductionId} send={send} />
                 </div>
               </div>
             )}
