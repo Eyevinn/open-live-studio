@@ -3,6 +3,7 @@ import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
 import { useAudioStore } from './audio.store.js'
 import { usePipelineStore } from './pipeline.store.js'
+import { useGuestsStore } from './guests.store.js'
 
 export type TransitionType =
   | 'fade' | 'dip_to_black'
@@ -275,6 +276,9 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
         useAudioStore.setState({ elements: [], productionId: id ?? null, levels: {}, muted: {}, meters: {} })
         // Clear pipeline runtime state
         usePipelineStore.setState({ stromJson: '', executionState: 'idle', uptimeSeconds: 0, parseError: null })
+        // Clear guest-calling state (invites, live guest sessions, return modes) so
+        // the new production never renders a previous production's guests (#138).
+        useGuestsStore.getState().reset()
       },
 
       setDskState: (layer, visible) =>

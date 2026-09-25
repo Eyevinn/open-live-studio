@@ -441,6 +441,82 @@ export const iceServersApi = {
     request<{ iceServers: RTCIceServer[] }>('/api/v1/ice-servers'),
 }
 
+// --------------- Guest calling (epic open-live#208, studio#138) ---------------
+//
+// Operator-facing surface of the guest-calling feature. All shapes come from the
+// backend contract in `Eyevinn/open-live` `docs/specs/guest-calling-intercom.md`
+// (invites+join #299, return feed #300, GUEST_STATE/RETURN_STATE WS #301). Do NOT
+// invent fields — the endpoints/events here must be verified against staging
+// before merge (the frontend is built against the documented spec, no mocks).
+
+/**
+ * Lifecycle state of a guest. Superset of the persisted `GuestSessionDoc.state`
+ * (which omits `invited`) and the `GUEST_STATE` WS event's `state` (which adds
+ * it). `previewing`/`on-air` are derived server-side from the vision mixer's
+ * PVW/PGM contribution for the guest's mixer input.
+ */
+export type GuestState = 'invited' | 'joined' | 'previewing' | 'on-air' | 'left' | 'error'
+
+/** Synced return-feed modes a crew member can switch a guest between (v1). */
+export type ReturnMode = 'program' | 'program-minus'
+
+export interface GuestInvite {
+  id: string
+  productionId: string
+  label?: string
+  /** Mixer input the guest will occupy; allocated on join when absent. */
+  mixerInput?: string
+  expiresAt: string
+  createdAt?: string
+  updatedAt?: string
+  /**
+   * Shareable join link. Returned on the create (201) response. The backend
+   * stores only a token hash and cannot rebuild the link, so `GET` list
+   * responses may omit it — render a copy affordance only when present.
+   */
+  joinUrl?: string
+  /** Raw invite token — returned on create only, never echoed by `GET`. */
+  token?: string
+}
+
+export interface GuestSession {
+  id: string
+  productionId: string
+  inviteId: string
+  mixerInput: string
+  state: GuestState
+  intercomLineId?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+export const guestsApi = {
+  listInvites: (productionId: string) =>
+    request<GuestInvite[]>(`/api/v1/productions/${encodeURIComponent(productionId)}/guests/invites`),
+
+  createInvite: (productionId: string, body: { label?: string; expiresInS?: number }) =>
+    request<GuestInvite>(`/api/v1/productions/${encodeURIComponent(productionId)}/guests/invites`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  revokeInvite: (productionId: string, inviteId: string) =>
+    request<void>(
+      `/api/v1/productions/${encodeURIComponent(productionId)}/guests/invites/${encodeURIComponent(inviteId)}`,
+      { method: 'DELETE', silentStatuses: [404] },
+    ),
+
+  listGuests: (productionId: string) =>
+    request<GuestSession[]>(`/api/v1/productions/${encodeURIComponent(productionId)}/guests`),
+
+  /** Kick a joined guest (removes their session; the WHIP source is torn down). */
+  kickGuest: (productionId: string, guestId: string) =>
+    request<void>(
+      `/api/v1/productions/${encodeURIComponent(productionId)}/guests/${encodeURIComponent(guestId)}`,
+      { method: 'DELETE', silentStatuses: [404] },
+    ),
+}
+
 export interface ApiStatus {
   db: boolean
   strom: boolean

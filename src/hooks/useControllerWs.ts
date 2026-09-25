@@ -2,7 +2,9 @@ import { useEffect, useCallback, useRef } from 'react'
 import { useProductionStore, type PipZone, type PipConfig, type PipTransforms, type VideoEffect, type EffectTarget, type ClipState } from '@/store/production.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useAudioStore } from '@/store/audio.store'
+import { useGuestsStore } from '@/store/guests.store'
 import { useToastStore } from '@/store/toast.store'
+import type { GuestState, ReturnMode } from '@/lib/api'
 import { getApiToken, wsAuthProtocols } from '@/lib/sat'
 
 import { BASE } from '@/lib/base'
@@ -99,6 +101,11 @@ export type OutboundMessage =
   | { type: 'CLIP_PAUSE'; mixerInput: string }
   | { type: 'CLIP_STOP'; mixerInput: string }
   | { type: 'CLIP_SEEK'; mixerInput: string; positionMs: number }
+  // Guest return-feed mode switch (epic open-live#208, studio#138). Crew command;
+  // the backend persists, applies live if the guest is active, and broadcasts
+  // RETURN_STATE. Only 'program' / 'program-minus' are valid (low-latency-minus is
+  // a client-side feed choice, after v1). See docs/specs/guest-calling-intercom.md.
+  | { type: 'RETURN_SET'; mixerInput: string; mode: 'program' | 'program-minus' }
   // Explicit "keep this production alive" signal that resets the backend idle
   // timer and cancels a pending idle-timeout warning (#130). Paired backend work
   // (open-live#290) defines the exact handshake; KEEP_ALIVE follows the existing
@@ -147,6 +154,8 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   const upsertToastByTag          = useToastStore((s) => s.upsertToastByTag)
   const removeToastsByTag         = useToastStore((s) => s.removeToastsByTag)
   const markInactive              = useProductionsStore((s) => s.markInactive)
+  const applyGuestState           = useGuestsStore((s) => s.applyGuestState)
+  const applyReturnState          = useGuestsStore((s) => s.applyReturnState)
 
   const actionsRef = useRef({
     setPgm, setPvw, setTBarPosition, setDskState,
@@ -158,6 +167,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     applySourceOffset, applySourceAudioOffset, resetSourceOffsets, applyAfvRamp,
     applyPipState, applyFxState, applyClipState, setDeactivated, setIdleWarning, addToast,
     upsertToastByTag, removeToastsByTag, markInactive,
+    applyGuestState, applyReturnState,
   })
   actionsRef.current = {
     setPgm, setPvw, setTBarPosition, setDskState,
@@ -169,6 +179,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     applySourceOffset, applySourceAudioOffset, resetSourceOffsets, applyAfvRamp,
     applyPipState, applyFxState, applyClipState, setDeactivated, setIdleWarning, addToast,
     upsertToastByTag, removeToastsByTag, markInactive,
+    applyGuestState, applyReturnState,
   }
 
   useEffect(() => {
@@ -362,6 +373,44 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
                   ...(typeof msg['durationMs'] === 'number' ? { durationMs: msg['durationMs'] as number } : {}),
                   ...(typeof msg['error'] === 'string' ? { error: msg['error'] as string } : {}),
                 })
+              }
+              break
+            }
+            case 'GUEST_STATE': {
+              // Guest lifecycle broadcast (epic open-live#208, studio#138). Included
+              // in the connect-time sync and pushed on every state change.
+              // Shape: { guestId, mixerInput, state, label?, intercomLine? }.
+              const validStates: GuestState[] = ['invited', 'joined', 'previewing', 'on-air', 'left', 'error']
+              if (
+                typeof msg['guestId'] === 'string' &&
+                typeof msg['mixerInput'] === 'string' &&
+                typeof msg['state'] === 'string' &&
+                (validStates as string[]).includes(msg['state'] as string)
+              ) {
+                // The backend emits `intercomLine` as the intercom line id
+                // (a plain string), not an object — accept a non-empty string.
+                const intercomLine =
+                  typeof msg['intercomLine'] === 'string' && msg['intercomLine'].length > 0
+                    ? (msg['intercomLine'] as string)
+                    : undefined
+                a.applyGuestState({
+                  guestId: msg['guestId'] as string,
+                  mixerInput: msg['mixerInput'] as string,
+                  state: msg['state'] as GuestState,
+                  ...(typeof msg['label'] === 'string' ? { label: msg['label'] as string } : {}),
+                  ...(intercomLine ? { intercomLine } : {}),
+                })
+              }
+              break
+            }
+            case 'RETURN_STATE': {
+              // Guest return-feed mode broadcast (epic open-live#208, studio#138).
+              // Shape: { mixerInput, mode } with mode ∈ 'program' | 'program-minus'.
+              if (
+                typeof msg['mixerInput'] === 'string' &&
+                (msg['mode'] === 'program' || msg['mode'] === 'program-minus')
+              ) {
+                a.applyReturnState(msg['mixerInput'] as string, msg['mode'] as ReturnMode)
               }
               break
             }
