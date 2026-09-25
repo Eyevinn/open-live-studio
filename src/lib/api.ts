@@ -460,17 +460,6 @@ export type GuestState = 'invited' | 'joined' | 'previewing' | 'on-air' | 'left'
 /** Synced return-feed modes a crew member can switch a guest between (v1). */
 export type ReturnMode = 'program' | 'program-minus'
 
-/**
- * Reference to the guest's Open Intercom talkback line, when one is provisioned.
- * The intercom-manager line/session API shape is an open question in the spec,
- * so this is intentionally loose — Studio only surfaces its presence + a name
- * for now (audio wiring is a follow-up). Absent when talkback is not configured.
- */
-export interface GuestIntercomLine {
-  id?: string
-  name?: string
-}
-
 export interface GuestInvite {
   id: string
   productionId: string

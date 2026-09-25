@@ -186,8 +186,24 @@ export function GuestPanel({ productionId, send }: GuestPanelProps) {
                 <span className="text-[10px] font-bold text-zinc-300 truncate">{inv.label?.trim() || 'Guest'}</span>
                 <span className="text-[8px] uppercase tracking-widest text-zinc-600">{expiryLabel(inv.expiresAt)}</span>
               </div>
+              {/*
+                The invite `joinUrl` is the backend join endpoint
+                (`POST /api/v1/guests/:inviteId/join`), which authenticates the
+                raw invite `token` via an `Authorization: Bearer` header — the
+                URL itself does NOT embed the token, and the backend does not
+                accept it as a query/path segment (verified against open-live
+                `src/routes/guests.ts`). So the copied `joinUrl` alone cannot
+                authenticate a join. Until the guest-client link scheme is
+                pinned down, expose the token as a separate copyable field
+                alongside the link rather than guessing an unsupported URL
+                scheme (returned on create only, hence often absent on the
+                REST invite list).
+              */}
               {inv.joinUrl && (
                 <InlineCopyButton label="Link" value={inv.joinUrl} />
+              )}
+              {inv.token && (
+                <InlineCopyButton label="Token" value={inv.token} />
               )}
               <button
                 type="button"
@@ -224,7 +240,7 @@ export function GuestPanel({ productionId, send }: GuestPanelProps) {
                   </span>
                   {g.intercomLine && (
                     <span
-                      title={g.intercomLine.name ? `Talkback line: ${g.intercomLine.name}` : 'Talkback line available'}
+                      title={`Talkback line available (${g.intercomLine})`}
                       className="inline-flex items-center gap-1 text-[8px] font-bold uppercase tracking-widest text-sky-300 border border-sky-800 bg-sky-950/40 px-1.5 py-0.5 rounded shrink-0"
                     >
                       <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">

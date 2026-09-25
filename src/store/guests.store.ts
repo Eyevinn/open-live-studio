@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
-import type { GuestInvite, GuestIntercomLine, GuestSession, GuestState, ReturnMode } from '@/lib/api'
+import type { GuestInvite, GuestSession, GuestState, ReturnMode } from '@/lib/api'
 
 // ─── Guest calling operator state (epic open-live#208, studio#138) ──────────────
 //
@@ -25,7 +25,14 @@ export interface GuestView {
   mixerInput: string
   state: GuestState
   label?: string
-  intercomLine?: GuestIntercomLine
+  /**
+   * Open Intercom talkback line id, when one is provisioned. The backend emits
+   * this as a plain string: the `GUEST_STATE` WS event carries it as
+   * `intercomLine` and the REST `GET .../guests` list carries it as the raw
+   * `intercomLineId` doc field (see `setGuests`). Absent when talkback is not
+   * configured.
+   */
+  intercomLine?: string
   inviteId?: string
 }
 
@@ -65,16 +72,26 @@ export const useGuestsStore = create<GuestsState & GuestsActions>()(
 
       setGuests: (guests) =>
         set(() => ({
+          // The REST list returns `left` sessions unfiltered; drop them so a
+          // kicked/departed guest does not linger with a live Kick button —
+          // matching how the WS connect-sync drops `left` via applyGuestState.
           guests: Object.fromEntries(
-            guests.map((g) => [
-              g.id,
-              {
-                guestId: g.id,
-                mixerInput: g.mixerInput,
-                state: g.state,
-                inviteId: g.inviteId,
-              } satisfies GuestView,
-            ]),
+            guests
+              .filter((g) => g.state !== 'left')
+              .map((g) => [
+                g.id,
+                {
+                  guestId: g.id,
+                  mixerInput: g.mixerInput,
+                  state: g.state,
+                  inviteId: g.inviteId,
+                  // REST carries the talkback line as the raw `intercomLineId`
+                  // doc field (a string); the WS `GUEST_STATE` event calls the
+                  // same value `intercomLine`. Map it in so the Talkback badge
+                  // renders from the REST seed too.
+                  ...(g.intercomLineId ? { intercomLine: g.intercomLineId } : {}),
+                } satisfies GuestView,
+              ]),
           ),
         })),
 

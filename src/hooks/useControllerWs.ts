@@ -387,9 +387,11 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
                 typeof msg['state'] === 'string' &&
                 (validStates as string[]).includes(msg['state'] as string)
               ) {
+                // The backend emits `intercomLine` as the intercom line id
+                // (a plain string), not an object — accept a non-empty string.
                 const intercomLine =
-                  msg['intercomLine'] !== null && typeof msg['intercomLine'] === 'object'
-                    ? (msg['intercomLine'] as { id?: string; name?: string })
+                  typeof msg['intercomLine'] === 'string' && msg['intercomLine'].length > 0
+                    ? (msg['intercomLine'] as string)
                     : undefined
                 a.applyGuestState({
                   guestId: msg['guestId'] as string,
