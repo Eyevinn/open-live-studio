@@ -5,25 +5,42 @@ export const inputCls = 'w-full px-3 py-2 rounded bg-[--color-surface-raised] bo
 export const labelCls = 'text-xs text-[--color-text-muted] uppercase tracking-wider block mb-1'
 
 /**
- * How a listener gets its port on this backend. `auto`: the backend holds a
- * range on the shared Strom and assigns a free port on save. `pending`: it is
- * still waiting for that range, so nothing can be saved yet. `manual`: an older
- * backend, or one with no managed range, where the operator names the port.
+ * How a listener gets its port on this backend. `auto`: the backend holds ports
+ * on the shared Strom and assigns a free one on save. `pending`: it is still
+ * waiting for them, so nothing can be saved yet. `manual`: an older backend, or
+ * one whose Strom hands out no ports, where the operator names the port.
  */
 export type ListenerPortMode =
   | { kind: 'loading' }
-  | { kind: 'auto'; first: number; last: number }
+  | { kind: 'auto'; ports: number[] }
   | { kind: 'pending' }
   | { kind: 'manual' }
 
 export function useListenerPortMode(): ListenerPortMode {
   const { info, loaded } = useServerInfo()
   if (!loaded) return { kind: 'loading' }
-  if (info?.srtPortLease === 'pending') return { kind: 'pending' }
-  if (info?.srtPortLease === 'leased' && info.srtPortRange) {
-    return { kind: 'auto', first: info.srtPortRange.first, last: info.srtPortRange.last }
+  if (info?.srtPortState === 'pending') return { kind: 'pending' }
+  if (info?.srtPortState === 'reserved' && info.srtPorts && info.srtPorts.length > 0) {
+    return { kind: 'auto', ports: info.srtPorts }
   }
   return { kind: 'manual' }
+}
+
+/**
+ * How a set of ports reads to an operator: runs where they are consecutive,
+ * individual numbers where they are not. Strom prefers contiguous blocks, so
+ * this is usually one range — but it cannot be assumed, and a list of eleven
+ * numbers in a form label is worse than `47100–47109, 47250`.
+ */
+export function describePorts(ports: number[]): string {
+  const sorted = [...ports].sort((a, b) => a - b)
+  const runs: Array<[number, number]> = []
+  for (const p of sorted) {
+    const last = runs[runs.length - 1]
+    if (last && last[1] + 1 === p) last[1] = p
+    else runs.push([p, p])
+  }
+  return runs.map(([a, b]) => (a === b ? `${a}` : `${a}\u2013${b}`)).join(', ')
 }
 
 /** The port to put in a listener address, or null when none can be chosen yet. */
@@ -87,7 +104,7 @@ export function ListenerFields({
           <p className="text-xs text-[--color-text-muted]">Checking how ports are assigned…</p>
         ) : mode.kind === 'auto' ? (
           <p className="text-xs text-[--color-text-muted]">
-            Assigned on save from this instance&apos;s range {mode.first}–{mode.last}.
+            Assigned on save from this instance&apos;s ports {describePorts(mode.ports)}.
           </p>
         ) : mode.kind === 'pending' ? (
           <p className="text-xs text-amber-400">
