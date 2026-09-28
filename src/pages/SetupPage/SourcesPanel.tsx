@@ -3,7 +3,7 @@ import { useSourcesStore } from '@/store/sources.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useGatewaysStore } from '@/store/gateways.store'
 import { useServerInfo } from '@/hooks/useServerInfo'
-import type { HtmlSourceAuth, StreamType } from '@/lib/api'
+import { ApiError, type HtmlSourceAuth, type HtmlSourceAuthInput, type StreamType } from '@/lib/api'
 import { openHtmlAuthPopup, originOf, maskCredential } from '@/lib/htmlSourceAuthPopup'
 import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
 import { buildListenerAddress, isCallerAddress, listenerPort, passphraseOf, srtDirection, toCallerUrl, type SrtDirection } from '@/lib/srt'
@@ -231,6 +231,24 @@ function hasStoredHeaderValue(auth: HtmlSourceAuth | undefined): boolean {
   return auth?.mode === 'header' && auth.header?.valueSet === true
 }
 
+/**
+ * Status-aware inline message for a failed credential save/clear (studio#154).
+ * Only a real 409 (the backend's on-air guard) gets the on-air explanation —
+ * every other failure previously claimed the same thing regardless of cause.
+ */
+function authErrorMessage(err: unknown, action: 'save' | 'clear'): string {
+  if (err instanceof ApiError) {
+    if (err.status === 409) {
+      return `Could not ${action} the credential — the source is on air. Take it off air and try again.`
+    }
+    if (err.status >= 400 && err.status < 500) {
+      return err.message || `Could not ${action} the credential — the request was rejected.`
+    }
+    return `Server error — the credential was not ${action === 'save' ? 'stored' : 'cleared'}. Try again shortly.`
+  }
+  return `Could not ${action} the credential.`
+}
+
 interface EditState {
   id: string
   name: string
@@ -303,6 +321,14 @@ export function SourcesPanel() {
   // HTML-auth (studio#129) inline error + in-flight guard for the popup/save flow.
   const [authError, setAuthError] = useState<string | null>(null)
   const [authBusy, setAuthBusy] = useState(false)
+  // HTML-auth in New Source (studio#154 item 3): a scoped-down version of the
+  // Edit dialog's section — manual entry only, no "Open Interactive Window"
+  // popup (that flow assumes an already-persisted source/address) and no
+  // "stored value" state (there is nothing stored yet for a brand-new source).
+  const [newAuthEnabled, setNewAuthEnabled] = useState(false)
+  const [newAuthHeaderName, setNewAuthHeaderName] = useState(DEFAULT_HEADER_NAME)
+  const [newAuthHeaderValue, setNewAuthHeaderValue] = useState('')
+  const [newAuthError, setNewAuthError] = useState<string | null>(null)
 
   // Source IDs currently assigned to an active or activating production
   const activeSourceIds = new Set(
@@ -334,17 +360,21 @@ export function SourcesPanel() {
     setNewLatency('')
     setNewClipRef({ ...emptyClipRef })
     setAddAddressError(null)
+    setNewAuthEnabled(false)
+    setNewAuthHeaderName(DEFAULT_HEADER_NAME)
+    setNewAuthHeaderValue('')
+    setNewAuthError(null)
   }
 
   const newIsListener = isSrt(newStreamType) && newDirection === 'listener'
   const addReady = !!newName.trim() && (!newIsListener || listenerReady(portMode, newManualPort))
 
-  function handleAdd() {
+  async function handleAdd() {
     if (!addReady) return
     if (newStreamType === 'clip') {
       const refErr = validateClipRef(newClipRef)
       if (refErr) { setAddAddressError(refErr); return }
-      addSource({
+      await addSource({
         name: newName.trim(),
         address: serializeClipRef(newClipRef),
         streamType: 'clip',
@@ -354,6 +384,21 @@ export function SourcesPanel() {
       resetAdd()
       setAddOpen(false)
       return
+    }
+    // HTML auth in New Source (studio#154 item 3): same "don't silently
+    // discard" rule as Edit — checking Interactive with no credential entered
+    // blocks rather than creating a source that looks configured but isn't.
+    let newAuthName = ''
+    if (newStreamType === 'html' && newAuthEnabled) {
+      if (!newAuthHeaderValue.trim()) {
+        setNewAuthError('Interactive is checked but no credential was entered — enter one, or uncheck Interactive.')
+        return
+      }
+      newAuthName = newAuthHeaderName.trim() || DEFAULT_HEADER_NAME
+      if (!HEADER_NAME_RE.test(newAuthName)) {
+        setNewAuthError('Invalid header name (letters, digits and RFC token symbols, max 64).')
+        return
+      }
     }
     const addrErr = validateAddress(newAddress, newStreamType, newDirection)
     if (addrErr) { setAddAddressError(addrErr); return }
@@ -365,7 +410,7 @@ export function SourcesPanel() {
     } else if (isSrt(newStreamType) && !/[?&]mode=/i.test(address)) {
       address += (address.includes('?') ? '&' : '?') + 'mode=caller'
     }
-    addSource({
+    const created = await addSource({
       name: newName.trim(),
       address,
       streamType: newStreamType,
@@ -373,6 +418,18 @@ export function SourcesPanel() {
       color: '#27272a',
       ...(STREAM_TYPE_HAS_LATENCY[newStreamType] ? { latency: parseInt(newLatency, 10) || 125 } : {}),
     })
+    if (newStreamType === 'html' && newAuthEnabled && newAuthHeaderValue.trim()) {
+      // Create-then-PATCH (issue's suggested approach): the source needs an id
+      // before the credential can be attached, so this is a second call. If it
+      // fails, the source itself is already created — the api layer's global
+      // toast plus the on-air-aware message on the next Edit-dialog attempt
+      // cover the failure; we don't block closing this dialog on it.
+      try {
+        await updateSourceAuth(created.id, { mode: 'header', header: { name: newAuthName, value: newAuthHeaderValue } })
+      } catch {
+        // Swallowed here by design — see comment above.
+      }
+    }
     resetAdd()
     setAddOpen(false)
   }
@@ -421,6 +478,30 @@ export function SourcesPanel() {
       setEditTarget(null)
       return
     }
+    // HTML auth (studio#154): the "Interactive (Popup)" checkbox has no backend
+    // field of its own — it only means "a header-mode credential is stored". The
+    // main Save previously PATCHed only name/address/latency, so checking the
+    // box and clicking Save silently discarded it. Now: a freshly-entered value
+    // is folded into the same PATCH; checking the box with nothing to persist
+    // (no stored value, no entered value) blocks with an explicit message
+    // instead of pretending to save it.
+    let authPayload: HtmlSourceAuthInput | undefined
+    if (editTarget.streamType === 'html') {
+      const enteredValue = editTarget.authHeaderValue.trim()
+      if (editTarget.authEnabled && !editTarget.authHasStoredValue && !enteredValue) {
+        setAuthError('Interactive is checked but no credential is saved yet. Enter a credential above — this Save will store it — or uncheck Interactive.')
+        return
+      }
+      if (editTarget.authEnabled && enteredValue) {
+        const name = editTarget.authHeaderName.trim() || DEFAULT_HEADER_NAME
+        if (!HEADER_NAME_RE.test(name)) {
+          setAuthError('Invalid header name (letters, digits and RFC token symbols, max 64).')
+          return
+        }
+        authPayload = { mode: 'header', header: { name, value: enteredValue } }
+      }
+    }
+
     const addrErr = validateAddress(editTarget.address, editTarget.streamType, editTarget.direction)
     if (addrErr) { setEditAddressError(addrErr); return }
     let address: string | undefined
@@ -444,8 +525,10 @@ export function SourcesPanel() {
       name: editTarget.name.trim(),
       ...(address !== undefined ? { address } : {}),
       ...(STREAM_TYPE_HAS_LATENCY[editTarget.streamType] ? { latency: parseInt(editTarget.latency, 10) || 125 } : {}),
+      ...(authPayload ? { auth: authPayload } : {}),
     })
     setEditAddressError(null)
+    setAuthError(null)
     setEditTarget(null)
   }
 
@@ -508,9 +591,9 @@ export function SourcesPanel() {
       })
       // Wipe the write-only value from component state once persisted.
       setEditTarget((prev) => (prev ? { ...prev, authHeaderValue: '', authHasStoredValue: true } : prev))
-    } catch {
+    } catch (err) {
       // The api layer already surfaces a toast; keep an inline hint too.
-      setAuthError('Could not save the credential. It may be blocked while the source is on air.')
+      setAuthError(authErrorMessage(err, 'save'))
     } finally {
       setAuthBusy(false)
     }
@@ -526,8 +609,8 @@ export function SourcesPanel() {
       setEditTarget((prev) =>
         prev ? { ...prev, authHeaderValue: '', authHasStoredValue: false, authEnabled: false } : prev,
       )
-    } catch {
-      setAuthError('Could not clear the credential. It may be blocked while the source is on air.')
+    } catch (err) {
+      setAuthError(authErrorMessage(err, 'clear'))
     } finally {
       setAuthBusy(false)
     }
@@ -745,6 +828,18 @@ export function SourcesPanel() {
                   encrypted at rest and never shown again. Live session cookies are never captured
                   or forwarded.
                 </p>
+                {!editTarget.authEnabled && editTarget.authHasStoredValue && (
+                  <p className="text-xs text-yellow-400">
+                    A credential is already stored for this source. Unchecking here and clicking
+                    Save will not remove it — check the box again and use "Clear" to remove it.
+                  </p>
+                )}
+                {editTarget.authEnabled && !editTarget.authHasStoredValue && !editTarget.authHeaderValue.trim() && (
+                  <p className="text-xs text-yellow-400">
+                    Nothing is stored yet — enter a credential below before Save, or this checkbox
+                    alone will not be kept.
+                  </p>
+                )}
                 {editTarget.authEnabled && (
                   <>
                     <div>
@@ -855,7 +950,16 @@ export function SourcesPanel() {
                 <button
                   key={t}
                   type="button"
-                  onClick={() => { setNewStreamType(t); setNewAddress(''); setNewClipRef({ ...emptyClipRef }); setAddAddressError(null) }}
+                  onClick={() => {
+                    setNewStreamType(t)
+                    setNewAddress('')
+                    setNewClipRef({ ...emptyClipRef })
+                    setAddAddressError(null)
+                    setNewAuthEnabled(false)
+                    setNewAuthHeaderName(DEFAULT_HEADER_NAME)
+                    setNewAuthHeaderValue('')
+                    setNewAuthError(null)
+                  }}
                   className={`py-2 rounded text-sm border transition-colors ${
                     newStreamType === t
                       ? 'bg-[var(--color-accent)] border-[var(--color-accent)] text-white'
@@ -902,6 +1006,55 @@ export function SourcesPanel() {
               {addAddressError && <p className="text-xs text-red-400 mt-1">{addAddressError}</p>}
             </div>
           )}
+          {newStreamType === 'html' && (
+            <div className="flex flex-col gap-2 rounded border border-[--color-border] bg-[--color-surface-2] p-3">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newAuthEnabled}
+                  onChange={(e) => { setNewAuthEnabled(e.target.checked); setNewAuthError(null) }}
+                  className="accent-[var(--color-accent)]"
+                />
+                <span className="text-sm text-[--color-text-primary]">Interactive (Popup)</span>
+              </label>
+              <p className="text-xs text-[--color-text-muted]">
+                Store a scoped header credential (e.g. a bearer token) for this source now, rather
+                than in a separate Edit step. The interactive login popup is available once the
+                source exists — open Edit Source after creating it to use it.
+              </p>
+              {newAuthEnabled && (
+                <>
+                  <div>
+                    <label className={labelCls}>Header name</label>
+                    <input
+                      type="text"
+                      value={newAuthHeaderName}
+                      placeholder={DEFAULT_HEADER_NAME}
+                      onChange={(e) => { setNewAuthHeaderName(e.target.value); setNewAuthError(null) }}
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className={labelCls}>Credential value</label>
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      value={newAuthHeaderValue}
+                      placeholder="Bearer …"
+                      onChange={(e) => { setNewAuthHeaderValue(e.target.value); setNewAuthError(null) }}
+                      className={inputCls}
+                    />
+                    {newAuthHeaderValue && (
+                      <p className="text-xs text-[--color-text-muted] mt-1 font-mono">
+                        captured: {maskCredential(newAuthHeaderValue)}
+                      </p>
+                    )}
+                  </div>
+                  {newAuthError && <p className="text-xs text-red-400">{newAuthError}</p>}
+                </>
+              )}
+            </div>
+          )}
           {STREAM_TYPE_HAS_LATENCY[newStreamType] && (
             <div>
               <label className={labelCls}>
@@ -920,7 +1073,7 @@ export function SourcesPanel() {
           )}
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="ghost" onClick={() => { resetAdd(); setAddOpen(false) }}>Cancel</Button>
-            <Button variant="active" onClick={handleAdd} disabled={!addReady}>Save</Button>
+            <Button variant="active" onClick={() => { void handleAdd() }} disabled={!addReady}>Save</Button>
           </div>
         </div>
       </Modal>
