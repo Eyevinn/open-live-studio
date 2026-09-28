@@ -3,8 +3,15 @@ import { cn } from '@/lib/cn'
 import { Badge } from '@/components/ui/Badge'
 import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
 import { useGuestsStore, type GuestView } from '@/store/guests.store'
-import { guestsApi, type GuestState, type ReturnMode } from '@/lib/api'
+import { ApiError, guestsApi, type GuestState, type ReturnMode } from '@/lib/api'
 import type { OutboundMessage } from '@/hooks/useControllerWs'
+
+/** Best-effort human message for a failed create/revoke/kick action. */
+function actionErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) return err.message
+  if (err instanceof Error) return err.message
+  return fallback
+}
 
 // ─── Guest calling operator UI (epic open-live#208, studio#138) ─────────────────
 //
@@ -81,6 +88,13 @@ export function GuestPanel({ productionId, send }: GuestPanelProps) {
   const [label, setLabel] = useState('')
   const [ttlS, setTtlS] = useState<number>(86400)
   const [creating, setCreating] = useState(false)
+  // Set from a 503 on either seed call — the backend's message explains *why*
+  // (e.g. "Guest calling is disabled — set GUEST_INVITE_SECRET to enable it").
+  // Non-null means the feature is gated off, not just "no invites yet".
+  const [disabledReason, setDisabledReason] = useState<string | null>(null)
+  // Most recent create/revoke/kick failure, shown inline instead of relying
+  // solely on the global (non-persistent) toast.
+  const [actionError, setActionError] = useState<string | null>(null)
 
   const guests = Object.values(guestsMap).sort((a, b) => a.mixerInput.localeCompare(b.mixerInput))
 
@@ -88,13 +102,27 @@ export function GuestPanel({ productionId, send }: GuestPanelProps) {
   // WS keeps GUEST_STATE / RETURN_STATE live thereafter (and re-syncs on reconnect).
   useEffect(() => {
     let cancelled = false
-    void guestsApi.listInvites(productionId).then((list) => { if (!cancelled) setInvites(list) }).catch(() => {})
-    void guestsApi.listGuests(productionId).then((list) => { if (!cancelled) setGuests(list) }).catch(() => {})
+    setDisabledReason(null)
+    setActionError(null)
+
+    function handleSeedError(err: unknown) {
+      if (cancelled) return
+      // A 503 here means guest calling is disabled backend-wide (the same
+      // gate covers both endpoints) — surface it as a disabled state, not a
+      // transient failure to retry.
+      if (err instanceof ApiError && err.status === 503) {
+        setDisabledReason(err.message)
+      }
+    }
+
+    void guestsApi.listInvites(productionId).then((list) => { if (!cancelled) setInvites(list) }).catch(handleSeedError)
+    void guestsApi.listGuests(productionId).then((list) => { if (!cancelled) setGuests(list) }).catch(handleSeedError)
     return () => { cancelled = true }
   }, [productionId, setInvites, setGuests])
 
   async function handleCreate() {
     setCreating(true)
+    setActionError(null)
     try {
       const body: { label?: string; expiresInS?: number } = { expiresInS: ttlS }
       const trimmed = label.trim()
@@ -102,8 +130,9 @@ export function GuestPanel({ productionId, send }: GuestPanelProps) {
       const invite = await guestsApi.createInvite(productionId, body)
       addInvite(invite)
       setLabel('')
-    } catch {
-      // request() surfaces the error toast; leave the form intact for a retry.
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 503) setDisabledReason(err.message)
+      setActionError(actionErrorMessage(err, 'Failed to create invite.'))
     } finally {
       setCreating(false)
     }
@@ -112,19 +141,22 @@ export function GuestPanel({ productionId, send }: GuestPanelProps) {
   async function handleRevoke(inviteId: string) {
     // Optimistic removal — revoke is idempotent (404 treated as success).
     removeInvite(inviteId)
+    setActionError(null)
     try {
       await guestsApi.revokeInvite(productionId, inviteId)
-    } catch {
+    } catch (err) {
       // On failure the next list refresh (production change) reconciles.
+      setActionError(actionErrorMessage(err, 'Failed to revoke invite.'))
     }
   }
 
   async function handleKick(guestId: string) {
+    setActionError(null)
     try {
       await guestsApi.kickGuest(productionId, guestId)
       // The backend broadcasts GUEST_STATE 'left', which removes the row.
-    } catch {
-      // request() surfaces the error toast.
+    } catch (err) {
+      setActionError(actionErrorMessage(err, 'Failed to kick guest.'))
     }
   }
 
@@ -139,6 +171,15 @@ export function GuestPanel({ productionId, send }: GuestPanelProps) {
       <div className="flex flex-col gap-1.5">
         <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Invites</span>
 
+        {/* Disabled-feature notice — a 503 on the seed calls means guest calling
+            is gated off backend-wide (e.g. no GUEST_INVITE_SECRET configured),
+            not that there are simply no invites yet. */}
+        {disabledReason && (
+          <p className="text-[9px] text-amber-400 border border-amber-900 bg-amber-950/30 px-2 py-1.5 leading-snug">
+            {disabledReason}
+          </p>
+        )}
+
         {/* Create form */}
         <div className="flex flex-col gap-1.5 border border-zinc-800 bg-zinc-950 px-2.5 py-2">
           <input
@@ -147,14 +188,16 @@ export function GuestPanel({ productionId, send }: GuestPanelProps) {
             onChange={(e) => setLabel(e.target.value)}
             placeholder="Guest label (optional)"
             aria-label="Guest label"
-            className="bg-zinc-900 border border-zinc-700 text-[10px] px-2 py-1 focus:outline-none focus:border-orange-500 text-zinc-200 placeholder:text-zinc-600"
+            disabled={disabledReason !== null}
+            className="bg-zinc-900 border border-zinc-700 text-[10px] px-2 py-1 focus:outline-none focus:border-orange-500 text-zinc-200 placeholder:text-zinc-600 disabled:opacity-50 disabled:cursor-not-allowed"
           />
           <div className="flex items-center gap-1.5">
             <select
               value={ttlS}
               onChange={(e) => setTtlS(parseInt(e.target.value, 10))}
               aria-label="Invite lifetime"
-              className="flex-1 min-w-0 text-[10px] font-bold uppercase tracking-widest cursor-pointer bg-zinc-900 border border-zinc-700 text-zinc-400 px-1.5 py-1 focus:outline-none focus:border-orange-500"
+              disabled={disabledReason !== null}
+              className="flex-1 min-w-0 text-[10px] font-bold uppercase tracking-widest cursor-pointer bg-zinc-900 border border-zinc-700 text-zinc-400 px-1.5 py-1 focus:outline-none focus:border-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {TTL_OPTIONS.map((o) => (
                 <option key={o.value} value={o.value}>{o.label}</option>
@@ -163,10 +206,11 @@ export function GuestPanel({ productionId, send }: GuestPanelProps) {
             <button
               type="button"
               onClick={() => { void handleCreate() }}
-              disabled={creating}
+              disabled={creating || disabledReason !== null}
+              title={disabledReason ?? undefined}
               className={cn(
                 'btn-hardware px-2.5 py-1 text-[10px] font-bold uppercase tracking-widest border transition-colors shrink-0',
-                creating
+                creating || disabledReason !== null
                   ? 'bg-zinc-900 text-zinc-700 border-zinc-800 cursor-not-allowed'
                   : 'bg-orange-500 text-black border-orange-400 hover:brightness-110 cursor-pointer',
               )}
@@ -176,9 +220,14 @@ export function GuestPanel({ productionId, send }: GuestPanelProps) {
           </div>
         </div>
 
+        {/* Inline create/revoke/kick failure — in addition to the global toast. */}
+        {actionError && (
+          <p className="text-[9px] text-red-400/90 px-1 leading-snug break-words">{actionError}</p>
+        )}
+
         {/* Invite list */}
         {invites.length === 0 ? (
-          <p className="text-[9px] text-zinc-600 px-1">No invites yet.</p>
+          !disabledReason && <p className="text-[9px] text-zinc-600 px-1">No invites yet.</p>
         ) : (
           invites.map((inv) => (
             <div key={inv.id} className="flex items-center gap-2 border border-zinc-800 bg-zinc-950 px-2.5 py-1.5">
