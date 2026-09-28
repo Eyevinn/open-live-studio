@@ -10,6 +10,20 @@ interface RequestOptions extends RequestInit {
   silentStatuses?: number[]
 }
 
+/**
+ * Thrown by `request()` for any non-ok response. Carries the HTTP `status` so
+ * callers can distinguish a feature-gated 503 (e.g. guest calling disabled,
+ * recordings' object storage unavailable) from other failures, rather than
+ * every 503 being assumed to mean the database is unreachable — that assumption
+ * previously swallowed the backend's real `error` message (studio#153).
+ */
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
 async function request<T>(path: string, init?: RequestOptions): Promise<T> {
   await authenticateWithOpenLive()
   const token = await getApiToken()
@@ -25,25 +39,22 @@ async function request<T>(path: string, init?: RequestOptions): Promise<T> {
     if (silentStatuses?.includes(res.status)) return undefined as T
     const err = await res.json().catch(() => ({ error: res.statusText }))
     const message = (err as { error?: string }).error ?? res.statusText
+    // Real DB/Strom outages are surfaced by the dedicated `/api/v1/status`
+    // polling in `useConnectionCheck`/`ConnectionStatus` (which is why that
+    // path — and `/api/v1/reconnect`, which manages the same toast — is
+    // silent here). A 503 on any *other* path is a feature-gated response
+    // (guest calling disabled, object storage unavailable, ...), not a
+    // connection issue, so it gets the same non-persistent api-error toast as
+    // any other failure, carrying the backend's real message.
     if (!SILENT_PATHS.includes(path)) {
       const { useToastStore } = await import('../store/toast.store')
       const { upsertToastByTag } = useToastStore.getState()
-      if (res.status === 503) {
-        const { runReconnect } = await import('../hooks/useConnectionCheck')
-        upsertToastByTag('connection', 'Connection issues detected:', 'error', {
-          persistent: true,
-          onReconnect: runReconnect,
-          issues: ['Database unreachable'],
-          mergeIssues: true,
-        })
-      } else {
-        const { isInitialCheckDone } = await import('../hooks/useConnectionCheck')
-        if (isInitialCheckDone()) {
-          upsertToastByTag('api-error', message, 'error', { persistent: false })
-        }
+      const { isInitialCheckDone } = await import('../hooks/useConnectionCheck')
+      if (isInitialCheckDone()) {
+        upsertToastByTag('api-error', message, 'error', { persistent: false })
       }
     }
-    throw new Error(message)
+    throw new ApiError(message, res.status)
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
