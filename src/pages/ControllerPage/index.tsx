@@ -2,6 +2,7 @@ import { useEffect, useCallback, useState, useRef, type ReactNode } from 'react'
 import { useIsTablet } from '@/hooks/useTabletLayout'
 import { useIsPhone } from '@/hooks/usePhoneLayout'
 import { OperatorLiteNotice } from '@/components/ui/OperatorLiteNotice'
+import { PhoneTallyStrip } from './PhoneTallyStrip'
 import { cn } from '@/lib/cn'
 import { useSearchParams, useNavigate } from 'react-router'
 import { useWebRTC } from '@/hooks/useWebRTC'
@@ -782,12 +783,13 @@ export function ControllerPage() {
     <div className="flex flex-col flex-1 min-h-0" style={{ background: '#000000' }}>
       <PageHeader
         title={
-          <div className="flex items-center gap-3">
-            <span className="text-[11px] font-bold uppercase tracking-[0.12em] text-white">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="min-w-0 truncate text-[11px] font-bold uppercase tracking-[0.12em] text-white">
               {activeProduction?.name ?? 'Studio'}
             </span>
-            {/* Panel toggle icons */}
-            {PANEL_ICONS.map(({ key, Icon }) => (
+            {/* Panel toggle icons — hidden on the phone tier (<768px), where none of
+                these panels render (the mixer is replaced by the operator-lite view). */}
+            {!isPhone && PANEL_ICONS.map(({ key, Icon }) => (
               <button
                 key={key}
                 type="button"
@@ -826,11 +828,16 @@ export function ControllerPage() {
           operator-lite notice instead of the mixer. */}
       {!isPhone && <IdleWarningBanner send={send} />}
 
-      {/* Phone tier (<768px): the mixer / studio controller is NOT rendered — show
-          the operator-lite notice instead. Read-only status stays on Productions/Tally.
-          See docs/decisions/ADR-001-phone-tier-responsive-mode.md (#105). */}
+      {/* Phone tier (<768px): the mixer / studio controller is NOT rendered. Per
+          ADR-001 the essential phone surfaces are read-only Tally + production
+          status, shown by PhoneTallyStrip, with the operator-lite notice where
+          the mixer would be. See docs/decisions/ADR-001-phone-tier-responsive-mode.md
+          (#105, #155). */}
       {isPhone ? (
-        <OperatorLiteNotice />
+        <div className="flex flex-1 min-h-0 flex-col overflow-y-auto">
+          <OperatorLiteNotice />
+          <PhoneTallyStrip />
+        </div>
       ) : (
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {/* Video monitors row — Multiviewer + PGM side by side on desktop, stacked on tablet.
