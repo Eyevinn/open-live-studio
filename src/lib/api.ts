@@ -10,6 +10,20 @@ interface RequestOptions extends RequestInit {
   silentStatuses?: number[]
 }
 
+/**
+ * Thrown by `request()` on a non-ok response. Carries the HTTP `status` so
+ * callers can distinguish e.g. a 409 (on-air guard) from a 5xx (server error)
+ * instead of collapsing every failure into the same message (studio#154).
+ */
+export class ApiError extends Error {
+  status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
 async function request<T>(path: string, init?: RequestOptions): Promise<T> {
   await authenticateWithOpenLive()
   const token = await getApiToken()
@@ -43,7 +57,7 @@ async function request<T>(path: string, init?: RequestOptions): Promise<T> {
         }
       }
     }
-    throw new Error(message)
+    throw new ApiError(message, res.status)
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
@@ -285,7 +299,14 @@ export const sourcesApi = {
       body: JSON.stringify(body),
     }),
 
-  update: (id: string, body: Partial<Omit<ApiSource, 'id'>>) =>
+  /**
+   * `auth` here is the write-only input shape (`HtmlSourceAuthInput`), not the
+   * masked read shape on `ApiSource` — this lets a caller merge an interactive
+   * credential into the same PATCH as `name`/`address`/`latency` in one round
+   * trip (studio#154), matching the single non-strict `SourcePatch` surface on
+   * `PATCH /api/v1/sources/:id`.
+   */
+  update: (id: string, body: Partial<Omit<ApiSource, 'id' | 'auth'>> & { auth?: HtmlSourceAuthInput }) =>
     request<ApiSource>(`/api/v1/sources/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
