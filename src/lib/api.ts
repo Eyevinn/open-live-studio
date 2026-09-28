@@ -12,10 +12,12 @@ interface RequestOptions extends RequestInit {
 
 /**
  * Thrown by `request()` for any non-ok response. Carries the HTTP `status` so
- * callers can distinguish a feature-gated 503 (e.g. guest calling disabled,
- * recordings' object storage unavailable) from other failures, rather than
- * every 503 being assumed to mean the database is unreachable — that assumption
- * previously swallowed the backend's real `error` message (studio#153).
+ * callers can distinguish failures by cause instead of collapsing them into a
+ * single message:
+ *  - a 409 (on-air guard) from a 5xx server error (studio#154);
+ *  - a feature-gated 503 (e.g. guest calling disabled, recordings' object
+ *    storage unavailable) from a real database outage — the latter assumption
+ *    previously swallowed the backend's real `error` message (studio#153).
  */
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number) {
@@ -296,7 +298,14 @@ export const sourcesApi = {
       body: JSON.stringify(body),
     }),
 
-  update: (id: string, body: Partial<Omit<ApiSource, 'id'>>) =>
+  /**
+   * `auth` here is the write-only input shape (`HtmlSourceAuthInput`), not the
+   * masked read shape on `ApiSource` — this lets a caller merge an interactive
+   * credential into the same PATCH as `name`/`address`/`latency` in one round
+   * trip (studio#154), matching the single non-strict `SourcePatch` surface on
+   * `PATCH /api/v1/sources/:id`.
+   */
+  update: (id: string, body: Partial<Omit<ApiSource, 'id' | 'auth'>> & { auth?: HtmlSourceAuthInput }) =>
     request<ApiSource>(`/api/v1/sources/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),

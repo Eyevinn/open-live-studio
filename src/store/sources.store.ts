@@ -32,9 +32,15 @@ interface SourcesState {
 interface SourcesActions {
   fetchAll: () => Promise<void>
   refresh: () => Promise<void>
-  addSource: (source: Omit<Source, 'id'>) => Promise<void>
+  /** Returns the created source so callers can chain a follow-up call (e.g. setting HTML auth right after create, studio#154). */
+  addSource: (source: Omit<Source, 'id'>) => Promise<Source>
   removeSource: (id: string) => Promise<void>
-  updateSource: (id: string, fields: Partial<Pick<Source, 'name' | 'address' | 'latency'>>) => Promise<void>
+  /**
+   * `auth`, when passed, is merged into the same PATCH as the other fields
+   * (studio#154) so e.g. an HTML source's interactive credential is not lost
+   * when the operator uses the main Save instead of "Save Credential".
+   */
+  updateSource: (id: string, fields: Partial<Pick<Source, 'name' | 'address' | 'latency'>> & { auth?: HtmlSourceAuthInput }) => Promise<void>
   updateStatus: (id: string, status: SourceStatus) => Promise<void>
   /**
    * Set/replace the HTML-source header credential (Design B). The credential
@@ -102,7 +108,9 @@ export const useSourcesStore = create<SourcesState & SourcesActions>()(
         const { color, ...apiBody } = source
         void color
         const created = await sourcesApi.create(apiBody)
-        set((state) => { state.sources.push(fromApi(created)) })
+        const mapped = fromApi(created)
+        set((state) => { state.sources.push(mapped) })
+        return mapped
       },
 
       removeSource: async (id) => {
@@ -118,6 +126,11 @@ export const useSourcesStore = create<SourcesState & SourcesActions>()(
             if (updated.name !== undefined) source.name = updated.name
             if (updated.address !== undefined) source.address = updated.address
             if (updated.latency !== undefined) source.latency = updated.latency
+            // The endpoint always echoes the current `auth` (masked); keep the
+            // store in sync even when this call didn't itself touch auth, since
+            // a stale cached value would otherwise re-derive the wrong checkbox
+            // state on reopen (studio#154).
+            source.auth = updated.auth
           }
         })
       },
