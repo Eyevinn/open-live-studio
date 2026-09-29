@@ -31,6 +31,7 @@ export interface Production {
   autoDeactivated?: boolean
   idleExpiresAt?: number
   inputResolutions?: Array<{ width: number; height: number } | null>
+  activationWarnings?: Array<{ type: 'recording-no-audio'; message: string }>
 }
 
 interface ProductionsState {
@@ -78,6 +79,7 @@ function fromApi(p: ApiProduction): Production {
     autoDeactivated: p.autoDeactivated,
     idleExpiresAt: p.idleExpiresAt,
     inputResolutions: p.inputResolutions,
+    activationWarnings: p.activationWarnings,
   }
 }
 
