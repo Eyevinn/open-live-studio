@@ -172,6 +172,8 @@ export interface ApiProduction {
   idleExpiresAt?: number
   /** Negotiated input resolutions from Strom, indexed by mixer input position. Null = caps not yet negotiated. */
   inputResolutions?: Array<{ width: number; height: number } | null>
+  /** Non-blocking problems detected at activation (e.g. recording with no audio). Cleared on the next activation. */
+  activationWarnings?: Array<{ type: 'recording-no-audio'; message: string }>
 }
 
 export interface ProductionConfig {
@@ -202,6 +204,7 @@ type RawProduction = {
   subscriberCount?: number
   idleExpiresAt?: number
   inputResolutions?: Array<{ width: number; height: number } | null>
+  activationWarnings?: Array<{ type: 'recording-no-audio'; message: string }>
 }
 
 function normalizeProduction(d: RawProduction): ApiProduction {
@@ -225,6 +228,7 @@ function normalizeProduction(d: RawProduction): ApiProduction {
     subscriberCount: d.subscriberCount,
     idleExpiresAt: d.idleExpiresAt,
     inputResolutions: d.inputResolutions,
+    activationWarnings: d.activationWarnings,
   }
 }
 
