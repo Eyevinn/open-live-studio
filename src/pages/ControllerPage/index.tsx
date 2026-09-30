@@ -24,6 +24,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { useProductionStore, type PipConfig } from '@/store/production.store'
+import { useGuestsStore } from '@/store/guests.store'
 import { useIsOnAir } from '@/store/programClock.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
@@ -634,6 +635,15 @@ export function ControllerPage() {
     a.mixerInput.localeCompare(b.mixerInput),
   )
 
+  // Guest mixer inputs currently muted (GUEST_STATE.muted, open-live#382) — fed
+  // into the vision-mixer PGM/PVW tiles (TransitionPanel) so a muted guest's
+  // mic-muted badge is visible there too, not just in the Guests panel
+  // (studio#163 requirement 5).
+  const guestsMap = useGuestsStore((s) => s.guests)
+  const mutedGuestMixerInputs = new Set(
+    Object.values(guestsMap).filter((g) => g.muted).map((g) => g.mixerInput),
+  )
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
     if (e.code === 'Space') { e.preventDefault(); handleCut(); return }
@@ -1013,7 +1023,7 @@ export function ControllerPage() {
                   <button type="button" onClick={() => setControllerOptionsOpen(true)} title="Controller options" className="cursor-pointer hover:text-[--color-text-primary] transition-colors"><GearIcon /></button>
                 }>Controller</SectionLabel>
                 <div className="flex flex-col flex-1 gap-2 overflow-y-auto min-h-0">
-                  <TransitionPanel onCut={handleCut} onAuto={handleAuto} onFtb={handleFtb} onSelectPvw={handleSelectPvw} onSetOvl={handleSetOvl} onSelectPvwPip={handleSelectPvwPip} pips={pips} pgmPip={pgmPip} pvwPip={pvwPip} className="flex-1" visibleTransitions={controllerOptions.visibleTransitions} />
+                  <TransitionPanel onCut={handleCut} onAuto={handleAuto} onFtb={handleFtb} onSelectPvw={handleSelectPvw} onSetOvl={handleSetOvl} onSelectPvwPip={handleSelectPvwPip} pips={pips} pgmPip={pgmPip} pvwPip={pvwPip} className="flex-1" visibleTransitions={controllerOptions.visibleTransitions} mutedMixerInputs={mutedGuestMixerInputs} />
                   <DskPanel onToggle={handleDskToggle} />
                   {MACROS_ENABLED && activeProductionId && (
                     <MacroBar productionId={activeProductionId!} onExec={handleMacroExec} />
@@ -1043,11 +1053,11 @@ export function ControllerPage() {
                 </div>
               </div>
             )}
-            {panels.guests && activeProductionId && (
+            {panels.guests && activeProduction && (
               <div className={`flex flex-col gap-2 panel-col-fixed h-full ${panels.controller || panels.fx || (panels.clip && hasClips) ? 'pr-3' : 'px-3'}`} style={{ width: 320 }}>
-                <SectionLabel icon={<GuestsIcon />} tooltip="Guest calling. Create a production-scoped invite and share the join link. Joined guests appear here and in the multiviewer — take them to air with the vision-mixer controls. Switch a guest's return-feed mode between full program (PGM) and mix-minus (PGM-N1, program without the guest's own audio). Talkback is shown when an intercom line is present. Endpoints/WS events come from the guest-calling spec and must be verified against staging." onHide={() => togglePanel('guests')}>Guests</SectionLabel>
+                <SectionLabel icon={<GuestsIcon />} tooltip="Guest calling. Invite a guest into a reserved slot (configured in Production Options → Guest Slots) and share the guest-page link. Joined guests appear here and in the vision-mixer tiles — take them to air with the vision-mixer controls. A muted-mic badge shows when a guest has muted, emphasized while they're on PVW/PGM. Switch a guest's return-feed mode between full program (PGM) and mix-minus (PGM-N1, program without the guest's own audio). Talkback is shown when an intercom line is present." onHide={() => togglePanel('guests')}>Guests</SectionLabel>
                 <div className="border border-zinc-800 overflow-y-auto flex-1 min-h-0 p-1.5" style={{ background: '#0d0d0d' }}>
-                  <GuestPanel productionId={activeProductionId} send={send} />
+                  <GuestPanel production={activeProduction} send={send} />
                 </div>
               </div>
             )}

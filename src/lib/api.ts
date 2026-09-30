@@ -128,6 +128,13 @@ export interface ApiSource {
 export interface ProductionSourceAssignment {
   sourceId: string
   mixerInput: string
+  /**
+   * Present ⇒ this mixer input is a guest slot: a reserved return-feed input a
+   * guest invite can target (open-live#381 item 1). Absent ⇒ an ordinary
+   * source assignment. `synced` mirrors the backend's `ReturnFeedInput`
+   * (`program-minus` default); v1 only ever sets `lowLatency: false`.
+   */
+  returnFeed?: { synced: 'program' | 'program-minus'; lowLatency?: boolean }
 }
 
 export interface ProductionGraphicAssignment {
@@ -517,13 +524,16 @@ export const iceServersApi = {
     request<{ iceServers: RTCIceServer[] }>('/api/v1/ice-servers'),
 }
 
-// --------------- Guest calling (epic open-live#208, studio#138) ---------------
+// --------------- Guest calling (epic open-live#208, studio#138, studio#163) ---
 //
-// Operator-facing surface of the guest-calling feature. All shapes come from the
-// backend contract in `Eyevinn/open-live` `docs/specs/guest-calling-intercom.md`
-// (invites+join #299, return feed #300, GUEST_STATE/RETURN_STATE WS #301). Do NOT
-// invent fields — the endpoints/events here must be verified against staging
-// before merge (the frontend is built against the documented spec, no mocks).
+// Operator-facing surface of the guest-calling feature. Shapes are verified
+// directly against the `Eyevinn/open-live` backend source (not just the spec):
+// guest slots (open-live#381, PR#389 — `src/routes/productions.ts` `ReturnFeedInput`
+// and `src/routes/guests.ts` `guestSlotAssignment`), the guest page + `muted` on
+// `GUEST_STATE` (open-live#382, PR#388 — `src/routes/guests.ts` `sessionToApi` /
+// `broadcastGuestState`), and invite tokens scoped to guest routes
+// (open-live#380, PR#384). A guest slot is a `ProductionSourceAssignment`
+// carrying `returnFeed` — invites must target one via `mixerInput`.
 
 /**
  * Lifecycle state of a guest. Superset of the persisted `GuestSessionDoc.state`
@@ -562,6 +572,12 @@ export interface GuestSession {
   mixerInput: string
   state: GuestState
   intercomLineId?: string
+  /**
+   * Mic-mute state reported by the guest page (open-live#382, issue #382).
+   * The backend always projects this field (default `false`), so it is never
+   * absent on a `GET .../guests` list entry.
+   */
+  muted: boolean
   createdAt?: string
   updatedAt?: string
 }
@@ -570,7 +586,13 @@ export const guestsApi = {
   listInvites: (productionId: string) =>
     request<GuestInvite[]>(`/api/v1/productions/${encodeURIComponent(productionId)}/guests/invites`),
 
-  createInvite: (productionId: string, body: { label?: string; expiresInS?: number }) =>
+  /**
+   * `mixerInput` must target a declared guest slot (a source assignment
+   * carrying `returnFeed`, open-live#381 item 2) — the backend rejects a
+   * create with no slot, or one that is not a guest slot on this production,
+   * with a 400.
+   */
+  createInvite: (productionId: string, body: { label?: string; expiresInS?: number; mixerInput: string }) =>
     request<GuestInvite>(`/api/v1/productions/${encodeURIComponent(productionId)}/guests/invites`, {
       method: 'POST',
       body: JSON.stringify(body),
