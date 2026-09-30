@@ -1,9 +1,9 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
-import { outputsApi, type ApiOutput, type OutputType } from '@/lib/api'
+import { outputsApi, type ApiOutput, type OutputType, type RtmpDestinationInput } from '@/lib/api'
 
-export type { ApiOutput as Output, OutputType }
+export type { ApiOutput as Output, OutputType, RtmpDestinationInput }
 
 interface OutputsState {
   outputs: ApiOutput[]
@@ -13,8 +13,8 @@ interface OutputsState {
 
 interface OutputsActions {
   fetchAll: () => Promise<void>
-  addOutput: (body: { name: string; outputType: OutputType; url?: string }) => Promise<ApiOutput>
-  updateOutput: (id: string, body: { name?: string; url?: string }) => Promise<void>
+  addOutput: (body: { name: string; outputType: OutputType; url?: string; rtmp?: RtmpDestinationInput }) => Promise<ApiOutput>
+  updateOutput: (id: string, body: { name?: string; url?: string; rtmp?: RtmpDestinationInput }) => Promise<void>
   removeOutput: (id: string) => Promise<void>
 }
 
