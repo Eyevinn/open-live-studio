@@ -1,24 +1,38 @@
 import { useState, useEffect } from 'react'
-import { useOutputsStore, type OutputType } from '@/store/outputs.store'
+import { useOutputsStore, type OutputType, type Output } from '@/store/outputs.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useServerInfo } from '@/hooks/useServerInfo'
+import type { OutputStatus, RtmpDestinationInput, RtmpPlatform } from '@/lib/api'
 import { buildListenerAddress, isCallerAddress, listenerPort, passphraseOf, srtDirection, toCallerUrl, type SrtDirection } from '@/lib/srt'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
+import { Badge } from '@/components/ui/Badge'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
 import { DirectionToggle, ListenerFields, inputCls, labelCls, listenerPortFor, listenerReady, useListenerPortMode } from '@/components/ui/SrtDirectionFields'
+import { RtmpFields, RTMP_PLATFORM_LABELS, streamKeyError, customUrlMissing } from '@/components/ui/RtmpDestinationFields'
 
-const CREATABLE_OUTPUT_TYPES: OutputType[] = ['mpegtssrt', 'efpsrt']
+const CREATABLE_OUTPUT_TYPES: OutputType[] = ['mpegtssrt', 'efpsrt', 'rtmp']
 
 const OUTPUT_TYPE_LABELS: Record<OutputType, string> = {
   mpegtssrt: 'MPEG-TS/SRT',
   efpsrt: 'EFP/SRT',
   whep: 'WHEP',
+  rtmp: 'RTMP',
 }
 
 const LISTENER_LABEL = 'Listener'
 const CALLER_LABEL = 'Caller'
+
+/** Render the derived output health (open-live #255) as a badge. Flow-level in v1. */
+function StatusBadge({ status }: { status: OutputStatus }) {
+  switch (status) {
+    case 'healthy': return <Badge variant="connected" label="HEALTHY" />
+    case 'degraded': return <Badge variant="connecting" label="DEGRADED" />
+    case 'down': return <Badge variant="error" label="DOWN" />
+    case 'unknown': return <Badge variant="idle" label="UNKNOWN" />
+  }
+}
 
 function timeSince(ts: number): string {
   const secs = Math.floor((Date.now() - ts) / 1000)
@@ -30,13 +44,24 @@ function timeSince(ts: number): string {
 interface EditState {
   id: string
   name: string
-  /** The URL as stored (passphrase masked by the backend). */
+  outputType: OutputType
+  /** The URL as stored (passphrase masked by the backend). SRT outputs only. */
   stored: string
   direction: SrtDirection
   url: string
   port: number | null
   manualPort: string
   passphrase: string
+  // RTMP-only fields (present when outputType === 'rtmp').
+  platform: RtmpPlatform
+  /** Resolved ingest URL as stored (custom carries the operator URL; presets a table URL). */
+  ingestUrl: string
+  /** Whether a stream key is stored server-side (from `streamKeySet`). */
+  keyStored: boolean
+  /** A replacement stream key the operator is entering. Never seeded from the server. */
+  streamKey: string
+  /** Operator asked to clear the stored key. */
+  clearKey: boolean
 }
 
 export function OutputsPanel() {
@@ -70,6 +95,9 @@ export function OutputsPanel() {
   const [newUrl, setNewUrl] = useState('')
   const [newManualPort, setNewManualPort] = useState('')
   const [newPassphrase, setNewPassphrase] = useState('')
+  const [newPlatform, setNewPlatform] = useState<RtmpPlatform>('youtube')
+  const [newCustomUrl, setNewCustomUrl] = useState('')
+  const [newStreamKey, setNewStreamKey] = useState('')
 
   function resetAdd() {
     setNewName('')
@@ -78,6 +106,9 @@ export function OutputsPanel() {
     setNewUrl('')
     setNewManualPort('')
     setNewPassphrase('')
+    setNewPlatform('youtube')
+    setNewCustomUrl('')
+    setNewStreamKey('')
     setAddUrlError(null)
   }
 
@@ -85,10 +116,27 @@ export function OutputsPanel() {
     return /[?&]mode=/i.test(url) ? url : url + (url.includes('?') ? '&' : '?') + 'mode=caller'
   }
 
-  const addReady = !!newName.trim() && (newDirection === 'listener' ? listenerReady(portMode, newManualPort) : !!newUrl.trim())
+  const rtmpAddReady =
+    !!newStreamKey.trim() && !streamKeyError(newStreamKey) && !customUrlMissing(newPlatform, newCustomUrl)
+  const addReady = !!newName.trim() && (
+    newType === 'rtmp'
+      ? rtmpAddReady
+      : newDirection === 'listener' ? listenerReady(portMode, newManualPort) : !!newUrl.trim()
+  )
 
   async function handleAdd() {
     if (!addReady) return
+    if (newType === 'rtmp') {
+      const rtmp: RtmpDestinationInput = {
+        platform: newPlatform,
+        streamKey: newStreamKey,
+        ...(newPlatform === 'custom' ? { ingestUrl: newCustomUrl.trim() } : {}),
+      }
+      await addOutput({ name: newName.trim(), outputType: 'rtmp', rtmp })
+      resetAdd()
+      setAddOpen(false)
+      return
+    }
     let url: string
     if (newDirection === 'listener') {
       const port = listenerPortFor(portMode, newManualPort)
@@ -105,27 +153,51 @@ export function OutputsPanel() {
     setAddOpen(false)
   }
 
-  function openEdit(o: { id: string; name: string; url?: string }) {
+  function openEdit(o: Output) {
     const stored = o.url ?? ''
     const direction = stored ? srtDirection(stored) : 'listener'
     setEditTarget({
       id: o.id,
       name: o.name,
+      outputType: o.outputType,
       stored,
       direction,
       url: direction === 'caller' ? stored : '',
       port: direction === 'listener' ? listenerPort(stored) : null,
       manualPort: '',
       passphrase: '',
+      platform: o.rtmp?.platform ?? 'youtube',
+      ingestUrl: o.rtmp?.ingestUrl ?? '',
+      keyStored: !!o.rtmp?.streamKeySet,
+      streamKey: '',
+      clearKey: false,
     })
     setEditUrlError(null)
   }
 
-  const editReady = !!editTarget && !!editTarget.name.trim() &&
-    (editTarget.direction === 'listener' ? listenerReady(portMode, editTarget.manualPort, editTarget.port) : !!editTarget.url.trim())
+  const editReady = !!editTarget && !!editTarget.name.trim() && (
+    editTarget.outputType === 'rtmp'
+      ? (editTarget.platform !== 'custom' || !!editTarget.ingestUrl.trim()) &&
+        !(editTarget.streamKey.length > 0 && streamKeyError(editTarget.streamKey))
+      : editTarget.direction === 'listener'
+        ? listenerReady(portMode, editTarget.manualPort, editTarget.port)
+        : !!editTarget.url.trim()
+  )
 
   async function handleEdit() {
     if (!editTarget || !editReady) return
+    if (editTarget.outputType === 'rtmp') {
+      // Build the write-only rtmp patch. streamKey: cleared → '', a new key →
+      // send it, otherwise omitted so the stored ciphertext is kept untouched.
+      const rtmp: RtmpDestinationInput = { platform: editTarget.platform }
+      if (editTarget.platform === 'custom') rtmp.ingestUrl = editTarget.ingestUrl.trim()
+      if (editTarget.clearKey) rtmp.streamKey = ''
+      else if (editTarget.streamKey.trim()) rtmp.streamKey = editTarget.streamKey
+      await updateOutput(editTarget.id, { name: editTarget.name.trim(), rtmp })
+      setEditUrlError(null)
+      setEditTarget(null)
+      return
+    }
     let url: string | undefined
     if (editTarget.direction === 'listener') {
       const switched = srtDirection(editTarget.stored) !== 'listener'
@@ -194,8 +266,14 @@ export function OutputsPanel() {
                   <span className="text-xs font-mono px-1.5 py-0.5 rounded bg-[--color-surface-raised] text-[--color-text-muted] uppercase">
                     {OUTPUT_TYPE_LABELS[o.outputType]}
                   </span>
+                  {o.outputType === 'rtmp' && o.status && <StatusBadge status={o.status} />}
                   {viewer && <InlineCopyButton label="Viewer address" value={viewer} />}
                 </div>
+                {o.rtmp && (
+                  <span className="text-xs text-[--color-text-muted] font-mono truncate block">
+                    {RTMP_PLATFORM_LABELS[o.rtmp.platform]} · {o.rtmp.ingestUrl} · {o.rtmp.streamKeySet ? 'key set' : 'no key'}
+                  </span>
+                )}
                 {o.url && (
                   <span className="text-xs text-[--color-text-muted] font-mono truncate block">
                     {viewer ? `viewers dial ${viewer}${passphraseOf(o.url ?? '') ? ' with the passphrase' : ''}` : o.url}
@@ -280,32 +358,45 @@ export function OutputsPanel() {
               ))}
             </div>
           </div>
-          <DirectionToggle
-            value={newDirection}
-            onChange={(d) => { setNewDirection(d); setAddUrlError(null) }}
-            listenerLabel={LISTENER_LABEL}
-            callerLabel={CALLER_LABEL}
-          />
-          {newDirection === 'listener' ? (
-            <ListenerFields
-              mode={portMode}
-              manualPort={newManualPort}
-              onManualPort={setNewManualPort}
-              passphrase={newPassphrase}
-              onPassphrase={setNewPassphrase}
+          {newType === 'rtmp' ? (
+            <RtmpFields
+              platform={newPlatform}
+              onPlatform={setNewPlatform}
+              customUrl={newCustomUrl}
+              onCustomUrl={setNewCustomUrl}
+              streamKey={newStreamKey}
+              onStreamKey={setNewStreamKey}
             />
           ) : (
-            <div>
-              <label className={labelCls}>Destination address</label>
-              <input
-                type="text"
-                value={newUrl}
-                onChange={(e) => { setNewUrl(e.target.value); setAddUrlError(null) }}
-                placeholder="srt://cdn.example.com:9000?mode=caller"
-                className={inputCls}
+            <>
+              <DirectionToggle
+                value={newDirection}
+                onChange={(d) => { setNewDirection(d); setAddUrlError(null) }}
+                listenerLabel={LISTENER_LABEL}
+                callerLabel={CALLER_LABEL}
               />
-              {addUrlError && <p className="text-xs text-red-400 mt-1">{addUrlError}</p>}
-            </div>
+              {newDirection === 'listener' ? (
+                <ListenerFields
+                  mode={portMode}
+                  manualPort={newManualPort}
+                  onManualPort={setNewManualPort}
+                  passphrase={newPassphrase}
+                  onPassphrase={setNewPassphrase}
+                />
+              ) : (
+                <div>
+                  <label className={labelCls}>Destination address</label>
+                  <input
+                    type="text"
+                    value={newUrl}
+                    onChange={(e) => { setNewUrl(e.target.value); setAddUrlError(null) }}
+                    placeholder="srt://cdn.example.com:9000?mode=caller"
+                    className={inputCls}
+                  />
+                  {addUrlError && <p className="text-xs text-red-400 mt-1">{addUrlError}</p>}
+                </div>
+              )}
+            </>
           )}
           <div className="flex justify-end gap-2 pt-1">
             <Button variant="ghost" onClick={() => { resetAdd(); setAddOpen(false) }}>Cancel</Button>
@@ -329,41 +420,58 @@ export function OutputsPanel() {
                 className={inputCls}
               />
             </div>
-            <DirectionToggle
-              value={editTarget.direction}
-              onChange={(direction) => { setEditTarget({ ...editTarget, direction }); setEditUrlError(null) }}
-              listenerLabel={LISTENER_LABEL}
-              callerLabel={CALLER_LABEL}
-            />
-            {editTarget.direction === 'listener' ? (
+            {editTarget.outputType === 'rtmp' ? (
+              <RtmpFields
+                platform={editTarget.platform}
+                onPlatform={(platform) => setEditTarget({ ...editTarget, platform })}
+                customUrl={editTarget.ingestUrl}
+                onCustomUrl={(ingestUrl) => setEditTarget({ ...editTarget, ingestUrl })}
+                streamKey={editTarget.streamKey}
+                onStreamKey={(streamKey) => setEditTarget({ ...editTarget, streamKey })}
+                keyStored={editTarget.keyStored}
+                clearKey={editTarget.clearKey}
+                onClearKey={(clearKey) => setEditTarget({ ...editTarget, clearKey })}
+                resolvedIngestUrl={editTarget.platform !== 'custom' ? editTarget.ingestUrl : undefined}
+              />
+            ) : (
               <>
-                <ListenerFields
-                  mode={portMode}
-                  manualPort={editTarget.manualPort}
-                  onManualPort={(manualPort) => setEditTarget({ ...editTarget, manualPort })}
-                  passphrase={editTarget.passphrase}
-                  onPassphrase={(passphrase) => setEditTarget({ ...editTarget, passphrase })}
-                  keepPort={srtDirection(editTarget.stored) === 'listener' ? editTarget.port : null}
-                  hasPassphrase={passphraseOf(editTarget.stored) !== null}
+                <DirectionToggle
+                  value={editTarget.direction}
+                  onChange={(direction) => { setEditTarget({ ...editTarget, direction }); setEditUrlError(null) }}
+                  listenerLabel={LISTENER_LABEL}
+                  callerLabel={CALLER_LABEL}
                 />
-                {editTarget.port && srtDirection(editTarget.stored) === 'listener' && (
-                  <p className="text-xs text-[--color-text-muted] font-mono break-all">
-                    Viewers dial {toCallerUrl(editTarget.stored, info?.stromHost)}{passphraseOf(editTarget.stored) ? ' with the passphrase' : ''}
-                  </p>
+                {editTarget.direction === 'listener' ? (
+                  <>
+                    <ListenerFields
+                      mode={portMode}
+                      manualPort={editTarget.manualPort}
+                      onManualPort={(manualPort) => setEditTarget({ ...editTarget, manualPort })}
+                      passphrase={editTarget.passphrase}
+                      onPassphrase={(passphrase) => setEditTarget({ ...editTarget, passphrase })}
+                      keepPort={srtDirection(editTarget.stored) === 'listener' ? editTarget.port : null}
+                      hasPassphrase={passphraseOf(editTarget.stored) !== null}
+                    />
+                    {editTarget.port && srtDirection(editTarget.stored) === 'listener' && (
+                      <p className="text-xs text-[--color-text-muted] font-mono break-all">
+                        Viewers dial {toCallerUrl(editTarget.stored, info?.stromHost)}{passphraseOf(editTarget.stored) ? ' with the passphrase' : ''}
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <div>
+                    <label className={labelCls}>Destination address</label>
+                    <input
+                      type="text"
+                      value={editTarget.url}
+                      placeholder="srt://cdn.example.com:9000?mode=caller"
+                      onChange={(e) => { setEditTarget({ ...editTarget, url: e.target.value }); setEditUrlError(null) }}
+                      className={inputCls}
+                    />
+                    {editUrlError && <p className="text-xs text-red-400 mt-1">{editUrlError}</p>}
+                  </div>
                 )}
               </>
-            ) : (
-              <div>
-                <label className={labelCls}>Destination address</label>
-                <input
-                  type="text"
-                  value={editTarget.url}
-                  placeholder="srt://cdn.example.com:9000?mode=caller"
-                  onChange={(e) => { setEditTarget({ ...editTarget, url: e.target.value }); setEditUrlError(null) }}
-                  className={inputCls}
-                />
-                {editUrlError && <p className="text-xs text-red-400 mt-1">{editUrlError}</p>}
-              </div>
             )}
             <div className="flex justify-end gap-2 pt-1">
               <Button variant="ghost" onClick={() => { setEditTarget(null); setEditUrlError(null) }}>Cancel</Button>

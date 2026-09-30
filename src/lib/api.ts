@@ -135,13 +135,65 @@ export interface ProductionGraphicAssignment {
   dskInput: string
 }
 
-export type OutputType = 'mpegtssrt' | 'efpsrt' | 'whep'
+export type OutputType = 'mpegtssrt' | 'efpsrt' | 'whep' | 'rtmp'
+
+/**
+ * RTMP multi-destination platform presets (open-live epic #319, spec
+ * `docs/specs/rtmp-multi-destination.md`, RESOLVED Decision 1). For the three
+ * named presets the operator supplies ONLY a stream key — the backend resolves
+ * the ingest URL from a static server-side table. `custom` carries an
+ * operator-supplied `rtmp(s)://` ingest URL, scheme/SSRF-validated server-side.
+ */
+export type RtmpPlatform = 'youtube' | 'twitch' | 'facebook' | 'custom'
+
+/**
+ * Derived, never-persisted output health (open-live issue #255), computed on
+ * read from the owning production's live flow state. Flow-level only in v1: all
+ * outputs of a running production read `healthy` uniformly — a truthful
+ * per-destination RTMP badge is gated on strom#840 (spec RESOLVED Decision 3).
+ */
+export type OutputStatus = 'healthy' | 'degraded' | 'down' | 'unknown'
+
+/**
+ * RTMP destination material as RETURNED by the API. The stream key is NEVER
+ * present here — it is write-only. On read the backend echoes only
+ * `streamKeySet` (whether a key is stored), alongside the resolved `ingestUrl`
+ * (key-free) and the `platform`. Do NOT add a `streamKey` field to this read
+ * shape — that is the credential-to-browser anti-pattern of studio#10.
+ */
+export interface RtmpDestination {
+  platform: RtmpPlatform
+  /** Resolved ingest URL, WITHOUT the stream key. Preset URLs come from the backend table. */
+  ingestUrl: string
+  /** Read-only echo: whether a stream key is stored. The key itself is never returned. */
+  streamKeySet: boolean
+}
+
+/**
+ * Write-only RTMP payload for create/patch. `streamKey` is sent once (on
+ * create, or to replace on patch) and never echoed back; an empty string clears
+ * the stored key; omitting it leaves the stored key untouched. `ingestUrl` is
+ * honoured only for `platform: 'custom'` — named presets resolve it server-side.
+ */
+export interface RtmpDestinationInput {
+  platform: RtmpPlatform
+  /** Write-only: sent on create/replace, encrypted at rest, never returned. `''` clears it. */
+  streamKey?: string
+  /** Custom platform only: the operator-supplied `rtmp(s)://` ingest URL. */
+  ingestUrl?: string
+}
 
 export interface ApiOutput {
   id: string
   name: string
   outputType: OutputType
   url?: string
+  /** Derived SRT dial-in address (SRT outputs only). */
+  connect?: string
+  /** RTMP destination material (rtmp outputs only). Stream key masked to `streamKeySet`. */
+  rtmp?: RtmpDestination
+  /** Derived health, present on list/get responses (open-live #255). */
+  status?: OutputStatus
   createdAt: string
   updatedAt: string
 }
@@ -620,13 +672,13 @@ export const outputsApi = {
   list: () =>
     request<ApiOutput[]>('/api/v1/outputs'),
 
-  create: (body: { name: string; outputType: OutputType; url?: string }) =>
+  create: (body: { name: string; outputType: OutputType; url?: string; rtmp?: RtmpDestinationInput }) =>
     request<ApiOutput>('/api/v1/outputs', {
       method: 'POST',
       body: JSON.stringify(body),
     }),
 
-  update: (id: string, body: { name?: string; url?: string }) =>
+  update: (id: string, body: { name?: string; url?: string; rtmp?: RtmpDestinationInput }) =>
     request<ApiOutput>(`/api/v1/outputs/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
