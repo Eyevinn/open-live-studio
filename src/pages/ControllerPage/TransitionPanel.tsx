@@ -3,6 +3,7 @@ import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { cn } from '@/lib/cn'
 import { useRef, useCallback, useState, useEffect } from 'react'
+import { MutedMicIcon } from '@/components/ui/MutedMicIcon'
 
 const DURATION_PRESETS_MS = [500, 1000, 2000]
 const TRANSITION_TYPES: TransitionType[] = [
@@ -73,9 +74,13 @@ interface TransitionPanelProps {
   pvwPip?: number | null
   className?: string
   visibleTransitions?: string[]
+  /** Mixer inputs whose guest is currently muted (`GUEST_STATE.muted`,
+   * open-live#382) — renders a mic-muted badge on that source's PGM/PVW tile,
+   * so a muted guest is never taken to air unnoticed (studio#163). */
+  mutedMixerInputs?: Set<string>
 }
 
-export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, onSelectPvwPip, pips, pgmPip, pvwPip, className, visibleTransitions }: TransitionPanelProps) {
+export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, onSelectPvwPip, pips, pgmPip, pvwPip, className, visibleTransitions, mutedMixerInputs }: TransitionPanelProps) {
   const ovlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const debouncedSetOvl = useCallback((alpha: number) => {
     if (ovlTimerRef.current) clearTimeout(ovlTimerRef.current)
@@ -156,21 +161,26 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
             {inputSlots.length === 0 && (
               <span className="text-[9px] text-zinc-600 italic px-1 flex items-center">{'NO SOURCES'}</span>
             )}
-            {inputSlots.map((slot) => (
-              <button
-                key={slot.mixerInput}
-                disabled
-                className={cn(
-                  'btn-hardware flex-1 min-w-14 px-1.5 py-0 text-[10px] font-bold break-words border cursor-default select-none flex items-center justify-center tracking-wide',
-                  pgmInput === slot.mixerInput
-                    ? 'text-white border-white'
-                    : 'text-zinc-600 border-zinc-800 bg-zinc-900',
-                )}
-                style={pgmInput === slot.mixerInput ? { background: '#ff0000', borderColor: '#ffffff' } : {}}
-              >
-                {slot.name}
-              </button>
-            ))}
+            {inputSlots.map((slot) => {
+              const isOnPgmRow = pgmInput === slot.mixerInput
+              const muted = mutedMixerInputs?.has(slot.mixerInput)
+              return (
+                <button
+                  key={slot.mixerInput}
+                  disabled
+                  className={cn(
+                    'relative btn-hardware flex-1 min-w-14 px-1.5 py-0 text-[10px] font-bold break-words border cursor-default select-none flex items-center justify-center tracking-wide',
+                    isOnPgmRow
+                      ? 'text-white border-white'
+                      : 'text-zinc-600 border-zinc-800 bg-zinc-900',
+                  )}
+                  style={isOnPgmRow ? { background: '#ff0000', borderColor: '#ffffff' } : {}}
+                >
+                  {slot.name}
+                  {muted && <MutedMicIcon emphasized={isOnPgmRow} className="absolute top-0.5 right-0.5" size={8} />}
+                </button>
+              )
+            })}
             {(pips ?? []).map((_, pipIdx) => (
               <button
                 key={`pgm-pip-${pipIdx}`}
@@ -202,13 +212,14 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
             {inputSlots.map((slot) => {
               const isOnPgm = pgmInput === slot.mixerInput
               const isActive = pvwInput === slot.mixerInput
+              const muted = mutedMixerInputs?.has(slot.mixerInput)
               return (
                 <button
                   key={slot.mixerInput}
                   onClick={() => !isOnPgm && onSelectPvw(slot.mixerInput)}
                   disabled={isOnPgm}
                   className={cn(
-                    'btn-hardware flex-1 min-w-14 px-1.5 py-0 text-[10px] font-bold break-words border transition-all tracking-wide cursor-pointer flex items-center justify-center',
+                    'relative btn-hardware flex-1 min-w-14 px-1.5 py-0 text-[10px] font-bold break-words border transition-all tracking-wide cursor-pointer flex items-center justify-center',
                     isActive
                       ? 'text-black border-white'
                       : isOnPgm
@@ -218,6 +229,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
                   style={isActive ? { background: '#00cc00', borderColor: '#ffffff' } : {}}
                 >
                   {slot.name}
+                  {muted && <MutedMicIcon emphasized={isActive || isOnPgm} className="absolute top-0.5 right-0.5" size={8} />}
                 </button>
               )
             })}

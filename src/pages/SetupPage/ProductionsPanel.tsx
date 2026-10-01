@@ -38,8 +38,34 @@ const STREAM_TYPE_LABELS = {
 const MAX_INPUTS = 16
 const MAX_OUTPUTS = 8
 const MIN_INPUTS = 2
+// Guest slots (open-live#381, studio#163): reserved return-feed mixer inputs a
+// guest invite can target. Capped at 4 to mirror the PiP-slots pattern
+// (`num_pips`) rather than exposing the full MAX_INPUTS range.
+const MAX_GUEST_SLOTS = 4
 
 function mixerInput(index: number) { return `video_in_${index}` }
+
+/**
+ * Guest slots are allocated from the TOP of the mixer-input range downward
+ * (video_in_15, video_in_14, …), keeping them out of the way of the
+ * contiguous 0-based range the regular Sources section manages — so growing
+ * the guest-slot count never collides with a source's compacted pad index,
+ * and vice versa (the two ranges are capped so they cannot overlap; see
+ * `guestSlotsAvailable`).
+ */
+function guestSlotMixerInput(slotIndex: number) { return mixerInput(MAX_INPUTS - 1 - slotIndex) }
+
+/** How many guest slots the mixer-input space has room for given the current
+ * (non-guest) source count. */
+function guestSlotsAvailable(sourceSlotCount: number) {
+  return Math.max(0, Math.min(MAX_GUEST_SLOTS, MAX_INPUTS - sourceSlotCount))
+}
+
+/** A source assignment IS a guest slot (open-live#381 item 1) exactly when it
+ * carries `returnFeed` — the same test the backend uses. Kept out of the
+ * regular Sources section (which manages contiguous 0-based mixer inputs) so
+ * the two do not fight over pad indices. */
+function isGuestSlotAssignment(s: { returnFeed?: unknown }): boolean { return !!s.returnFeed }
 
 // ---------------------------------------------------------------------------
 // Source slot row — one input
@@ -121,6 +147,43 @@ function GfxSlotRow({ dskInput: _dskInput, currentGraphicId, onChange }: GfxSlot
           <option key={g.id} value={g.id}>{g.name}</option>
         ))}
       </select>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Guest slots field (open-live#381, studio#163)
+// ---------------------------------------------------------------------------
+
+interface GuestSlotsFieldProps {
+  value: number
+  /** Upper bound offered in the select — room left in the mixer-input space
+   * after the current (non-guest) source count. */
+  maxAvailable: number
+  onChange: (count: number) => void
+}
+
+function GuestSlotsField({ value, maxAvailable, onChange }: GuestSlotsFieldProps) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-1">
+        <span className="text-xs uppercase tracking-wider text-orange-500">Guest Slots</span>
+        <InfoTip text="Reserved return-feed mixer inputs for guest calling. Invite a guest into a slot from the Guests panel once the production is active; each guest connects over WHIP and gets a mix-minus (or full program) return feed." />
+      </div>
+      <select
+        value={Math.min(value, maxAvailable)}
+        onChange={(e) => onChange(parseInt(e.target.value, 10))}
+        className={selectCls}
+      >
+        {Array.from({ length: maxAvailable + 1 }, (_, n) => n).map((n) => (
+          <option key={n} value={n}>{n === 0 ? 'None' : n}</option>
+        ))}
+      </select>
+      {maxAvailable < MAX_GUEST_SLOTS && (
+        <p className="text-[10px] text-[--color-text-muted] italic">
+          Reduce Source inputs to add more guest slots — each guest slot reserves a mixer input.
+        </p>
+      )}
     </div>
   )
 }
@@ -259,7 +322,10 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
 
   // Sort valid sources by their pad index and compact to contiguous 0-based indices.
   // Non-contiguous gaps arise when remove+shift backend writes partially fail.
-  const validSources = [...production.sources.filter((s) => isValidSource(s.sourceId))]
+  // Guest slots (returnFeed assignments) are excluded — they live in their own
+  // reserved range at the top of the mixer-input space (guestSlotMixerInput)
+  // and are managed by the Guest Slots field below, not this compaction.
+  const validSources = [...production.sources.filter((s) => isValidSource(s.sourceId) && !isGuestSlotAssignment(s))]
     .sort((a, b) => {
       const ai = parseInt(/(\d+)$/.exec(a.mixerInput)?.[1] ?? '0', 10)
       const bi = parseInt(/(\d+)$/.exec(b.mixerInput)?.[1] ?? '0', 10)
@@ -287,6 +353,31 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
   const [gfxAssignments, setGfxAssignments] = useState<Record<string, string>>(() =>
     Object.fromEntries((production.graphicAssignments ?? []).map((g) => [g.dskInput, g.graphicId]))
   )
+
+  // Guest slots (open-live#381, studio#163): count existing returnFeed
+  // assignments to seed the field — order doesn't matter here, only the count.
+  const [guestSlotCount, setGuestSlotCount] = useState(() =>
+    production.sources.filter(isGuestSlotAssignment).length
+  )
+  const guestSlotsMax = guestSlotsAvailable(slotCount)
+
+  async function handleGuestSlotChange(next: number) {
+    const prev = guestSlotCount
+    setGuestSlotCount(next)
+    if (next > prev) {
+      for (let i = prev; i < next; i++) {
+        await assignSource(production.id, {
+          mixerInput: guestSlotMixerInput(i),
+          sourceId: 'Whip',
+          returnFeed: { synced: 'program-minus' },
+        })
+      }
+    } else if (next < prev) {
+      for (let i = next; i < prev; i++) {
+        await unassignSource(production.id, guestSlotMixerInput(i))
+      }
+    }
+  }
 
   async function handleChange(index: number, sourceId: string) {
     const pad = mixerInput(index)
@@ -408,9 +499,9 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
               </div>
               {isActive ? (
                 <div className="flex flex-col gap-1.5">
-                  {production.sources.length === 0
+                  {production.sources.filter((s) => !isGuestSlotAssignment(s)).length === 0
                     ? <span className="text-xs text-[--color-text-muted] italic">No sources assigned</span>
-                    : production.sources.map((s) => <SourceAssignmentBadge key={s.mixerInput} assignment={s} />)
+                    : production.sources.filter((s) => !isGuestSlotAssignment(s)).map((s) => <SourceAssignmentBadge key={s.mixerInput} assignment={s} />)
                   }
                 </div>
               ) : (
@@ -420,7 +511,7 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
                       <SlotRow key={i} index={i} currentSourceId={assignments[mixerInput(i)] ?? ''} canRemove={slotCount > MIN_INPUTS} onChange={(sourceId) => void handleChange(i, sourceId)} onRemove={() => void handleRemove(i)} />
                     ))}
                   </div>
-                  {slotCount < MAX_INPUTS && (
+                  {slotCount < MAX_INPUTS - guestSlotCount && (
                     <button type="button" onClick={() => setSlotCount((c) => c + 1)} className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity">+ New Input</button>
                   )}
                 </>
@@ -452,6 +543,20 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
                 </div>
               )}
             </div>
+
+            {isActive ? (
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-1">
+                  <span className="text-xs uppercase tracking-wider text-orange-500">Guest Slots</span>
+                  <InfoTip text="Reserved return-feed mixer inputs for guest calling. Invite a guest into a slot from the Guests panel." />
+                </div>
+                <span className="text-xs text-[--color-text-primary]">
+                  {guestSlotCount === 0 ? <span className="text-[--color-text-muted] italic">None</span> : guestSlotCount}
+                </span>
+              </div>
+            ) : (
+              <GuestSlotsField value={guestSlotCount} maxAvailable={guestSlotsMax} onChange={(n) => void handleGuestSlotChange(n)} />
+            )}
 
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-1">
@@ -542,6 +647,8 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
   const [outputList, setOutputList] = useState<string[]>([])
   const [airTimeLocal, setAirTimeLocal] = useState('')
   const [slotCount, setSlotCount] = useState(MIN_INPUTS)
+  // Guest slots (open-live#381, studio#163): default 0, alongside Sources/Graphics/PiP.
+  const [guestSlotCount, setGuestSlotCount] = useState(0)
   const [saving, setSaving] = useState(false)
 
   const [configValues, setConfigValues] = useState<Record<string, string | number | boolean>>(() =>
@@ -596,6 +703,13 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
       }
       for (const outputId of outputList) {
         if (outputId) await productionsApi.assignOutput(prod.id, outputId)
+      }
+      for (let i = 0; i < guestSlotCount; i++) {
+        await productionsApi.assignSource(prod.id, {
+          mixerInput: guestSlotMixerInput(i),
+          sourceId: 'Whip',
+          returnFeed: { synced: 'program-minus' },
+        })
       }
       await fetchAll()
       onCreated()
@@ -669,7 +783,7 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
                       />
                     ))}
                   </div>
-                  {slotCount < MAX_INPUTS && (
+                  {slotCount < MAX_INPUTS - guestSlotCount && (
                     <button type="button" onClick={() => setSlotCount((c) => c + 1)} className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity">+ New Input</button>
                   )}
                 </>
@@ -687,6 +801,8 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
                 ))}
               </div>
             </div>
+
+            <GuestSlotsField value={guestSlotCount} maxAvailable={guestSlotsAvailable(slotCount)} onChange={setGuestSlotCount} />
 
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-1">
@@ -834,7 +950,8 @@ export function ProductionsPanel() {
         {[...productions].sort((a, b) => a.name.localeCompare(b.name)).map((prod) => {
           const isActive = prod.status === 'active'
           const isActivating = prod.status === 'activating'
-          const assignedCount = prod.sources.length
+          // Excludes guest slots (returnFeed assignments) — they are not camera/source inputs.
+          const assignedCount = prod.sources.filter((s) => !isGuestSlotAssignment(s)).length
           const airStartMs = prod.airTime ? new Date(prod.airTime).getTime() : null
           const programMode = getProgramMode(airStartMs, now)
           const isOnAir = programMode === 'onair'
@@ -970,7 +1087,10 @@ export function ProductionsPanel() {
                   <span className="text-xs text-[--color-text-muted] truncate">
                     {assignedCount > 0 ? `${assignedCount} ${assignedCount === 1 ? 'source' : 'sources'}` : 'No sources'}
                   </span>
-                  {isActive && prod.whipEndpoints?.map((ep) => {
+                  {/* Guest-slot WHIP endpoints are excluded — guests connect via their
+                      per-invite guest-page link (Guests panel), not this manual-WHIP
+                      copy affordance meant for regular "WHIP Input" sources. */}
+                  {isActive && prod.whipEndpoints?.filter((ep) => !prod.sources.some((s) => s.mixerInput === ep.mixerInput && isGuestSlotAssignment(s))).map((ep) => {
                     const idx = /(\d+)$/.exec(ep.mixerInput)?.[1]
                     return (
                       <InlineCopyButton

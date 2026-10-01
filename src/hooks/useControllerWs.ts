@@ -377,9 +377,9 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
               break
             }
             case 'GUEST_STATE': {
-              // Guest lifecycle broadcast (epic open-live#208, studio#138). Included
+              // Guest lifecycle broadcast (epic open-live#208, studio#138/#163). Included
               // in the connect-time sync and pushed on every state change.
-              // Shape: { guestId, mixerInput, state, label?, intercomLine? }.
+              // Shape: { guestId, mixerInput, state, muted, label?, intercomLine? }.
               const validStates: GuestState[] = ['invited', 'joined', 'previewing', 'on-air', 'left', 'error']
               if (
                 typeof msg['guestId'] === 'string' &&
@@ -397,6 +397,9 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
                   guestId: msg['guestId'] as string,
                   mixerInput: msg['mixerInput'] as string,
                   state: msg['state'] as GuestState,
+                  // The backend always carries `muted` on GUEST_STATE (open-live#382)
+                  // — default to false only for defence against a malformed event.
+                  muted: typeof msg['muted'] === 'boolean' ? (msg['muted'] as boolean) : false,
                   ...(typeof msg['label'] === 'string' ? { label: msg['label'] as string } : {}),
                   ...(intercomLine ? { intercomLine } : {}),
                 })

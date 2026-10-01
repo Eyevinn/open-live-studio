@@ -34,6 +34,13 @@ export interface GuestView {
    */
   intercomLine?: string
   inviteId?: string
+  /**
+   * Mic-mute state reported by the guest page (open-live#382, issue #382),
+   * carried on every `GUEST_STATE` broadcast and the REST `GET .../guests`
+   * seed. Drives the muted-mic indicator in the Guests panel and on the
+   * guest's vision-mixer tile (studio#163).
+   */
+  muted: boolean
 }
 
 interface GuestsState {
@@ -85,6 +92,8 @@ export const useGuestsStore = create<GuestsState & GuestsActions>()(
                   mixerInput: g.mixerInput,
                   state: g.state,
                   inviteId: g.inviteId,
+                  // The backend always projects `muted` (default false, open-live#382).
+                  muted: g.muted,
                   // REST carries the talkback line as the raw `intercomLineId`
                   // doc field (a string); the WS `GUEST_STATE` event calls the
                   // same value `intercomLine`. Map it in so the Talkback badge
@@ -113,6 +122,10 @@ export const useGuestsStore = create<GuestsState & GuestsActions>()(
                 label: guest.label ?? prev?.label,
                 intercomLine: guest.intercomLine ?? prev?.intercomLine,
                 inviteId: guest.inviteId ?? prev?.inviteId,
+                // The backend always carries `muted` on GUEST_STATE, but fall
+                // back to the prior known value defensively (e.g. a malformed
+                // event), then false — never undefined.
+                muted: guest.muted ?? prev?.muted ?? false,
               },
             },
           }
