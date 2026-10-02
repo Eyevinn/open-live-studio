@@ -12,6 +12,7 @@ import { PRODUCTION_PROPERTIES, type TemplateProperty } from '@/lib/production-s
 import { Button } from '@/components/ui/Button'
 import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
 import { toCallerUrl } from '@/lib/srt'
+import { isReturnOnlySlot } from '@/lib/guest-slots'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
 import { Tooltip } from '@/components/ui/Tooltip'
@@ -67,6 +68,22 @@ function guestSlotsAvailable(sourceSlotCount: number) {
  * the two do not fight over pad indices. */
 function isGuestSlotAssignment(s: { returnFeed?: unknown }): boolean { return !!s.returnFeed }
 
+/** Default guest-slot source: the guest publishes camera and mic from the
+ * browser over WHIP. */
+const GUEST_SLOT_WHIP = 'Whip'
+
+/** Catalogue stream types a guest slot can take instead of WHIP: an encoder
+ * (Larix/Moblin on a phone, an aid-station camera) that carries the guest's
+ * picture and voice itself. The invite then grants the return only. */
+const RETURN_ONLY_STREAM_TYPES = ['srt', 'efp'] as const
+
+/** Guest-slot assignments in "Slot 1, Slot 2, …" order (Slot 1 is the highest
+ * mixer input, matching `guestSlotMixerInput` and the Guests panel). */
+function guestSlotAssignments<T extends { mixerInput: string; returnFeed?: unknown }>(sources: T[]): T[] {
+  const index = (mi: string) => parseInt(/(\d+)$/.exec(mi)?.[1] ?? '0', 10)
+  return sources.filter(isGuestSlotAssignment).sort((a, b) => index(b.mixerInput) - index(a.mixerInput))
+}
+
 // ---------------------------------------------------------------------------
 // Source slot row — one input
 // ---------------------------------------------------------------------------
@@ -74,19 +91,22 @@ function isGuestSlotAssignment(s: { returnFeed?: unknown }): boolean { return !!
 interface SlotRowProps {
   index: number
   currentSourceId: string
+  /** Catalogue sources a guest slot already uses; hidden here so one encoder
+   * does not feed two mixer inputs (program-minus would close only one). */
+  excludeIds?: string[]
   canRemove: boolean
   onChange: (sourceId: string) => void
   onRemove: () => void
 }
 
-function SlotRow({ index: _index, currentSourceId, canRemove, onChange, onRemove }: SlotRowProps) {
+function SlotRow({ index: _index, currentSourceId, excludeIds = [], canRemove, onChange, onRemove }: SlotRowProps) {
   const sources = useSourcesStore((s) => s.sources)
   return (
     <div className="flex items-center gap-2">
       <select value={currentSourceId} onChange={(e) => onChange(e.target.value)} className={`${selectCls} flex-1`}>
         <option value="">— unassigned —</option>
         {Object.entries(
-          [...sources].sort((a, b) => a.name.localeCompare(b.name)).reduce<Record<string, typeof sources>>((acc, s) => {
+          sources.filter((s) => s.id === currentSourceId || !excludeIds.includes(s.id)).sort((a, b) => a.name.localeCompare(b.name)).reduce<Record<string, typeof sources>>((acc, s) => {
             ;(acc[s.streamType] ??= []).push(s)
             return acc
           }, {}),
@@ -156,29 +176,62 @@ function GfxSlotRow({ dskInput: _dskInput, currentGraphicId, onChange }: GfxSlot
 // ---------------------------------------------------------------------------
 
 interface GuestSlotsFieldProps {
-  value: number
+  /** Source id per slot, Slot 1 first. Its length is the slot count. */
+  slots: string[]
   /** Upper bound offered in the select — room left in the mixer-input space
    * after the current (non-guest) source count. */
   maxAvailable: number
-  onChange: (count: number) => void
+  /** Catalogue source ids on ordinary inputs; not offered to a guest slot. */
+  usedSourceIds: string[]
+  onCountChange: (count: number) => void
+  onSourceChange: (slotIndex: number, sourceId: string) => void
 }
 
-function GuestSlotsField({ value, maxAvailable, onChange }: GuestSlotsFieldProps) {
+function GuestSlotsField({ slots, maxAvailable, usedSourceIds, onCountChange, onSourceChange }: GuestSlotsFieldProps) {
+  const sources = useSourcesStore((s) => s.sources)
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-1">
         <span className="text-xs uppercase tracking-wider text-orange-500">Guest Slots</span>
-        <InfoTip text="Reserved return-feed mixer inputs for guest calling. Invite a guest into a slot from the Guests panel once the production is active; each guest connects over WHIP and gets a mix-minus (or full program) return feed." />
+        <InfoTip text="Reserved return-feed mixer inputs for guest calling. Invite a guest into a slot from the Guests panel once the production is active. A WHIP slot takes the guest's camera and mic from the browser. An SRT/EFP slot takes them from that encoder (a phone on cellular, say); the invite then plays the return only. Either way the guest hears a mix-minus (or full program) return." />
       </div>
       <select
-        value={Math.min(value, maxAvailable)}
-        onChange={(e) => onChange(parseInt(e.target.value, 10))}
+        value={Math.min(slots.length, maxAvailable)}
+        onChange={(e) => onCountChange(parseInt(e.target.value, 10))}
         className={selectCls}
       >
         {Array.from({ length: maxAvailable + 1 }, (_, n) => n).map((n) => (
           <option key={n} value={n}>{n === 0 ? 'None' : n}</option>
         ))}
       </select>
+      {slots.slice(0, maxAvailable).map((sourceId, i) => {
+        // A catalogue source can feed one mixer input: hide the ones on
+        // ordinary inputs or on another guest slot.
+        const taken = new Set([...usedSourceIds, ...slots.filter((_, j) => j !== i)])
+        const options = sources
+          .filter((s) => (RETURN_ONLY_STREAM_TYPES as readonly string[]).includes(s.streamType))
+          .filter((s) => s.id === sourceId || !taken.has(s.id))
+          .sort((a, b) => a.name.localeCompare(b.name))
+        const known = sourceId === GUEST_SLOT_WHIP || options.some((s) => s.id === sourceId)
+        const current = sources.find((s) => s.id === sourceId)
+        return (
+          <div key={i} className="flex items-center gap-2">
+            <span className="text-xs text-[--color-text-muted] w-12 shrink-0">Slot {i + 1}</span>
+            <select value={sourceId} onChange={(e) => onSourceChange(i, e.target.value)} className={`${selectCls} flex-1`} aria-label={`Guest slot ${i + 1} source`}>
+              <option value={GUEST_SLOT_WHIP}>WHIP (guest camera)</option>
+              {RETURN_ONLY_STREAM_TYPES.map((type) => {
+                const group = options.filter((s) => s.streamType === type)
+                return group.length > 0 && (
+                  <optgroup key={type} label={`${STREAM_TYPE_LABELS[type]} (return only)`}>
+                    {group.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                  </optgroup>
+                )
+              })}
+              {!known && <option value={sourceId}>{current?.name ?? `${sourceId} (not in catalogue)`}</option>}
+            </select>
+          </div>
+        )
+      })}
       {maxAvailable < MAX_GUEST_SLOTS && (
         <p className="text-[10px] text-[--color-text-muted] italic">
           Reduce Source inputs to add more guest slots — each guest slot reserves a mixer input.
@@ -354,21 +407,20 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
     Object.fromEntries((production.graphicAssignments ?? []).map((g) => [g.dskInput, g.graphicId]))
   )
 
-  // Guest slots (open-live#381, studio#163): count existing returnFeed
-  // assignments to seed the field — order doesn't matter here, only the count.
-  const [guestSlotCount, setGuestSlotCount] = useState(() =>
-    production.sources.filter(isGuestSlotAssignment).length
-  )
+  // Guest slots (open-live#381, studio#163): one source id per existing
+  // returnFeed assignment, Slot 1 first.
+  const [guestSlotSources, setGuestSlotSources] = useState(() => guestSlotAssignments(production.sources).map((s) => s.sourceId))
+  const guestSlotCount = guestSlotSources.length
   const guestSlotsMax = guestSlotsAvailable(slotCount)
 
   async function handleGuestSlotChange(next: number) {
     const prev = guestSlotCount
-    setGuestSlotCount(next)
+    setGuestSlotSources((cur) => next > prev ? [...cur, ...Array<string>(next - prev).fill(GUEST_SLOT_WHIP)] : cur.slice(0, next))
     if (next > prev) {
       for (let i = prev; i < next; i++) {
         await assignSource(production.id, {
           mixerInput: guestSlotMixerInput(i),
-          sourceId: 'Whip',
+          sourceId: GUEST_SLOT_WHIP,
           returnFeed: { synced: 'program-minus' },
         })
       }
@@ -377,6 +429,16 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
         await unassignSource(production.id, guestSlotMixerInput(i))
       }
     }
+  }
+
+  // Swapping the source re-assigns the same mixer input, so the slot is never
+  // without a source and its invites (pinned to the mixer input) still apply.
+  async function handleGuestSlotSourceChange(slotIndex: number, sourceId: string) {
+    const slot = guestSlotAssignments(production.sources)[slotIndex]
+    const pad = slot?.mixerInput ?? guestSlotMixerInput(slotIndex)
+    const returnFeed = slot?.returnFeed ?? { synced: 'program-minus' as const }
+    setGuestSlotSources((cur) => cur.map((id, i) => i === slotIndex ? sourceId : id))
+    await assignSource(production.id, { mixerInput: pad, sourceId, returnFeed })
   }
 
   async function handleChange(index: number, sourceId: string) {
@@ -508,7 +570,7 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
                 <>
                   <div className="flex flex-col gap-2">
                     {Array.from({ length: slotCount }, (_, i) => (
-                      <SlotRow key={i} index={i} currentSourceId={assignments[mixerInput(i)] ?? ''} canRemove={slotCount > MIN_INPUTS} onChange={(sourceId) => void handleChange(i, sourceId)} onRemove={() => void handleRemove(i)} />
+                      <SlotRow key={i} index={i} currentSourceId={assignments[mixerInput(i)] ?? ''} excludeIds={guestSlotSources} canRemove={slotCount > MIN_INPUTS} onChange={(sourceId) => void handleChange(i, sourceId)} onRemove={() => void handleRemove(i)} />
                     ))}
                   </div>
                   {slotCount < MAX_INPUTS - guestSlotCount && (
@@ -550,12 +612,22 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
                   <span className="text-xs uppercase tracking-wider text-orange-500">Guest Slots</span>
                   <InfoTip text="Reserved return-feed mixer inputs for guest calling. Invite a guest into a slot from the Guests panel." />
                 </div>
-                <span className="text-xs text-[--color-text-primary]">
-                  {guestSlotCount === 0 ? <span className="text-[--color-text-muted] italic">None</span> : guestSlotCount}
-                </span>
+                {guestSlotCount === 0
+                  ? <span className="text-xs text-[--color-text-muted] italic">None</span>
+                  : (
+                    <div className="flex flex-col gap-1.5">
+                      {guestSlotSources.map((sourceId, i) => <GuestSlotBadge key={i} slotIndex={i} sourceId={sourceId} />)}
+                    </div>
+                  )}
               </div>
             ) : (
-              <GuestSlotsField value={guestSlotCount} maxAvailable={guestSlotsMax} onChange={(n) => void handleGuestSlotChange(n)} />
+              <GuestSlotsField
+                slots={guestSlotSources}
+                maxAvailable={guestSlotsMax}
+                usedSourceIds={Object.values(assignments).filter(Boolean)}
+                onCountChange={(n) => void handleGuestSlotChange(n)}
+                onSourceChange={(i, sourceId) => void handleGuestSlotSourceChange(i, sourceId)}
+              />
             )}
 
             <div className="flex flex-col gap-2">
@@ -648,7 +720,9 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
   const [airTimeLocal, setAirTimeLocal] = useState('')
   const [slotCount, setSlotCount] = useState(MIN_INPUTS)
   // Guest slots (open-live#381, studio#163): default 0, alongside Sources/Graphics/PiP.
-  const [guestSlotCount, setGuestSlotCount] = useState(0)
+  // One source id per slot, Slot 1 first.
+  const [guestSlotSources, setGuestSlotSources] = useState<string[]>([])
+  const guestSlotCount = guestSlotSources.length
   const [saving, setSaving] = useState(false)
 
   const [configValues, setConfigValues] = useState<Record<string, string | number | boolean>>(() =>
@@ -704,10 +778,10 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
       for (const outputId of outputList) {
         if (outputId) await productionsApi.assignOutput(prod.id, outputId)
       }
-      for (let i = 0; i < guestSlotCount; i++) {
+      for (const [i, sourceId] of guestSlotSources.slice(0, guestSlotsAvailable(slotCount)).entries()) {
         await productionsApi.assignSource(prod.id, {
           mixerInput: guestSlotMixerInput(i),
-          sourceId: 'Whip',
+          sourceId,
           returnFeed: { synced: 'program-minus' },
         })
       }
@@ -765,7 +839,7 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
                 <>
                   <div className="flex flex-col gap-2">
                     {Array.from({ length: slotCount }, (_, i) => (
-                      <SlotRow key={i} index={i} currentSourceId={assignments[mixerInput(i)] ?? ''} canRemove={slotCount > MIN_INPUTS}
+                      <SlotRow key={i} index={i} currentSourceId={assignments[mixerInput(i)] ?? ''} excludeIds={guestSlotSources} canRemove={slotCount > MIN_INPUTS}
                         onChange={(sourceId) => setAssignments((prev) => ({ ...prev, [mixerInput(i)]: sourceId }))}
                         onRemove={() => {
                           setAssignments((prev) => {
@@ -802,7 +876,13 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
               </div>
             </div>
 
-            <GuestSlotsField value={guestSlotCount} maxAvailable={guestSlotsAvailable(slotCount)} onChange={setGuestSlotCount} />
+            <GuestSlotsField
+              slots={guestSlotSources}
+              maxAvailable={guestSlotsAvailable(slotCount)}
+              usedSourceIds={Object.values(assignments).filter(Boolean)}
+              onCountChange={(n) => setGuestSlotSources((cur) => n > cur.length ? [...cur, ...Array<string>(n - cur.length).fill(GUEST_SLOT_WHIP)] : cur.slice(0, n))}
+              onSourceChange={(i, sourceId) => setGuestSlotSources((cur) => cur.map((id, j) => j === i ? sourceId : id))}
+            />
 
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-1">
@@ -1273,6 +1353,18 @@ const VIRTUAL_SOURCE_NAMES: Record<string, string> = {
   '__test2__': 'Colors',
 }
 
+
+function GuestSlotBadge({ slotIndex, sourceId }: { slotIndex: number; sourceId: string }) {
+  const sources = useSourcesStore((s) => s.sources)
+  const name = sources.find((src) => src.id === sourceId)?.name ?? VIRTUAL_SOURCE_NAMES[sourceId] ?? sourceId
+  return (
+    <div className="flex items-center gap-1.5 text-xs">
+      <span className="text-[--color-text-muted]">Slot {slotIndex + 1}</span>
+      <span className="text-[--color-text-primary]">{name}</span>
+      {isReturnOnlySlot(sourceId, sources) && <span className="text-[--color-text-muted] italic">return only</span>}
+    </div>
+  )
+}
 
 function SourceAssignmentBadge({ assignment }: { assignment: { sourceId: string; mixerInput: string } }) {
   const source = useSourcesStore((s) => s.sources.find((src) => src.id === assignment.sourceId))
