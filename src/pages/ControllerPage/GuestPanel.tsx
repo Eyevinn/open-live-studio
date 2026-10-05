@@ -5,6 +5,8 @@ import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
 import { MutedMicIcon } from '@/components/ui/MutedMicIcon'
 import { useGuestsStore, type GuestView } from '@/store/guests.store'
 import { useProductionStore } from '@/store/production.store'
+import { useSourcesStore } from '@/store/sources.store'
+import { isReturnOnlySlot } from '@/lib/guest-slots'
 import type { Production } from '@/store/productions.store'
 import { ApiError, guestsApi, type GuestState, type ReturnMode } from '@/lib/api'
 import type { OutboundMessage } from '@/hooks/useControllerWs'
@@ -36,9 +38,15 @@ function actionErrorMessage(err: unknown, fallback: string): string {
 //                emphasized while the guest is on PVW/PGM so a muted guest is
 //                never taken to air unnoticed (studio#163 requirement 5).
 //
-// A joined guest is a WHIP source assigned to a mixer input, so it already
-// appears in the vision-mixer PGM/PVW tiles (TransitionPanel) and is taken to
-// preview/air with the existing SET_PVW / CUT / TAKE controls.
+// A slot's source (WHIP, or an SRT/EFP encoder for a return-only slot) is
+// assigned to a mixer input, so it already appears in the vision-mixer PGM/PVW
+// tiles (TransitionPanel) and is taken to preview/air with the existing
+// SET_PVW / CUT / TAKE controls.
+//
+// Return-only slots (open-live#409): the encoder carries the guest's picture
+// and voice, and the invite page plays the return only. Such a guest is shown
+// as listening, with no mic-muted badge (the page publishes no mic), and kick
+// ends their return session but leaves the encoder feeding the slot.
 
 /** Badge variant + short label per guest state. */
 const STATE_BADGE: Record<GuestState, { variant: 'idle' | 'connected' | 'preview' | 'live' | 'disconnected' | 'error'; label: string }> = {
@@ -94,6 +102,7 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
   const removeInvite = useGuestsStore((s) => s.removeInvite)
   const setGuests = useGuestsStore((s) => s.setGuests)
   const { pgmInput, pvwInput } = useProductionStore()
+  const sources = useSourcesStore((s) => s.sources)
 
   // Which slot's inline invite form is open, plus its draft fields.
   const [openInviteSlot, setOpenInviteSlot] = useState<string | null>(null)
@@ -233,18 +242,24 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
             const badge = guest ? STATE_BADGE[guest.state] : null
             const mode = guest ? returnModes[guest.mixerInput] : undefined
             const onAirOrPvw = guest ? pgmInput === guest.mixerInput || pvwInput === guest.mixerInput : false
+            const returnOnly = isReturnOnlySlot(slot.sourceId, sources)
+            const sourceName = returnOnly ? (sources.find((s) => s.id === slot.sourceId)?.name ?? slot.sourceId) : null
+            const kickTitle = returnOnly
+              ? 'Remove guest: ends their return session. The encoder keeps feeding this slot until you stop it.'
+              : 'Remove guest'
 
             return (
               <div key={slot.mixerInput} className="flex flex-col gap-1.5 border border-zinc-800 bg-zinc-950 px-2.5 py-2">
                 <div className="flex items-center gap-2">
                   <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 shrink-0">Slot {i + 1}</span>
+                  {returnOnly && <ReturnOnlyTag listening={!!guest} />}
 
                   {guest ? (
                     <>
                       <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-300 truncate flex-1 min-w-0">
                         {guestName(guest)}
                       </span>
-                      {guest.muted && <MutedMicIcon emphasized={onAirOrPvw} />}
+                      {!returnOnly && guest.muted && <MutedMicIcon emphasized={onAirOrPvw} />}
                       {guest.intercomLine && (
                         <span
                           title={`Talkback line available (${guest.intercomLine})`}
@@ -261,8 +276,8 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
                       <button
                         type="button"
                         onClick={() => { void handleKick(guest.guestId) }}
-                        title="Remove guest"
-                        aria-label="Remove guest"
+                        title={kickTitle}
+                        aria-label={kickTitle}
                         className="text-zinc-600 hover:text-red-400 transition-colors cursor-pointer text-[13px] leading-none px-1 shrink-0"
                       >
                         ✕
@@ -289,6 +304,15 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
                     </>
                   )}
                 </div>
+
+                {/* Which encoder feeds a return-only slot. Its SRT address and
+                    passphrase stay on the Sources page: they outlive any
+                    invite, so they are not shown next to the invite link. */}
+                {sourceName && (
+                  <span className="text-[8px] uppercase tracking-widest text-zinc-600 truncate" title={`Picture and voice come from ${sourceName}`}>
+                    Feed: {sourceName}
+                  </span>
+                )}
 
                 {/* Return-mode control (occupied slots only) */}
                 {guest && (
@@ -392,5 +416,22 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
         )}
       </div>
     </div>
+  )
+}
+
+/** Marks a return-only slot. While a guest is joined it reads "Listening":
+ * the guest hears the return; their picture and voice come from the encoder. */
+function ReturnOnlyTag({ listening }: { listening: boolean }) {
+  return (
+    <span
+      title={listening ? 'Guest is listening to the return; picture and voice come from the encoder' : 'Return only: the invite plays the return, the encoder carries picture and voice'}
+      className="inline-flex items-center gap-1 text-[8px] font-bold uppercase tracking-widest text-zinc-400 border border-zinc-700 px-1.5 py-0.5 rounded shrink-0"
+    >
+      <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M3 18v-6a9 9 0 0 1 18 0v6" />
+        <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z" />
+      </svg>
+      {listening ? 'Listening' : 'Return only'}
+    </span>
   )
 }
