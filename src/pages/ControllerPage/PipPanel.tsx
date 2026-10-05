@@ -4,6 +4,7 @@ import { useProductionStore, type PipConfig, type SourceCrop, type PipTransforms
 import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { cn } from '@/lib/cn'
+import { pipShowsBlackBehind } from '@/lib/pip'
 import { Tooltip } from '@/components/ui/Tooltip'
 
 interface PipPanelProps {
@@ -871,6 +872,14 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
                 {draft.bg !== null && (
                   <div style={{ position: 'absolute', bottom: 4, left: 4, fontSize: 8, color: '#a1a1aa', background: 'rgba(0,0,0,0.6)', padding: '1px 4px' }}>
                     BG: {(inputSlots[draft.bg]?.name ?? String(draft.bg + 1))}
+                  </div>
+                )}
+                {pipShowsBlackBehind(draft) && (
+                  <div
+                    title="This PiP has no background and its zones do not cover the frame — taking it to programme shows black behind it."
+                    style={{ position: 'absolute', top: 4, left: 4, fontSize: 8, fontWeight: 700, color: '#fcd34d', background: 'rgba(0,0,0,0.7)', border: '1px solid #f59e0b', padding: '1px 4px', letterSpacing: '0.04em' }}
+                  >
+                    ⚠ NO BG — BLACK BEHIND
                   </div>
                 )}
                 {draft.zones.length === 0 && (

@@ -2,6 +2,7 @@ import { useProductionStore, type TransitionType, type PipConfig } from '@/store
 import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { cn } from '@/lib/cn'
+import { pipShowsBlackBehind } from '@/lib/pip'
 import { useRef, useCallback, useState, useEffect } from 'react'
 import { MutedMicIcon } from '@/components/ui/MutedMicIcon'
 
@@ -60,6 +61,23 @@ export const TRANSITION_LABELS: Record<TransitionType, string> = {
   tv_roll:        'ROLL',
   negative_flash: 'NEGATIVE',
   ripple:         'RIPPLE',
+}
+
+/** Small amber "no background" marker shown on a PiP tile whose take would
+ *  leave black behind it (studio#170). Mirrors the MutedMicIcon badge pattern. */
+function NoBgBadge({ emphasized }: { emphasized?: boolean }) {
+  return (
+    <span
+      aria-label="No background"
+      className={cn(
+        'absolute top-0.5 right-0.5 leading-none pointer-events-none select-none',
+        emphasized ? 'text-amber-300' : 'text-amber-400',
+      )}
+      style={{ fontSize: 9 }}
+    >
+      ⚠
+    </span>
+  )
 }
 
 interface TransitionPanelProps {
@@ -181,21 +199,26 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
                 </button>
               )
             })}
-            {(pips ?? []).map((_, pipIdx) => (
-              <button
-                key={`pgm-pip-${pipIdx}`}
-                disabled
-                className={cn(
-                  'btn-hardware flex-1 min-w-14 px-1.5 py-0 text-[10px] font-bold break-words border cursor-default select-none flex items-center justify-center tracking-wide',
-                  pgmPip === pipIdx
-                    ? 'text-white border-white'
-                    : 'text-zinc-600 border-zinc-800 bg-zinc-900',
-                )}
-                style={pgmPip === pipIdx ? { background: '#ff0000', borderColor: '#ffffff' } : {}}
-              >
-                PiP {pipIdx + 1}
-              </button>
-            ))}
+            {(pips ?? []).map((pip, pipIdx) => {
+              const noBg = pipShowsBlackBehind(pip)
+              return (
+                <button
+                  key={`pgm-pip-${pipIdx}`}
+                  disabled
+                  title={noBg ? 'No background — program shows black behind this PiP' : undefined}
+                  className={cn(
+                    'relative btn-hardware flex-1 min-w-14 px-1.5 py-0 text-[10px] font-bold break-words border cursor-default select-none flex items-center justify-center tracking-wide',
+                    pgmPip === pipIdx
+                      ? 'text-white border-white'
+                      : 'text-zinc-600 border-zinc-800 bg-zinc-900',
+                  )}
+                  style={pgmPip === pipIdx ? { background: '#ff0000', borderColor: '#ffffff' } : {}}
+                >
+                  PiP {pipIdx + 1}
+                  {noBg && <NoBgBadge emphasized={pgmPip === pipIdx} />}
+                </button>
+              )
+            })}
           </div>
         </div>
 
@@ -233,16 +256,18 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
                 </button>
               )
             })}
-            {(pips ?? []).map((_, pipIdx) => {
+            {(pips ?? []).map((pip, pipIdx) => {
               const isOnPgm = pgmPip === pipIdx
               const isActive = pvwPip === pipIdx
+              const noBg = pipShowsBlackBehind(pip)
               return (
                 <button
                   key={`pvw-pip-${pipIdx}`}
                   onClick={() => !isOnPgm && onSelectPvwPip?.(pipIdx)}
                   disabled={isOnPgm}
+                  title={noBg ? 'No background — program shows black behind this PiP' : undefined}
                   className={cn(
-                    'btn-hardware flex-1 min-w-14 px-1.5 py-0 text-[10px] font-bold break-words border transition-all tracking-wide cursor-pointer flex items-center justify-center',
+                    'relative btn-hardware flex-1 min-w-14 px-1.5 py-0 text-[10px] font-bold break-words border transition-all tracking-wide cursor-pointer flex items-center justify-center',
                     isActive
                       ? 'text-black border-white'
                       : isOnPgm
@@ -252,6 +277,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
                   style={isActive ? { background: '#00cc00', borderColor: '#ffffff' } : {}}
                 >
                   PiP {pipIdx + 1}
+                  {noBg && <NoBgBadge emphasized={isActive || isOnPgm} />}
                 </button>
               )
             })}

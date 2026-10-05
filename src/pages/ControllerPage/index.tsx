@@ -24,6 +24,8 @@ import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { useProductionStore, type PipConfig } from '@/store/production.store'
+import { useToastStore } from '@/store/toast.store'
+import { pipShowsBlackBehind } from '@/lib/pip'
 import { useGuestsStore } from '@/store/guests.store'
 import { useIsOnAir } from '@/store/programClock.store'
 import { useProductionsStore } from '@/store/productions.store'
@@ -595,23 +597,37 @@ export function ControllerPage() {
     return () => { cancelled = true }
   }, [activeProductionId, activeProduction?.status, setElements, refreshOneProduction])
 
+  // Non-blocking warning (studio#170): a PiP with no background whose zones
+  // don't cover the frame draws over black, so taking it turns the rest of
+  // programme black with no other hint. Warn, but never prevent the take.
+  const addToast = useToastStore((s) => s.addToast)
+  const warnIfPipShowsBlack = useCallback((pipIdx: number | null | undefined) => {
+    if (pipIdx === null || pipIdx === undefined) return
+    const pip = pips[pipIdx]
+    if (pip && pipShowsBlackBehind(pip)) {
+      addToast(`PiP ${pipIdx + 1} has no background — programme will show black behind it`, 'info')
+    }
+  }, [pips, addToast])
+
   const handleCut = useCallback(() => {
     if (pvwPip !== null && pvwPip !== undefined) {
+      warnIfPipShowsBlack(pvwPip)
       send({ type: 'TAKE', afvRampUpMs, afvRampDownMs })
     } else {
       cut()
       send({ type: 'CUT', mixerInput: pvwInput ?? '', afvRampUpMs, afvRampDownMs })
     }
-  }, [pvwPip, pvwInput, cut, send, afvRampUpMs, afvRampDownMs])
+  }, [pvwPip, pvwInput, cut, send, afvRampUpMs, afvRampDownMs, warnIfPipShowsBlack])
 
   const handleAuto = useCallback(() => {
     if (pvwPip !== null && pvwPip !== undefined) {
+      warnIfPipShowsBlack(pvwPip)
       send({ type: 'TAKE', transitionType, durationMs: transitionDurationMs, afvRampUpMs, afvRampDownMs })
     } else {
       auto()
       send({ type: 'TRANSITION', mixerInput: pvwInput ?? '', transitionType, durationMs: transitionDurationMs, afvRampUpMs, afvRampDownMs })
     }
-  }, [pvwPip, pvwInput, auto, send, transitionType, transitionDurationMs, afvRampUpMs, afvRampDownMs])
+  }, [pvwPip, pvwInput, auto, send, transitionType, transitionDurationMs, afvRampUpMs, afvRampDownMs, warnIfPipShowsBlack])
 
   const handleFtb = useCallback(() => { ftb(); send({ type: 'FTB', durationMs: transitionDurationMs }) }, [ftb, send, transitionDurationMs])
   const handleSetOvl = useCallback((alpha: number) => { send({ type: 'SET_OVL', alpha }) }, [send])
@@ -678,6 +694,7 @@ export function ControllerPage() {
           const isOnPgm = pgmPip === pipIdx
           if (isOnPgm) return
           if (e.shiftKey) {
+            warnIfPipShowsBlack(pipIdx)
             send({ type: 'TAKE', pip: pipIdx, afvRampUpMs, afvRampDownMs })
           } else {
             handleSelectPvwPip(pipIdx)
@@ -685,7 +702,7 @@ export function ControllerPage() {
         }
       }
     }
-  }, [handleCut, handleAuto, handleFtb, dskState, send, sortedSources, cut, pgmInput, pgmPip, afvRampUpMs, afvRampDownMs, pips, handleSelectPvw, handleSelectPvwPip])
+  }, [handleCut, handleAuto, handleFtb, dskState, send, sortedSources, cut, pgmInput, pgmPip, afvRampUpMs, afvRampDownMs, pips, handleSelectPvw, handleSelectPvwPip, warnIfPipShowsBlack])
 
   useEffect(() => {
     // Phone tier (<768px) is read-only — no keyboard shortcuts that mutate state (#105).
