@@ -6,7 +6,7 @@ import { useProductionStore } from '@/store/production.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { useGraphicsStore } from '@/store/graphics.store'
 import { useOutputsStore } from '@/store/outputs.store'
-import { productionsApi, productionConfigsApi, serverInfoApi } from '@/lib/api'
+import { ApiError, productionsApi, productionConfigsApi, serverInfoApi } from '@/lib/api'
 import type { ProductionConfig, ProductionGraphicAssignment } from '@/lib/api'
 import { PRODUCTION_PROPERTIES, type TemplateProperty } from '@/lib/production-schema'
 import { Button } from '@/components/ui/Button'
@@ -950,10 +950,22 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
 // Productions panel
 // ---------------------------------------------------------------------------
 
+/**
+ * Message for a failed activate/deactivate. A fetch that rejects without an
+ * HTTP response (Safari: "TypeError: Load failed") does not mean the backend
+ * stopped: deactivation keeps running server-side, so say so instead of
+ * inviting an immediate retry.
+ */
+function statusErrorMessage(err: unknown, action: 'activate' | 'deactivate'): string {
+  if (err instanceof ApiError) return err.message
+  const verb = action === 'activate' ? 'activating' : 'deactivating'
+  return `Lost contact with the server while ${verb}. It may still finish; check the production's status before trying again.`
+}
+
 export function ProductionsPanel() {
   // Phone tier (<768px): read-only. Hide every state-mutating control (#105).
   const isPhone = useIsPhone()
-  const { productions, isLoading, removeProduction, updateStatus, fetchAll } = useProductionsStore()
+  const { productions, isLoading, removeProduction, updateStatus, fetchAll, pendingStatus } = useProductionsStore()
   const { activeProductionId, setActiveProduction } = useProductionStore()
   const outputs = useOutputsStore((s) => s.outputs)
   const navigate = useNavigate()
@@ -994,7 +1006,7 @@ export function ProductionsPanel() {
   const [optionsId, setOptionsId] = useState<string | null>(null)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const [deactivateTarget, setDeactivateTarget] = useState<Production | null>(null)
-  const [activationError, setActivationError] = useState<{ prodId: string; message: string } | null>(null)
+  const [statusError, setStatusError] = useState<{ prodId: string; message: string } | null>(null)
 
   async function handleDelete(id: string) {
     await removeProduction(id)
@@ -1028,8 +1040,9 @@ export function ProductionsPanel() {
       {/* Production list */}
       <div className="flex flex-col gap-2">
         {[...productions].sort((a, b) => a.name.localeCompare(b.name)).map((prod) => {
+          const pending = pendingStatus[prod.id]
           const isActive = prod.status === 'active'
-          const isActivating = prod.status === 'activating'
+          const isActivating = prod.status === 'activating' || pending === 'activate'
           // Excludes guest slots (returnFeed assignments) — they are not camera/source inputs.
           const assignedCount = prod.sources.filter((s) => !isGuestSlotAssignment(s)).length
           const airStartMs = prod.airTime ? new Date(prod.airTime).getTime() : null
@@ -1039,7 +1052,7 @@ export function ProductionsPanel() {
           // Idle countdown — driven entirely by backend-supplied expiry timestamp
           const idleRemainingMs = isActive && prod.idleExpiresAt != null ? Math.max(0, prod.idleExpiresAt - now) : null
           const idleRemainingSec = idleRemainingMs !== null ? Math.ceil(idleRemainingMs / 1000) : null
-          const isDeactivating = idleRemainingMs === 0
+          const isDeactivating = idleRemainingMs === 0 || pending === 'deactivate'
           const idleCountdown = idleRemainingSec !== null && !isDeactivating
             ? `${Math.floor(idleRemainingSec / 60)}:${String(idleRemainingSec % 60).padStart(2, '0')}`
             : null
@@ -1055,7 +1068,7 @@ export function ProductionsPanel() {
                   : 'bg-[--color-surface-3] border-[--color-border] hover:border-orange-500 cursor-pointer'
               }`}
               onClick={() => {
-                if (isActivating) return
+                if (isActivating || isDeactivating) return
                 if (isActive) void navigate(`/studio?production=${prod.id}`)
                 // Phone tier: opening the options/config modal would expose a
                 // state-mutating form, so inactive rows are inert at <768px (#105).
@@ -1064,7 +1077,7 @@ export function ProductionsPanel() {
             >
               <StatusDot
                 color={isActive ? 'red' : isActivating ? 'yellow' : 'gray'}
-                pulse={isActivating}
+                pulse={isActivating || isDeactivating}
               />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -1196,8 +1209,8 @@ export function ProductionsPanel() {
                     return <InlineCopyButton key={w.outputId} label={`WHEP OUT: ${out?.name ?? 'Output'}`} value={w.url} />
                   })}
                 </div>
-                {activationError?.prodId === prod.id && (
-                  <p className="text-xs text-red-400 mt-0.5">{activationError.message}</p>
+                {statusError?.prodId === prod.id && (
+                  <p className="text-xs text-red-400 mt-0.5">{statusError.message}</p>
                 )}
               </div>
               <div className="flex gap-2 shrink-0">
@@ -1235,14 +1248,14 @@ export function ProductionsPanel() {
                   <Button
                     size="sm"
                     variant="ghost"
-                    disabled={isActivating}
+                    disabled={isActivating || isDeactivating}
                     onClick={(e) => {
                       e.stopPropagation()
                       if (!isActivating) {
-                        setActivationError(null)
+                        setStatusError(null)
                         updateStatus(prod.id, 'active')
                           .then(() => setActiveProduction(prod.id))
-                          .catch((err: unknown) => setActivationError({ prodId: prod.id, message: err instanceof Error ? err.message : 'Activation failed' }))
+                          .catch((err: unknown) => setStatusError({ prodId: prod.id, message: statusErrorMessage(err, 'activate') }))
                       }
                     }}
                     className="text-orange-500 hover:text-orange-400 border-transparent"
@@ -1256,7 +1269,7 @@ export function ProductionsPanel() {
                   size="sm"
                   variant="ghost"
                   onClick={(e) => { e.stopPropagation(); setOptionsId(prod.id) }}
-                  disabled={isActivating}
+                  disabled={isActivating || isDeactivating}
                 >
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="w-3.5 h-3.5" aria-hidden="true">
                     <path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
@@ -1297,9 +1310,17 @@ export function ProductionsPanel() {
               <Button
                 variant="danger"
                 onClick={() => {
-                  void updateStatus(deactivateTarget.id, 'inactive')
-                  setActiveProduction(null)
+                  const id = deactivateTarget.id
                   setDeactivateTarget(null)
+                  setStatusError(null)
+                  updateStatus(id, 'inactive')
+                    .then(() => {
+                      if (useProductionStore.getState().activeProductionId === id) setActiveProduction(null)
+                    })
+                    .catch((err: unknown) => {
+                      setStatusError({ prodId: id, message: statusErrorMessage(err, 'deactivate') })
+                      void fetchAll()
+                    })
                 }}
               >
                 Deactivate

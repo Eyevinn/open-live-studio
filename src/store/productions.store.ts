@@ -38,6 +38,13 @@ interface ProductionsState {
   productions: Production[]
   isLoading: boolean
   lastFetchedAt: number
+  /**
+   * Activate/deactivate requests still in flight, by production id. Deactivate
+   * can take tens of seconds (the backend uploads recordings first) while the
+   * production still reports `active`, so the UI needs this to show progress
+   * and to block a second, overlapping request.
+   */
+  pendingStatus: Record<string, 'activate' | 'deactivate'>
 }
 
 interface ProductionsActions {
@@ -85,10 +92,11 @@ function fromApi(p: ApiProduction): Production {
 
 export const useProductionsStore = create<ProductionsState & ProductionsActions>()(
   devtools(
-    immer((set) => ({
+    immer((set, get) => ({
       productions: [],
       isLoading: false,
       lastFetchedAt: Date.now(),
+      pendingStatus: {},
 
       fetchAll: async () => {
         set((state) => { state.isLoading = true })
@@ -117,60 +125,66 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
       },
 
       updateStatus: async (id, status) => {
-        const updated = await (status === 'active'
-          ? productionsApi.activate(id)
-          : productionsApi.deactivate(id))
-        set((state) => {
-          const prod = state.productions.find((p) => p.id === id)
-          if (prod) {
-            prod.status = updated.status
-            prod.stromFlowId = updated.stromFlowId
-            prod.whepEndpoint = updated.whepEndpoint
-            prod.pgmWhepEndpoint = updated.pgmWhepEndpoint
-            if (updated.status === 'inactive') {
-              prod.whipEndpoints = undefined
-              prod.srtOutputUri = undefined
-              prod.whepOutputUrls = undefined
+        if (get().pendingStatus[id]) return
+        set((state) => { state.pendingStatus[id] = status === 'active' ? 'activate' : 'deactivate' })
+        try {
+          const updated = await (status === 'active'
+            ? productionsApi.activate(id)
+            : productionsApi.deactivate(id))
+          set((state) => {
+            const prod = state.productions.find((p) => p.id === id)
+            if (prod) {
+              prod.status = updated.status
+              prod.stromFlowId = updated.stromFlowId
+              prod.whepEndpoint = updated.whepEndpoint
+              prod.pgmWhepEndpoint = updated.pgmWhepEndpoint
+              if (updated.status === 'inactive') {
+                prod.whipEndpoints = undefined
+                prod.srtOutputUri = undefined
+                prod.whepOutputUrls = undefined
+              }
             }
-          }
-        })
+          })
 
-        if (updated.status === 'activating') {
-          // Poll until status is no longer 'activating' or timeout is reached
-          const deadline = Date.now() + ACTIVATION_POLL_TIMEOUT_MS
-          const poll = async (): Promise<void> => {
-            if (Date.now() >= deadline) {
-              // eslint-disable-next-line no-console -- surfaces activation polling timeout for diagnostics
-              console.warn(`[productions] Activation polling timed out for production ${id}`)
-              return
-            }
-            await new Promise<void>((resolve) => setTimeout(resolve, ACTIVATION_POLL_INTERVAL_MS))
-            try {
-              const polled = await productionsApi.get(id)
-              set((state) => {
-                const prod = state.productions.find((p) => p.id === id)
-                if (prod) {
-                  prod.status = polled.status
-                  prod.stromFlowId = polled.stromFlowId
-                  prod.whepEndpoint = polled.whepEndpoint
-                  prod.pgmWhepEndpoint = polled.pgmWhepEndpoint
-                  prod.whipEndpoints = polled.whipEndpoints
-                  prod.whepOutputUrls = polled.whepOutputUrls
-                  prod.srtOutputUri = polled.srtOutputUri
+          if (updated.status === 'activating') {
+            // Poll until status is no longer 'activating' or timeout is reached
+            const deadline = Date.now() + ACTIVATION_POLL_TIMEOUT_MS
+            const poll = async (): Promise<void> => {
+              if (Date.now() >= deadline) {
+                // eslint-disable-next-line no-console -- surfaces activation polling timeout for diagnostics
+                console.warn(`[productions] Activation polling timed out for production ${id}`)
+                return
+              }
+              await new Promise<void>((resolve) => setTimeout(resolve, ACTIVATION_POLL_INTERVAL_MS))
+              try {
+                const polled = await productionsApi.get(id)
+                set((state) => {
+                  const prod = state.productions.find((p) => p.id === id)
+                  if (prod) {
+                    prod.status = polled.status
+                    prod.stromFlowId = polled.stromFlowId
+                    prod.whepEndpoint = polled.whepEndpoint
+                    prod.pgmWhepEndpoint = polled.pgmWhepEndpoint
+                    prod.whipEndpoints = polled.whipEndpoints
+                    prod.whepOutputUrls = polled.whepOutputUrls
+                    prod.srtOutputUri = polled.srtOutputUri
+                  }
+                })
+                if (polled.status === 'activating') {
+                  await poll()
                 }
-              })
-              if (polled.status === 'activating') {
+              } catch (err) {
+                // eslint-disable-next-line no-console -- surfaces activation poll errors for diagnostics
+                console.error(`[productions] Activation poll error for ${id}:`, err)
+                // Wait before retrying to prevent burst-recursion on instant-failing errors
+                await new Promise<void>((resolve) => setTimeout(resolve, ACTIVATION_POLL_ERROR_DELAY_MS))
                 await poll()
               }
-            } catch (err) {
-              // eslint-disable-next-line no-console -- surfaces activation poll errors for diagnostics
-              console.error(`[productions] Activation poll error for ${id}:`, err)
-              // Wait before retrying to prevent burst-recursion on instant-failing errors
-              await new Promise<void>((resolve) => setTimeout(resolve, ACTIVATION_POLL_ERROR_DELAY_MS))
-              await poll()
             }
+            await poll()
           }
-          await poll()
+        } finally {
+          set((state) => { delete state.pendingStatus[id] })
         }
       },
 
