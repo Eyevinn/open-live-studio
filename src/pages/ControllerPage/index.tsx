@@ -37,6 +37,7 @@ import { useViewerStore } from '@/store/viewer.store'
 import { audioApi, type ApiProduction } from '@/lib/api'
 import { ToastContainer } from '@/components/ui/ToastContainer'
 import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog'
+import { ShortcutsHelpOverlay } from './ShortcutsHelpOverlay'
 import { useKeymapStore } from '@/store/keymap.store'
 import { useKeymapDispatcher, BUS_SLOTS, previewSelectActionId, programCutActionId, type ActionHandlers } from '@/lib/keymap'
 
@@ -559,6 +560,7 @@ export function ControllerPage() {
   }, [audioOptionsOpen]) // eslint-disable-line react-hooks/exhaustive-deps
   const [controllerOptionsOpen, setControllerOptionsOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
   const multiviewerRef = useRef<HTMLDivElement>(null)
   const pgmRef = useRef<HTMLDivElement>(null)
   const programPreviewRef = useRef<ProgramPreviewHandle>(null)
@@ -735,6 +737,23 @@ export function ControllerPage() {
 
   // Phone tier (<768px) is read-only — no state-mutating shortcuts (#105).
   useKeymapDispatcher({ enabled: !isPhone, keymap, handlers: keymapHandlers })
+
+  // `?` opens the read-only shortcuts cheat sheet (studio#175). It is not a
+  // bindable action — it is a fixed help key — so it lives outside the keymap
+  // dispatcher. Ignored while typing in a field, and while the rebinding dialog
+  // is open so the two overlays never stack.
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== '?' || event.ctrlKey || event.altKey || event.metaKey) return
+      const target = event.target
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return
+      if (shortcutsOpen) return
+      event.preventDefault()
+      setHelpOpen(true)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [shortcutsOpen])
 
   useEffect(() => {
     const onFsChange = () => {
@@ -1063,6 +1082,7 @@ export function ControllerPage() {
               <div className="px-3 flex flex-col gap-2 min-w-0 flex-1 h-full">
                 <SectionLabel icon={<ControllerIcon />} tooltip="Vision mixer controls. Click a source to set it on preview, then press Cut or Auto to take it to programme. Toggle FTB to fade to black. Use DSK to layer graphics over programme. Press the gear icon to set transition types and source timing offsets." onPopOut={activeProductionId ? () => { window.open(`/pane/controller?production=${activeProductionId}`, '_blank', 'noopener') } : undefined} onHide={() => togglePanel('controller')} actions={
                   <>
+                    <button type="button" onClick={() => setHelpOpen(true)} title="Shortcuts cheat sheet (press ?)" className="cursor-pointer hover:text-[--color-text-primary] transition-colors text-sm font-bold leading-none">?</button>
                     <button type="button" onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts" className="cursor-pointer hover:text-[--color-text-primary] transition-colors"><KeyboardIcon /></button>
                     <button type="button" onClick={() => setControllerOptionsOpen(true)} title="Controller options" className="cursor-pointer hover:text-[--color-text-primary] transition-colors"><GearIcon /></button>
                   </>
@@ -1216,6 +1236,9 @@ export function ControllerPage() {
 
     {/* ── Keyboard shortcuts settings dialog (studio#174) ──────────────────── */}
     <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+
+    {/* ── Keyboard shortcuts help overlay (studio#175) ─────────────────────── */}
+    <ShortcutsHelpOverlay open={helpOpen} onClose={() => setHelpOpen(false)} keymap={keymap} />
     <ToastContainer />
     </>
   )

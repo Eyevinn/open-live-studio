@@ -60,6 +60,32 @@ function buildActionDefinitions(): Readonly<Record<ActionId, ActionDefinition>> 
 /** The action registry: every known action ID with its metadata. */
 export const ACTION_DEFINITIONS = buildActionDefinitions()
 
+/** A labelled, display-ordered cluster of related actions. */
+export interface ActionGroup {
+  readonly label: string
+  readonly actions: readonly ActionId[]
+}
+
+/**
+ * Presentation grouping of the action vocabulary, shared by the keymap settings
+ * dialog (studio#174) and the shortcuts help overlay (studio#175) so both render
+ * the same actions in the same order under the same headings.
+ */
+export const ACTION_GROUPS: readonly ActionGroup[] = [
+  {
+    label: 'Transitions',
+    actions: ['transition.cut', 'transition.auto', 'transition.ftb', 'dsk.toggleLayer0'],
+  },
+  {
+    label: 'Preview bus',
+    actions: BUS_SLOTS.map(previewSelectActionId),
+  },
+  {
+    label: 'Program bus (hot-cut)',
+    actions: BUS_SLOTS.map(programCutActionId),
+  },
+]
+
 /** All known action IDs. */
 export const ACTION_IDS: readonly ActionId[] = Object.keys(ACTION_DEFINITIONS) as ActionId[]
 

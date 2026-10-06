@@ -41,6 +41,30 @@ export const DEFAULT_KEYMAP: Keymap = buildDefaultKeymap()
 export const KEYMAP_STORAGE_KEY = 'ol-studio-keymap'
 
 /**
+ * Coerce an arbitrary parsed value into a valid {@link Keymap}: it must be a
+ * plain object, and only entries with a non-empty chord key mapped to a *known*
+ * action ID are kept — unknown action IDs (e.g. left over from an older build,
+ * or from a hand-edited/foreign import) are dropped. Returns `null` when the
+ * value is not an object or yields no valid bindings.
+ *
+ * This is the single validation gate shared by {@link loadKeymap} (localStorage)
+ * and {@link parseKeymap} (JSON import), so persisted and imported keymaps are
+ * sanitised against the action vocabulary in exactly the same way.
+ */
+export function keymapFromUnknown(parsed: unknown): Keymap | null {
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null
+  }
+  const out: Keymap = {}
+  for (const [chord, actionId] of Object.entries(parsed as Record<string, unknown>)) {
+    if (chord.length > 0 && typeof actionId === 'string' && isActionId(actionId)) {
+      out[chord] = actionId
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
+
+/**
  * Load the persisted keymap, falling back to {@link DEFAULT_KEYMAP} when nothing
  * is stored or the stored value is malformed. Entries whose action ID is not a
  * known action (e.g. left over from an older build) are dropped.
@@ -49,21 +73,39 @@ export function loadKeymap(): Keymap {
   try {
     const raw = localStorage.getItem(KEYMAP_STORAGE_KEY)
     if (raw) {
-      const parsed: unknown = JSON.parse(raw)
-      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        const out: Keymap = {}
-        for (const [chord, actionId] of Object.entries(parsed as Record<string, unknown>)) {
-          if (chord.length > 0 && typeof actionId === 'string' && isActionId(actionId)) {
-            out[chord] = actionId
-          }
-        }
-        if (Object.keys(out).length > 0) return out
-      }
+      const sanitised = keymapFromUnknown(JSON.parse(raw) as unknown)
+      if (sanitised) return sanitised
     }
   } catch {
     // intentionally empty — malformed/inaccessible localStorage falls back to defaults
   }
   return { ...DEFAULT_KEYMAP }
+}
+
+/**
+ * Serialise a keymap to a pretty-printed JSON string suitable for download /
+ * sharing. The keymap is already a plain `chord -> action ID` record, so this is
+ * a thin, stable wrapper over {@link JSON.stringify}.
+ */
+export function serializeKeymap(keymap: Keymap): string {
+  return JSON.stringify(keymap, null, 2)
+}
+
+/**
+ * Parse a JSON string (e.g. the contents of an uploaded file) into a validated
+ * {@link Keymap}, or `null` when the text is not valid JSON or contains no
+ * bindings to a known action. Validation is delegated to
+ * {@link keymapFromUnknown}, so an imported file is held to the same action
+ * vocabulary as the persisted keymap and unknown action IDs are ignored.
+ */
+export function parseKeymap(raw: string): Keymap | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  return keymapFromUnknown(parsed)
 }
 
 /** Persist the active keymap. Best-effort — storage errors are swallowed. */
