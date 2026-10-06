@@ -36,6 +36,8 @@ import { useAudioStore } from '@/store/audio.store'
 import { useViewerStore } from '@/store/viewer.store'
 import { audioApi, type ApiProduction } from '@/lib/api'
 import { ToastContainer } from '@/components/ui/ToastContainer'
+import { useKeymapStore } from '@/store/keymap.store'
+import { useKeymapDispatcher, BUS_SLOTS, previewSelectActionId, programCutActionId, type ActionHandlers } from '@/lib/keymap'
 
 // ─── Panel layout persistence ─────────────────────────────────────────────────
 
@@ -660,56 +662,69 @@ export function ControllerPage() {
     Object.values(guestsMap).filter((g) => g.muted).map((g) => g.mixerInput),
   )
 
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-    if (e.code === 'Space') { e.preventDefault(); handleCut(); return }
-    if (e.code === 'Enter') { e.preventDefault(); handleAuto(); return }
-    if (e.code === 'KeyF')  { e.preventDefault(); handleFtb(); return }
-    // K — toggle DSK layer 0
-    if (e.code === 'KeyK') {
-      e.preventDefault()
-      const next = !(dskState[0] ?? false)
-      send({ type: 'DSK_TOGGLE', layer: 0, visible: next })
-      return
-    }
-    // 1–9: select preview source or PiP (PiPs follow sources in numbering)
-    // Shift+1–9: hot-cut to program
-    const digit = e.code.startsWith('Digit') ? parseInt(e.code.slice(5), 10) : NaN
-    if (!isNaN(digit) && digit >= 1 && digit <= 9) {
-      e.preventDefault()
-      const idx = digit - 1
-      if (idx < sortedSources.length) {
-        const source = sortedSources[idx]!
-        const isOnPgm = pgmInput === source.mixerInput && pgmPip === null
+  // Keyboard shortcuts resolve through the keymap-as-data dispatcher
+  // (studio#173) rather than a hardcoded key ladder. The default keymap
+  // reproduces the historical bindings exactly; see src/lib/keymap.
+  const keymap = useKeymapStore((s) => s.keymap)
+
+  // Select bus slot `slot` (1–9) on preview. Slots address sources first, then
+  // PiPs (which follow sources in the numbering). No-op when the slot is empty
+  // or already live on program.
+  const selectPreviewSlot = (slot: number) => {
+    const idx = slot - 1
+    if (idx < sortedSources.length) {
+      const source = sortedSources[idx]
+      if (!source) return
+      const isOnPgm = pgmInput === source.mixerInput && pgmPip === null
+      if (isOnPgm) return
+      handleSelectPvw(source.mixerInput)
+    } else {
+      const pipIdx = idx - sortedSources.length
+      if (pipIdx < pips.length) {
+        const isOnPgm = pgmPip === pipIdx
         if (isOnPgm) return
-        if (e.shiftKey) {
-          cut()
-          send({ type: 'CUT', mixerInput: source.mixerInput, afvRampUpMs, afvRampDownMs })
-        } else {
-          handleSelectPvw(source.mixerInput)
-        }
-      } else {
-        const pipIdx = idx - sortedSources.length
-        if (pipIdx < pips.length) {
-          const isOnPgm = pgmPip === pipIdx
-          if (isOnPgm) return
-          if (e.shiftKey) {
-            warnIfPipShowsBlack(pipIdx)
-            send({ type: 'TAKE', pip: pipIdx, afvRampUpMs, afvRampDownMs })
-          } else {
-            handleSelectPvwPip(pipIdx)
-          }
-        }
+        handleSelectPvwPip(pipIdx)
       }
     }
-  }, [handleCut, handleAuto, handleFtb, dskState, send, sortedSources, cut, pgmInput, pgmPip, afvRampUpMs, afvRampDownMs, pips, handleSelectPvw, handleSelectPvwPip, warnIfPipShowsBlack])
+  }
 
-  useEffect(() => {
-    // Phone tier (<768px) is read-only — no keyboard shortcuts that mutate state (#105).
-    if (isPhone) return
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleKeyDown, isPhone])
+  // Hot-cut bus slot `slot` (1–9) straight to program (Shift+number).
+  const cutProgramSlot = (slot: number) => {
+    const idx = slot - 1
+    if (idx < sortedSources.length) {
+      const source = sortedSources[idx]
+      if (!source) return
+      const isOnPgm = pgmInput === source.mixerInput && pgmPip === null
+      if (isOnPgm) return
+      cut()
+      send({ type: 'CUT', mixerInput: source.mixerInput, afvRampUpMs, afvRampDownMs })
+    } else {
+      const pipIdx = idx - sortedSources.length
+      if (pipIdx < pips.length) {
+        const isOnPgm = pgmPip === pipIdx
+        if (isOnPgm) return
+        warnIfPipShowsBlack(pipIdx)
+        send({ type: 'TAKE', pip: pipIdx, afvRampUpMs, afvRampDownMs })
+      }
+    }
+  }
+
+  const keymapHandlers: ActionHandlers = {
+    'transition.cut': handleCut,
+    'transition.auto': handleAuto,
+    'transition.ftb': handleFtb,
+    'dsk.toggleLayer0': () => {
+      const next = !(dskState[0] ?? false)
+      send({ type: 'DSK_TOGGLE', layer: 0, visible: next })
+    },
+  }
+  for (const slot of BUS_SLOTS) {
+    keymapHandlers[previewSelectActionId(slot)] = () => selectPreviewSlot(slot)
+    keymapHandlers[programCutActionId(slot)] = () => cutProgramSlot(slot)
+  }
+
+  // Phone tier (<768px) is read-only — no state-mutating shortcuts (#105).
+  useKeymapDispatcher({ enabled: !isPhone, keymap, handlers: keymapHandlers })
 
   useEffect(() => {
     const onFsChange = () => {

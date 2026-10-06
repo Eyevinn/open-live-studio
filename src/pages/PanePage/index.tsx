@@ -18,6 +18,8 @@ import { DskPanel } from '@/pages/ControllerPage/DskPanel'
 import { AudioPanel } from '@/pages/ControllerPage/AudioPanel'
 import { PipPanel } from '@/pages/ControllerPage/PipPanel'
 import type { PipConfig } from '@/store/production.store'
+import { useKeymapStore } from '@/store/keymap.store'
+import { useKeymapDispatcher, type ActionHandlers } from '@/lib/keymap'
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -354,17 +356,15 @@ export function PanePage() {
     send({ type: 'SET_PIP', pip, bg: config.bg, zones: config.zones })
   }, [send])
 
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (pane !== 'controller') return
-    if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-    if (e.code === 'Space') { e.preventDefault(); handleCut() }
-    if (e.code === 'Enter') { e.preventDefault(); handleAuto() }
-  }, [pane, handleCut, handleAuto])
-
-  useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleKeyDown])
+  // Keyboard shortcuts resolve through the shared keymap-as-data dispatcher
+  // (studio#173). The controller pane only exposes Cut/Auto, so it registers
+  // just those two actions; every other bound chord is left to the browser.
+  const keymap = useKeymapStore((s) => s.keymap)
+  const keymapHandlers: ActionHandlers = {
+    'transition.cut': handleCut,
+    'transition.auto': handleAuto,
+  }
+  useKeymapDispatcher({ enabled: pane === 'controller', keymap, handlers: keymapHandlers })
 
   if (!pane) return <Navigate to="/" replace />
   if (rawProductionId !== null && productionId === null) return <Navigate to="/" replace />
