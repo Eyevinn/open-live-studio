@@ -36,6 +36,7 @@ import { useAudioStore } from '@/store/audio.store'
 import { useViewerStore } from '@/store/viewer.store'
 import { audioApi, type ApiProduction } from '@/lib/api'
 import { ToastContainer } from '@/components/ui/ToastContainer'
+import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog'
 import { useKeymapStore } from '@/store/keymap.store'
 import { useKeymapDispatcher, BUS_SLOTS, previewSelectActionId, programCutActionId, type ActionHandlers } from '@/lib/keymap'
 
@@ -135,6 +136,14 @@ function GearIcon() {
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
       <path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
       <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+    </svg>
+  )
+}
+function KeyboardIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="6" width="20" height="12" rx="2" />
+      <path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M6 14h.01M18 14h.01M9 14h6" />
     </svg>
   )
 }
@@ -549,6 +558,7 @@ export function ControllerPage() {
     }
   }, [audioOptionsOpen]) // eslint-disable-line react-hooks/exhaustive-deps
   const [controllerOptionsOpen, setControllerOptionsOpen] = useState(false)
+  const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const multiviewerRef = useRef<HTMLDivElement>(null)
   const pgmRef = useRef<HTMLDivElement>(null)
   const programPreviewRef = useRef<ProgramPreviewHandle>(null)
@@ -1052,7 +1062,10 @@ export function ControllerPage() {
             {panels.controller && (
               <div className="px-3 flex flex-col gap-2 min-w-0 flex-1 h-full">
                 <SectionLabel icon={<ControllerIcon />} tooltip="Vision mixer controls. Click a source to set it on preview, then press Cut or Auto to take it to programme. Toggle FTB to fade to black. Use DSK to layer graphics over programme. Press the gear icon to set transition types and source timing offsets." onPopOut={activeProductionId ? () => { window.open(`/pane/controller?production=${activeProductionId}`, '_blank', 'noopener') } : undefined} onHide={() => togglePanel('controller')} actions={
-                  <button type="button" onClick={() => setControllerOptionsOpen(true)} title="Controller options" className="cursor-pointer hover:text-[--color-text-primary] transition-colors"><GearIcon /></button>
+                  <>
+                    <button type="button" onClick={() => setShortcutsOpen(true)} title="Keyboard shortcuts" className="cursor-pointer hover:text-[--color-text-primary] transition-colors"><KeyboardIcon /></button>
+                    <button type="button" onClick={() => setControllerOptionsOpen(true)} title="Controller options" className="cursor-pointer hover:text-[--color-text-primary] transition-colors"><GearIcon /></button>
+                  </>
                 }>Controller</SectionLabel>
                 <div className="flex flex-col flex-1 gap-2 overflow-y-auto min-h-0">
                   <TransitionPanel onCut={handleCut} onAuto={handleAuto} onFtb={handleFtb} onSelectPvw={handleSelectPvw} onSetOvl={handleSetOvl} onSelectPvwPip={handleSelectPvwPip} pips={pips} pgmPip={pgmPip} pvwPip={pvwPip} className="flex-1" visibleTransitions={controllerOptions.visibleTransitions} mutedMixerInputs={mutedGuestMixerInputs} />
@@ -1200,6 +1213,9 @@ export function ControllerPage() {
         onClose={() => setControllerOptionsOpen(false)}
       />
     </Modal>
+
+    {/* ── Keyboard shortcuts settings dialog (studio#174) ──────────────────── */}
+    <KeyboardShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
     <ToastContainer />
     </>
   )

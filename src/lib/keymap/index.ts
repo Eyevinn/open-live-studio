@@ -22,7 +22,15 @@ export {
   type ProgramCutActionId,
 } from './actions'
 
-export { eventToChord, type ChordSource, type KeyChord } from './chord'
+export {
+  eventToChord,
+  formatChord,
+  isModifierCode,
+  type ChordSource,
+  type KeyChord,
+} from './chord'
+
+export { RESERVED_CHORDS, isReservedChord, reservedChordReason } from './reserved'
 
 export {
   DEFAULT_KEYMAP,
