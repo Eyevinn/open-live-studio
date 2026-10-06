@@ -8,12 +8,14 @@
 
 export {
   ACTION_DEFINITIONS,
+  ACTION_GROUPS,
   ACTION_IDS,
   BUS_SLOTS,
   isActionId,
   previewSelectActionId,
   programCutActionId,
   type ActionDefinition,
+  type ActionGroup,
   type ActionHandler,
   type ActionHandlers,
   type ActionId,
@@ -35,8 +37,11 @@ export { RESERVED_CHORDS, isReservedChord, reservedChordReason } from './reserve
 export {
   DEFAULT_KEYMAP,
   KEYMAP_STORAGE_KEY,
+  keymapFromUnknown,
   loadKeymap,
+  parseKeymap,
   saveKeymap,
+  serializeKeymap,
   type Keymap,
 } from './keymap'
 

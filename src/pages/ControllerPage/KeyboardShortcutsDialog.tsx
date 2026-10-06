@@ -18,15 +18,14 @@ import { useEffect, useRef, useState } from 'react'
 import { Modal } from '@/components/ui/Modal'
 import { Button } from '@/components/ui/Button'
 import { useKeymapStore } from '@/store/keymap.store'
+import { downloadKeymap, readKeymapFile } from './keymapFile'
 import {
   ACTION_DEFINITIONS,
-  BUS_SLOTS,
+  ACTION_GROUPS,
   DEFAULT_KEYMAP,
   eventToChord,
   formatChord,
   isModifierCode,
-  previewSelectActionId,
-  programCutActionId,
   reservedChordReason,
   type ActionId,
   type KeyChord,
@@ -44,20 +43,11 @@ type Feedback = {
   message: string
 }
 
-const ACTION_GROUPS: readonly { label: string; actions: readonly ActionId[] }[] = [
-  {
-    label: 'Transitions',
-    actions: ['transition.cut', 'transition.auto', 'transition.ftb', 'dsk.toggleLayer0'],
-  },
-  {
-    label: 'Preview bus',
-    actions: BUS_SLOTS.map(previewSelectActionId),
-  },
-  {
-    label: 'Program bus (hot-cut)',
-    actions: BUS_SLOTS.map(programCutActionId),
-  },
-]
+/** Dialog-level status line for keymap file import/export. */
+type IoStatus = {
+  kind: 'ok' | 'error'
+  message: string
+}
 
 /** The chord currently bound to `actionId` in `keymap`, if any. */
 function chordForAction(keymap: Keymap, actionId: ActionId): KeyChord | undefined {
@@ -89,6 +79,8 @@ export function KeyboardShortcutsDialog({ open, onClose }: KeyboardShortcutsDial
   const [draft, setDraft] = useState<Keymap>(keymap)
   const [capturing, setCapturing] = useState<ActionId | null>(null)
   const [feedback, setFeedback] = useState<Feedback | null>(null)
+  const [ioStatus, setIoStatus] = useState<IoStatus | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Re-seed the draft from the live keymap each time the dialog opens so Cancel
   // discards edits and re-opening always reflects persisted state.
@@ -97,6 +89,7 @@ export function KeyboardShortcutsDialog({ open, onClose }: KeyboardShortcutsDial
       setDraft(keymap)
       setCapturing(null)
       setFeedback(null)
+      setIoStatus(null)
     }
   }, [open, keymap])
 
@@ -164,6 +157,46 @@ export function KeyboardShortcutsDialog({ open, onClose }: KeyboardShortcutsDial
     setDraft({ ...DEFAULT_KEYMAP })
     setCapturing(null)
     setFeedback(null)
+    setIoStatus(null)
+  }
+
+  // Export the *draft* (what the operator currently sees), so an in-progress
+  // edit can be shared/backed up without having to Save first.
+  function handleExport() {
+    downloadKeymap(draft)
+    setIoStatus({ kind: 'ok', message: 'Exported current keymap to a JSON file.' })
+  }
+
+  function handleImportClick() {
+    setFeedback(null)
+    setIoStatus(null)
+    fileInputRef.current?.click()
+  }
+
+  // Load a keymap file into the draft. Validation (including dropping bindings to
+  // unknown action IDs) happens in `readKeymapFile` via the shared `parseKeymap`
+  // gate; the operator still has to press Save to persist it.
+  async function handleFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    // Reset the input so re-selecting the same file fires `change` again.
+    event.target.value = ''
+    if (!file) return
+
+    const imported = await readKeymapFile(file)
+    if (!imported) {
+      setIoStatus({
+        kind: 'error',
+        message: 'Could not import that file — it is not a valid keymap JSON.',
+      })
+      return
+    }
+    setDraft(imported)
+    setCapturing(null)
+    setFeedback(null)
+    setIoStatus({
+      kind: 'ok',
+      message: `Imported ${Object.keys(imported).length} binding(s). Press Save to apply.`,
+    })
   }
 
   function handleSave() {
@@ -177,7 +210,8 @@ export function KeyboardShortcutsDialog({ open, onClose }: KeyboardShortcutsDial
         <p className="text-xs text-[--color-text-muted]">
           Click a shortcut to rebind it, then press the key combination you want.
           Press Esc to cancel. Browser-reserved combinations (Ctrl/Cmd + 1–9, W, T)
-          cannot be used.
+          cannot be used. Press <kbd className="font-mono text-[--color-text-primary]">?</kbd> on
+          the controller to see a read-only cheat sheet of the active bindings.
         </p>
 
         {ACTION_GROUPS.map((group) => (
@@ -233,10 +267,38 @@ export function KeyboardShortcutsDialog({ open, onClose }: KeyboardShortcutsDial
           </div>
         ))}
 
+        {ioStatus && (
+          <p
+            className={
+              ioStatus.kind === 'error'
+                ? 'text-[11px] text-[#f96c6c]'
+                : 'text-[11px] text-[--color-text-muted]'
+            }
+          >
+            {ioStatus.message}
+          </p>
+        )}
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={(e) => void handleFileChange(e)}
+        />
+
         <div className="flex items-center justify-between pt-1">
-          <Button variant="ghost" size="sm" onClick={handleReset}>
-            Reset to defaults
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={handleReset}>
+              Reset to defaults
+            </Button>
+            <Button variant="ghost" size="sm" onClick={handleImportClick}>
+              Import…
+            </Button>
+            <Button variant="ghost" size="sm" onClick={handleExport}>
+              Export
+            </Button>
+          </div>
           <div className="flex items-center gap-2">
             <Button variant="default" size="sm" onClick={onClose}>
               Cancel
