@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import type { GuestInvite, GuestSession, GuestState, ReturnMode } from '@/lib/api'
+import type { GuestHealthFailure } from '@/lib/guest-health'
 
 // ─── Guest calling operator state (epic open-live#208, studio#138) ──────────────
 //
@@ -12,8 +13,11 @@ import type { GuestInvite, GuestSession, GuestState, ReturnMode } from '@/lib/ap
 //                     WS broadcast (and its connect-time sync).
 //   - `returnModes` — current synced return-feed mode per mixer input, from the
 //                     `RETURN_STATE` WS broadcast.
+//   - `health`      — guest seats whose input has stopped, keyed by mixer input,
+//                     from the `GUEST_HEALTH` WS broadcast. A seat is present
+//                     only while failed; cleared on deactivation.
 //
-// All three are reset on production change (see production.store setActiveProduction).
+// All four are reset on production change (see production.store setActiveProduction).
 
 /**
  * Merged live view of a guest: the REST `GuestSession` fields plus the extras the
@@ -47,6 +51,7 @@ interface GuestsState {
   invites: GuestInvite[]
   guests: Record<string, GuestView>
   returnModes: Record<string, ReturnMode>
+  health: Record<string, GuestHealthFailure>
 }
 
 interface GuestsActions {
@@ -59,6 +64,9 @@ interface GuestsActions {
   applyGuestState: (guest: GuestView) => void
   /** Apply a `RETURN_STATE` WS event (or crew `RETURN_SET` echo). */
   applyReturnState: (mixerInput: string, mode: ReturnMode) => void
+  /** Apply a `GUEST_HEALTH` WS event; `null` clears the seat. */
+  applyGuestHealth: (mixerInput: string, failure: GuestHealthFailure | null) => void
+  clearGuestHealth: () => void
   reset: () => void
 }
 
@@ -68,6 +76,7 @@ export const useGuestsStore = create<GuestsState & GuestsActions>()(
       invites: [],
       guests: {},
       returnModes: {},
+      health: {},
 
       setInvites: (invites) => set({ invites }),
 
@@ -134,7 +143,17 @@ export const useGuestsStore = create<GuestsState & GuestsActions>()(
       applyReturnState: (mixerInput, mode) =>
         set((state) => ({ returnModes: { ...state.returnModes, [mixerInput]: mode } })),
 
-      reset: () => set({ invites: [], guests: {}, returnModes: {} }),
+      applyGuestHealth: (mixerInput, failure) =>
+        set((state) => {
+          const next = { ...state.health }
+          if (failure) next[mixerInput] = failure
+          else delete next[mixerInput]
+          return { health: next }
+        }),
+
+      clearGuestHealth: () => set({ health: {} }),
+
+      reset: () => set({ invites: [], guests: {}, returnModes: {}, health: {} }),
     }),
     { name: 'guests', enabled: import.meta.env.DEV },
   ),

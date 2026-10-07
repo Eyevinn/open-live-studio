@@ -5,6 +5,8 @@ import { useAudioStore } from '@/store/audio.store'
 import { useGuestsStore } from '@/store/guests.store'
 import { useToastStore } from '@/store/toast.store'
 import type { GuestState, ReturnMode } from '@/lib/api'
+import { parseGuestHealth, guestHealthProblem } from '@/lib/guest-health'
+import { guestSlotNumber } from '@/lib/guest-slots'
 import { getApiToken, wsAuthProtocols } from '@/lib/sat'
 
 import { BASE } from '@/lib/base'
@@ -62,6 +64,8 @@ const WS_RECONNECT_MAX_DELAY_MS = 15000
 // Tag for the persistent connection toast, so it upserts (never stacks) and
 // can be cleared on a successful (re)connect.
 const WS_TOAST_TAG = 'controller-ws'
+// Per-seat tag (`guest-health:<mixerInput>`) so a recovered seat drops its toast.
+const GUEST_HEALTH_TOAST_TAG = 'guest-health'
 const SESSION_EXPIRED_MSG = 'Session expired — reload to sign in'
 const CONNECTION_LOST_MSG = 'Controller connection lost — reconnecting…'
 
@@ -156,6 +160,8 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   const markInactive              = useProductionsStore((s) => s.markInactive)
   const applyGuestState           = useGuestsStore((s) => s.applyGuestState)
   const applyReturnState          = useGuestsStore((s) => s.applyReturnState)
+  const applyGuestHealth          = useGuestsStore((s) => s.applyGuestHealth)
+  const clearGuestHealth          = useGuestsStore((s) => s.clearGuestHealth)
 
   const actionsRef = useRef({
     setPgm, setPvw, setTBarPosition, setDskState,
@@ -167,7 +173,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     applySourceOffset, applySourceAudioOffset, resetSourceOffsets, applyAfvRamp,
     applyPipState, applyFxState, applyClipState, setDeactivated, setIdleWarning, addToast,
     upsertToastByTag, removeToastsByTag, markInactive,
-    applyGuestState, applyReturnState,
+    applyGuestState, applyReturnState, applyGuestHealth, clearGuestHealth,
   })
   actionsRef.current = {
     setPgm, setPvw, setTBarPosition, setDskState,
@@ -179,7 +185,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     applySourceOffset, applySourceAudioOffset, resetSourceOffsets, applyAfvRamp,
     applyPipState, applyFxState, applyClipState, setDeactivated, setIdleWarning, addToast,
     upsertToastByTag, removeToastsByTag, markInactive,
-    applyGuestState, applyReturnState,
+    applyGuestState, applyReturnState, applyGuestHealth, clearGuestHealth,
   }
 
   useEffect(() => {
@@ -417,6 +423,26 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
               }
               break
             }
+            case 'GUEST_HEALTH': {
+              // Strom block health for a guest seat's input (open-live relay of
+              // Strom's BlockHealthChanged). Also sent per seat in the
+              // connect-time snapshot, so a reconnect drops a cleared failure.
+              const health = parseGuestHealth(msg)
+              if (!health) break
+              const toastTag = `${GUEST_HEALTH_TOAST_TAG}:${health.mixerInput}`
+              const wasFailed = !!useGuestsStore.getState().health[health.mixerInput]
+              a.applyGuestHealth(health.mixerInput, health.failure)
+              if (health.failure && !wasFailed) {
+                // Toast only on the ok → failed edge: Strom re-sends a failed
+                // seat when its causes change, and the snapshot repeats it.
+                const production = useProductionsStore.getState().productions.find((p) => p.id === productionId)
+                const n = production ? guestSlotNumber(production.sources, health.mixerInput) : undefined
+                a.addToast(`${n !== undefined ? `Guest ${n}` : health.mixerInput}: ${guestHealthProblem(health.failure)}`, 'error', { tag: toastTag })
+              } else if (!health.failure) {
+                a.removeToastsByTag(toastTag)
+              }
+              break
+            }
             case 'IDLE_WARNING': {
               // Pre-deactivation idle-timeout warning from the backend (#130,
               // paired with open-live#290). The backend message contract may
@@ -443,6 +469,11 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
             case 'PRODUCTION_DEACTIVATED': {
               if (productionId) a.markInactive(productionId)
               a.resetSourceOffsets()
+              // Strom sends no recovery for a torn-down flow.
+              for (const mixerInput of Object.keys(useGuestsStore.getState().health)) {
+                a.removeToastsByTag(`${GUEST_HEALTH_TOAST_TAG}:${mixerInput}`)
+              }
+              a.clearGuestHealth()
               // Attribute the deactivation correctly (#130): an idle auto-timeout
               // must NOT be reported as "deactivated by another user". The backend
               // marks idle teardown with endedReason: 'idle' / autoDeactivated;
