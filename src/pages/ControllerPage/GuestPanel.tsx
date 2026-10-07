@@ -7,6 +7,7 @@ import { useGuestsStore, type GuestView } from '@/store/guests.store'
 import { useProductionStore } from '@/store/production.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { isReturnOnlySlot } from '@/lib/guest-slots'
+import { guestHealthProblem } from '@/lib/guest-health'
 import type { Production } from '@/store/productions.store'
 import { ApiError, guestsApi, type GuestState, type ReturnMode } from '@/lib/api'
 import type { OutboundMessage } from '@/hooks/useControllerWs'
@@ -37,6 +38,8 @@ function actionErrorMessage(err: unknown, fallback: string): string {
 //   - Muted:     `GUEST_STATE.muted` drives a mic-muted badge per slot,
 //                emphasized while the guest is on PVW/PGM so a muted guest is
 //                never taken to air unnoticed (studio#163 requirement 5).
+//   - Health:    `GUEST_HEALTH` (Strom block health) marks a slot whose input
+//                has stopped, e.g. "Guest 3: no audio", until Strom reports it ok.
 //
 // A slot's source (WHIP, or an SRT/EFP encoder for a return-only slot) is
 // assigned to a mixer input, so it already appears in the vision-mixer PGM/PVW
@@ -97,6 +100,7 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
   const invites = useGuestsStore((s) => s.invites)
   const guestsMap = useGuestsStore((s) => s.guests)
   const returnModes = useGuestsStore((s) => s.returnModes)
+  const guestHealth = useGuestsStore((s) => s.health)
   const setInvites = useGuestsStore((s) => s.setInvites)
   const addInvite = useGuestsStore((s) => s.addInvite)
   const removeInvite = useGuestsStore((s) => s.removeInvite)
@@ -244,12 +248,13 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
             const onAirOrPvw = guest ? pgmInput === guest.mixerInput || pvwInput === guest.mixerInput : false
             const returnOnly = isReturnOnlySlot(slot.sourceId, sources)
             const sourceName = returnOnly ? (sources.find((s) => s.id === slot.sourceId)?.name ?? slot.sourceId) : null
+            const failure = guestHealth[slot.mixerInput]
             const kickTitle = returnOnly
               ? 'Remove guest: ends their return session. The encoder keeps feeding this slot until you stop it.'
               : 'Remove guest'
 
             return (
-              <div key={slot.mixerInput} className="flex flex-col gap-1.5 border border-zinc-800 bg-zinc-950 px-2.5 py-2">
+              <div key={slot.mixerInput} className={cn('flex flex-col gap-1.5 border bg-zinc-950 px-2.5 py-2', failure ? 'border-red-700' : 'border-zinc-800')}>
                 <div className="flex items-center gap-2">
                   <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500 shrink-0">Slot {i + 1}</span>
                   {returnOnly && <ReturnOnlyTag listening={!!guest} />}
@@ -304,6 +309,18 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
                     </>
                   )}
                 </div>
+
+                {/* Strom reports this slot's input stopped passing data. Numbered
+                    like the vision-mixer tiles and multiviewer ("Guest N"). */}
+                {failure && (
+                  <p
+                    role="alert"
+                    title={failure.detail}
+                    className="text-[9px] font-bold uppercase tracking-widest text-red-300 border border-red-900 bg-red-950/40 px-2 py-1 leading-snug"
+                  >
+                    Guest {i + 1}: {guestHealthProblem(failure)}
+                  </p>
+                )}
 
                 {/* Which encoder feeds a return-only slot. Its SRT address and
                     passphrase stay on the Sources page: they outlive any
