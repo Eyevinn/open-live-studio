@@ -223,6 +223,13 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
       }
 
       ws.onmessage = (event) => {
+        // Ignore frames from a socket whose effect has already been cancelled,
+        // or that is no longer the active connection. After a production switch
+        // the old socket's onmessage keeps firing until React runs this effect's
+        // cleanup; a frame landing in that window would otherwise write the old
+        // production's state into the new production's stores (#186). Guarding at
+        // the top covers every message type, not just one.
+        if (cancelled || wsRef.current !== ws) return
         const a = actionsRef.current
         try {
           const msg = JSON.parse(event.data as string) as Record<string, unknown>
