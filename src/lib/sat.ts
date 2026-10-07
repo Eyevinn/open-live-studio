@@ -18,13 +18,24 @@
  *
  * When the backend has no PAT configured (local dev, 503) or the studio is not
  * authorised, getApiToken() returns undefined and API requests are sent without
- * an Authorization header.
+ * an Authorization header. That "no token" outcome is itself cached for a short
+ * window (and a 429 from the exchange endpoint backs off) so repeated REST calls
+ * and pollers don't re-fire the exchange on every request — which previously
+ * tripped the backend's 429 rate limit (studio#182).
  */
 
 import { BASE } from './base.js'
 
 const SAT_ENDPOINT = '/api/v1/auth/token'
 const REFRESH_BUFFER_MS = 5 * 60 * 1000
+// How long a "no token available" outcome is treated as settled before the
+// exchange is re-attempted. Without this, a 503 (no PAT configured server-side)
+// is re-requested on every REST call, and a fleet of pollers trips the backend's
+// 429 rate limit (studio#182).
+const NO_PAT_CACHE_MS = 10 * 60 * 1000
+// Fallback backoff when the exchange endpoint itself returns 429 without a
+// usable Retry-After header.
+const RATE_LIMIT_BACKOFF_MS = 60 * 1000
 const OSC_COOKIE_DOMAIN = '.osaas.io'
 // Cookie name the OSC reverse proxy expects for open-live REST/WS auth.
 const OPEN_LIVE_SERVICE_ID = 'eyevinn-open-live'
@@ -64,9 +75,23 @@ let cache: SatCache | null = null
 // In-flight promise so concurrent callers await the same exchange request
 // instead of each firing their own, which would produce N requests on page load.
 let inflight: Promise<string | undefined> | null = null
+// Epoch ms until which getApiToken() short-circuits to `undefined` without
+// re-hitting the exchange endpoint, set when the backend reports no PAT (503)
+// or rate-limits the exchange (429). 0 means "no active backoff".
+let noTokenUntil = 0
 
 function isExpiringSoon(c: SatCache): boolean {
   return Date.now() >= c.expiresAt - REFRESH_BUFFER_MS
+}
+
+/** Parse an HTTP `Retry-After` header (delta-seconds or HTTP-date) into ms. */
+function retryAfterMs(header: string | null): number | undefined {
+  if (!header) return undefined
+  const seconds = Number(header)
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000)
+  const when = Date.parse(header)
+  if (!Number.isNaN(when)) return Math.max(0, when - Date.now())
+  return undefined
 }
 
 /**
@@ -76,6 +101,10 @@ function isExpiringSoon(c: SatCache): boolean {
  */
 export async function getApiToken(): Promise<string | undefined> {
   if (cache && !isExpiringSoon(cache)) return cache.token
+  // A recent 503 (no PAT) or 429 (rate-limited) outcome is cached as a backoff
+  // window so repeated REST calls and pollers don't re-hammer the exchange
+  // endpoint (studio#182). Return "no token" until the window elapses.
+  if (Date.now() < noTokenUntil) return undefined
 
   if (!inflight) {
     inflight = fetch(`${BASE}${SAT_ENDPOINT}`, {
@@ -93,7 +122,18 @@ export async function getApiToken(): Promise<string | undefined> {
       .then(async (res) => {
         // 503 = backend has no PAT configured (e.g. local dev) → behave as
         // "no auth": callers send requests without an Authorization header.
-        if (res.status === 503) return undefined
+        // Cache the outcome so we don't re-ask (and trip 429) on every call.
+        if (res.status === 503) {
+          noTokenUntil = Date.now() + NO_PAT_CACHE_MS
+          return undefined
+        }
+        // 429 = the exchange endpoint rate-limited us. Back off (honouring
+        // Retry-After when present) and degrade to "no auth" for the window
+        // instead of throwing, so a burst of pollers stops re-hammering it.
+        if (res.status === 429) {
+          noTokenUntil = Date.now() + (retryAfterMs(res.headers.get('retry-after')) ?? RATE_LIMIT_BACKOFF_MS)
+          return undefined
+        }
         if (!res.ok) {
           const body = await res.text().catch(() => '')
           throw new Error(`SAT exchange failed (${res.status}): ${body.slice(0, 200)}`)
@@ -101,6 +141,8 @@ export async function getApiToken(): Promise<string | undefined> {
         // Contract (open-live#228): { token: string, expiry: number(seconds) }.
         const data = (await res.json()) as { token: string; expiry: number }
         cache = { token: data.token, expiresAt: data.expiry * 1000 }
+        // A successful exchange clears any prior backoff window.
+        noTokenUntil = 0
         return cache.token
       })
       .finally(() => { inflight = null })
