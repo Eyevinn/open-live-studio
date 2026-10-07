@@ -1,7 +1,13 @@
 import { useRef, useEffect, useState } from 'react'
 import { useProductionStore, type VideoEffect, type EffectTarget } from '@/store/production.store'
 import { cn } from '@/lib/cn'
+import { useThrottledCallback } from '@/hooks/useThrottledCallback'
 import type { OutboundMessage } from '@/hooks/useControllerWs'
+
+// Max one effect send per this window while a slider is dragged. Keeps the
+// controller WebSocket under the server's 20 msg/s limit (open-live-studio#181)
+// while still updating the on-air look live; matches the audio fader cadence.
+const EFFECT_SEND_INTERVAL_MS = 80
 
 function padToIndex(mixerInput: string): number | null {
   const m = /video_in_(\d+)$/.exec(mixerInput ?? '')
@@ -53,16 +59,34 @@ function Slider({ label, field, min, max, step = 0.01, effect, onChange }: {
   label: string; field: string; min: number; max: number; step?: number
   effect: Record<string, unknown>; onChange: (k: string, v: number) => void
 }) {
-  const val = typeof effect[field] === 'number' ? (effect[field] as number) : 0
+  const serverVal = typeof effect[field] === 'number' ? (effect[field] as number) : 0
+  // Keep a local value while dragging so the slider owns its position and does
+  // not fight / snap back to the lagging FX_STATE server echo (studio#181).
+  const [localVal, setLocalVal] = useState(serverVal)
+  const draggingRef = useRef(false)
+  useEffect(() => {
+    if (!draggingRef.current) setLocalVal(serverVal)
+  }, [serverVal])
+
+  // Throttle the WebSocket send: at most one per window while dragging, plus a
+  // trailing send so the final (release) value is always delivered.
+  const throttledChange = useThrottledCallback(onChange, EFFECT_SEND_INTERVAL_MS)
+
   return (
     <div className="flex items-center gap-2">
       <span className="text-[9px] text-zinc-500 w-20 shrink-0">{label}</span>
       <input
-        type="range" min={min} max={max} step={step} value={val}
-        onChange={(e) => onChange(field, Number(e.target.value))}
+        type="range" min={min} max={max} step={step} value={localVal}
+        onPointerDown={() => { draggingRef.current = true }}
+        onPointerUp={() => { draggingRef.current = false }}
+        onChange={(e) => {
+          const next = Number(e.target.value)
+          setLocalVal(next)
+          throttledChange(field, next)
+        }}
         className="flex-1 accent-orange-500 h-1 cursor-pointer"
       />
-      <span className="text-[10px] text-zinc-400 w-10 text-right tabular-nums font-mono">{val.toFixed(2)}</span>
+      <span className="text-[10px] text-zinc-400 w-10 text-right tabular-nums font-mono">{localVal.toFixed(2)}</span>
     </div>
   )
 }
