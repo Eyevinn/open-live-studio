@@ -7,6 +7,7 @@ import { pipShowsBlackBehind } from '@/lib/pip'
 import { compareMixerInput } from '@/lib/mixer-input-order'
 import { useRef, useCallback, useState, useEffect } from 'react'
 import { MutedMicIcon } from '@/components/ui/MutedMicIcon'
+import { guestHealthProblem, type GuestHealthFailure } from '@/lib/guest-health'
 
 const DURATION_PRESETS_MS = [500, 1000, 2000]
 const TRANSITION_TYPES: TransitionType[] = [
@@ -90,6 +91,19 @@ function NoBgBadge({ emphasized }: { emphasized?: boolean }) {
   )
 }
 
+/** Red strip along the bottom of a guest tile whose input has stopped
+ *  (`GUEST_HEALTH`), e.g. "NO AUDIO". */
+function GuestHealthStrip({ failure }: { failure: GuestHealthFailure }) {
+  return (
+    <span
+      title={failure.detail}
+      className="absolute bottom-0 inset-x-0 bg-red-600 text-white text-[7px] font-bold uppercase tracking-widest leading-tight pointer-events-none select-none"
+    >
+      {guestHealthProblem(failure)}
+    </span>
+  )
+}
+
 interface TransitionPanelProps {
   onCut: () => void
   onAuto: () => void
@@ -157,6 +171,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
   const production = useProductionsStore((s) => s.productions.find((p) => p.id === activeProductionId))
   const sources = useSourcesStore((s) => s.sources)
   const guests = useGuestsStore((s) => s.guests)
+  const guestHealth = useGuestsStore((s) => s.health)
 
   const VIRTUAL_SOURCE_NAMES: Record<string, string> = {
     '__test1__': 'PINWHEEL',
@@ -213,6 +228,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
             {inputSlots.map((slot) => {
               const isOnPgmRow = pgmInput === slot.mixerInput
               const muted = mutedMixerInputs?.has(slot.mixerInput)
+              const failure = guestHealth[slot.mixerInput]
               return (
                 <button
                   key={slot.mixerInput}
@@ -227,6 +243,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
                 >
                   {slot.name}
                   {muted && <MutedMicIcon emphasized={isOnPgmRow} className="absolute top-0.5 right-0.5" size={8} />}
+                  {failure && <GuestHealthStrip failure={failure} />}
                 </button>
               )
             })}
@@ -267,6 +284,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
               const isOnPgm = pgmInput === slot.mixerInput
               const isActive = pvwInput === slot.mixerInput
               const muted = mutedMixerInputs?.has(slot.mixerInput)
+              const failure = guestHealth[slot.mixerInput]
               return (
                 <button
                   key={slot.mixerInput}
@@ -284,6 +302,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
                 >
                   {slot.name}
                   {muted && <MutedMicIcon emphasized={isActive || isOnPgm} className="absolute top-0.5 right-0.5" size={8} />}
+                  {failure && <GuestHealthStrip failure={failure} />}
                 </button>
               )
             })}
