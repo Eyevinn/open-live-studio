@@ -4,6 +4,7 @@ import { useSourcesStore } from '@/store/sources.store'
 import { useGuestsStore } from '@/store/guests.store'
 import { cn } from '@/lib/cn'
 import { pipShowsBlackBehind } from '@/lib/pip'
+import { compareMixerInput } from '@/lib/mixer-input-order'
 import { useRef, useCallback, useState, useEffect } from 'react'
 import { MutedMicIcon } from '@/components/ui/MutedMicIcon'
 
@@ -173,7 +174,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
   orderedGuestSlots.forEach((a, i) => guestSlotNumbers.set(a.mixerInput, i + 1))
 
   const inputSlots = [...(production?.sources ?? [])]
-    .sort((a, b) => a.mixerInput.localeCompare(b.mixerInput))
+    .sort((a, b) => compareMixerInput(a.mixerInput, b.mixerInput))
     .map((a) => {
       let name: string
       if (a.returnFeed) {
