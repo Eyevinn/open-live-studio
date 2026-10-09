@@ -5,6 +5,7 @@ import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { cn } from '@/lib/cn'
 import { pipShowsBlackBehind } from '@/lib/pip'
+import { compareMixerInput } from '@/lib/mixer-input-order'
 import { Tooltip } from '@/components/ui/Tooltip'
 
 interface PipPanelProps {
@@ -21,7 +22,7 @@ const GRID_DIVISIONS = 9
 // (the stable external identity the backend expects — it translates to Strom's
 // compact pads itself via storedPadToStromPad). Never use the list position:
 // guest slots live on video_in_15+, so position ≠ pad (open-live-studio#188).
-// Matches LooksPanel.padToIndex. Sort order of the list is tracked in #189.
+// Matches LooksPanel.padToIndex.
 function padToIndex(mixerInput: string): number | null {
   const m = /video_in_(\d+)$/.exec(mixerInput ?? '')
   return m?.[1] !== undefined ? parseInt(m[1], 10) : null
@@ -516,7 +517,7 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
   // Input slots: same pattern as TransitionPanel
   const VIRTUAL_SOURCE_NAMES: Record<string, string> = { '__test1__': 'PINWHEEL', '__test2__': 'COLORS' }
   const inputSlots = [...(production?.sources ?? [])]
-    .sort((a, b) => a.mixerInput.localeCompare(b.mixerInput))
+    .sort((a, b) => compareMixerInput(a.mixerInput, b.mixerInput))
     .map((a) => {
       const idx = padToIndex(a.mixerInput)
       const src = sources.find((s) => s.id === a.sourceId)

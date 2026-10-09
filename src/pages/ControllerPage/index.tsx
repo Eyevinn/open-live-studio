@@ -40,6 +40,7 @@ import { KeyboardShortcutsDialog } from './KeyboardShortcutsDialog'
 import { ShortcutsHelpOverlay } from './ShortcutsHelpOverlay'
 import { useKeymapStore } from '@/store/keymap.store'
 import { useKeymapDispatcher, BUS_SLOTS, previewSelectActionId, programCutActionId, type ActionHandlers } from '@/lib/keymap'
+import { compareMixerInput } from '@/lib/mixer-input-order'
 
 // ─── Panel layout persistence ─────────────────────────────────────────────────
 
@@ -357,7 +358,7 @@ function ControllerOptionsContent({
 
   // Sort assignments by mixerInput for stable display order
   const assignments = [...(activeProduction?.sources ?? [])].sort((a, b) =>
-    a.mixerInput.localeCompare(b.mixerInput),
+    compareMixerInput(a.mixerInput, b.mixerInput),
   )
 
   function handleDone() {
@@ -662,7 +663,7 @@ export function ControllerPage() {
 
   // Sources sorted by mixerInput — index 0 = key '1', index 1 = key '2', etc.
   const sortedSources = [...(activeProduction?.sources ?? [])].sort((a, b) =>
-    a.mixerInput.localeCompare(b.mixerInput),
+    compareMixerInput(a.mixerInput, b.mixerInput),
   )
 
   // Guest mixer inputs currently muted (GUEST_STATE.muted, open-live#382) — fed
