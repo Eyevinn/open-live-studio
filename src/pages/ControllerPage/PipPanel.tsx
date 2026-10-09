@@ -16,6 +16,17 @@ const ZONE_COLORS = ['#f97316', '#3b82f6', '#22c55e', '#a855f7', '#ec4899']
 
 const GRID_DIVISIONS = 9
 
+// Stored pad number parsed from a `video_in_N` mixer-input name. PiP bg / zone
+// sources / transforms and inputResolutions are all keyed by this STORED pad
+// (the stable external identity the backend expects — it translates to Strom's
+// compact pads itself via storedPadToStromPad). Never use the list position:
+// guest slots live on video_in_15+, so position ≠ pad (open-live-studio#188).
+// Matches LooksPanel.padToIndex. Sort order of the list is tracked in #189.
+function padToIndex(mixerInput: string): number | null {
+  const m = /video_in_(\d+)$/.exec(mixerInput ?? '')
+  return m?.[1] !== undefined ? parseInt(m[1], 10) : null
+}
+
 function parsePgmResolution(val: unknown): { w: number; h: number } {
   if (typeof val === 'string') {
     const m = val.match(/^(\d+)x(\d+)$/)
@@ -506,11 +517,17 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
   const VIRTUAL_SOURCE_NAMES: Record<string, string> = { '__test1__': 'PINWHEEL', '__test2__': 'COLORS' }
   const inputSlots = [...(production?.sources ?? [])]
     .sort((a, b) => a.mixerInput.localeCompare(b.mixerInput))
-    .map((a, idx) => {
+    .map((a) => {
+      const idx = padToIndex(a.mixerInput)
       const src = sources.find((s) => s.id === a.sourceId)
       const name = (src?.name ?? VIRTUAL_SOURCE_NAMES[a.sourceId] ?? a.sourceId).toUpperCase()
-      return { idx, name }
+      return idx === null ? null : { idx, name }
     })
+    .filter((slot): slot is { idx: number; name: string } => slot !== null)
+
+  // Lookup by stored pad number, since inputSlots is ordered by name (not pad)
+  // and bg / zone sources / crop source are all stored pad numbers.
+  const slotByIdx = new Map(inputSlots.map((slot) => [slot.idx, slot]))
 
   const markDirty = () => { isDirtyRef.current = true }
 
@@ -871,7 +888,7 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
                 })()}
                 {draft.bg !== null && (
                   <div style={{ position: 'absolute', bottom: 4, left: 4, fontSize: 8, color: '#a1a1aa', background: 'rgba(0,0,0,0.6)', padding: '1px 4px' }}>
-                    BG: {(inputSlots[draft.bg]?.name ?? String(draft.bg + 1))}
+                    BG: {(slotByIdx.get(draft.bg)?.name ?? String(draft.bg + 1))}
                   </div>
                 )}
                 {pipShowsBlackBehind(draft) && (
@@ -1082,7 +1099,7 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
                   className="w-full bg-zinc-800 border border-zinc-700 text-zinc-300 text-[10px] px-1.5 py-0.5 focus:outline-none focus:border-zinc-500"
                 >
                   {activeZoneSources.map((srcIdx) => {
-                    const slot = inputSlots[srcIdx]
+                    const slot = slotByIdx.get(srcIdx)
                     if (!slot) return null
                     const res = production?.inputResolutions?.[srcIdx]
                     const label = res ? `${slot.name} (${res.width}×${res.height})` : slot.name
@@ -1116,7 +1133,7 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
           <div className="flex flex-col gap-0.5">
             {draft.zones.map((zone, zIdx) => {
               const color = ZONE_COLORS[zIdx % ZONE_COLORS.length]!
-              const sourceNames = zone.sources.map((s) => inputSlots[s]?.name ?? String(s + 1))
+              const sourceNames = zone.sources.map((s) => slotByIdx.get(s)?.name ?? String(s + 1))
               return (
                 <div
                   key={zIdx}
