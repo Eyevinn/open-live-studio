@@ -97,6 +97,17 @@ interface ProductionState {
   pgmInput: string | null
   /** Active mixer input on preview */
   pvwInput: string | null
+  /**
+   * All mixer-input pads contributing to the program output, from the TALLY payload's
+   * `program` array (open-live#492). Unlike the single `pgmInput` slot, this includes PiP
+   * zone-inset sources, PiP backgrounds, DSK and graphics — so the multiview can light the
+   * tally for every source on air, not just the one in the single PGM slot (which is null
+   * while a PiP occupies program). Pad names are `video_in_<N>`, matching source `mixerInput`
+   * values directly. Empty until the first TALLY carrying contribution data.
+   */
+  programInputs: string[]
+  /** All mixer-input pads contributing to the preview output, from the TALLY `preview` array. */
+  previewInputs: string[]
   isFtb: boolean
   transitionType: TransitionType
   transitionDurationMs: number
@@ -150,6 +161,8 @@ interface ProductionActions {
   ftb: () => void
   setPvw: (mixerInput: string) => void
   setPgm: (mixerInput: string) => void
+  /** Server-authoritative contribution tally setter — called by WS handler on TALLY (open-live#492). */
+  applyTallyContributions: (program: string[], preview: string[]) => void
   setTransitionType: (type: TransitionType) => void
   setTransitionDuration: (ms: number) => void
   setTBarPosition: (pos: number) => void
@@ -183,6 +196,8 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
       // State
       pgmInput: null,
       pvwInput: null,
+      programInputs: [],
+      previewInputs: [],
       isFtb: false,
       transitionType: 'fade',
       transitionDurationMs: 1000,
@@ -236,6 +251,12 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
           state.pgmInput = mixerInput
         }),
 
+      applyTallyContributions: (program, preview) =>
+        set((state) => {
+          state.programInputs = program
+          state.previewInputs = preview
+        }),
+
       setTransitionType: (type) =>
         set((state) => {
           state.transitionType = type
@@ -256,6 +277,8 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
           state.activeProductionId = id
           state.pgmInput = null
           state.pvwInput = null
+          state.programInputs = []
+          state.previewInputs = []
           state.isFtb = false
           state.tBarPosition = 1
           state.dskState = {}

@@ -125,6 +125,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   // effect closure always sees current values without needing them in deps.
   const setPgm                 = useProductionStore((s) => s.setPgm)
   const setPvw                 = useProductionStore((s) => s.setPvw)
+  const applyTallyContributions = useProductionStore((s) => s.applyTallyContributions)
   const setTBarPosition        = useProductionStore((s) => s.setTBarPosition)
   const setDskState            = useProductionStore((s) => s.setDskState)
   const applyLevel             = useAudioStore((s) => s.applyLevel)
@@ -158,7 +159,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   const applyReturnState          = useGuestsStore((s) => s.applyReturnState)
 
   const actionsRef = useRef({
-    setPgm, setPvw, setTBarPosition, setDskState,
+    setPgm, setPvw, applyTallyContributions, setTBarPosition, setDskState,
     applyLevel, applyMuted, applyAfvByMixerInput,
     applyPfl, applyAfl,
     applyAuxSend, applyAuxSendPre, applyAuxMaster,
@@ -170,7 +171,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     applyGuestState, applyReturnState,
   })
   actionsRef.current = {
-    setPgm, setPvw, setTBarPosition, setDskState,
+    setPgm, setPvw, applyTallyContributions, setTBarPosition, setDskState,
     applyLevel, applyMuted, applyAfvByMixerInput,
     applyPfl, applyAfl,
     applyAuxSend, applyAuxSendPre, applyAuxMaster,
@@ -240,6 +241,19 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
               }
               if (typeof msg['pvw'] === 'string' || msg['pvw'] === null) {
                 a.setPvw(msg['pvw'] as string)
+              }
+              // Contribution tally (open-live#492): `program`/`preview` list every mixer-input
+              // pad on air / in preview — including PiP zone insets, PiP backgrounds, DSK and
+              // graphics — which the single pgm/pvw slots miss while a PiP occupies PGM/PVW.
+              // Pad names are `video_in_<N>`, matching source mixerInput values. Additive and
+              // backward-compatible: older backends omit the arrays, so we only store when present.
+              if (Array.isArray(msg['program']) && Array.isArray(msg['preview'])) {
+                const toPadNames = (arr: unknown[]): string[] =>
+                  arr.filter((x): x is string => typeof x === 'string')
+                a.applyTallyContributions(
+                  toPadNames(msg['program'] as unknown[]),
+                  toPadNames(msg['preview'] as unknown[]),
+                )
               }
               break
             case 'OVL_STATE':
