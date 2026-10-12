@@ -931,7 +931,17 @@ export function SourcesPanel() {
         </Modal>
       )}
 
-      <Modal open={addOpen} title="New Source" onClose={() => { resetAdd(); setAddOpen(false) }}>
+      <Modal
+        open={addOpen}
+        title="New Source"
+        onClose={() => { resetAdd(); setAddOpen(false) }}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => { resetAdd(); setAddOpen(false) }}>Cancel</Button>
+            <Button variant="active" onClick={() => { void handleAdd() }} disabled={!addReady}>Save</Button>
+          </div>
+        }
+      >
         <div className="flex flex-col gap-3">
           <div>
             <label className={labelCls}>Name</label>
@@ -1071,10 +1081,6 @@ export function SourcesPanel() {
               />
             </div>
           )}
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="ghost" onClick={() => { resetAdd(); setAddOpen(false) }}>Cancel</Button>
-            <Button variant="active" onClick={() => { void handleAdd() }} disabled={!addReady}>Save</Button>
-          </div>
         </div>
       </Modal>
     </div>

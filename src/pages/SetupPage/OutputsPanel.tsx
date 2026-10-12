@@ -327,7 +327,19 @@ export function OutputsPanel() {
       )}
 
       {/* Add modal */}
-      <Modal open={addOpen} title="New Output" onClose={() => { resetAdd(); setAddOpen(false) }}>
+      <Modal
+        open={addOpen}
+        title="New Output"
+        onClose={() => { resetAdd(); setAddOpen(false) }}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => { resetAdd(); setAddOpen(false) }}>Cancel</Button>
+            <Button variant="active" onClick={() => void handleAdd()} disabled={!addReady}>
+              Save
+            </Button>
+          </div>
+        }
+      >
         <div className="flex flex-col gap-3">
           <div>
             <label className={labelCls}>Name</label>
@@ -398,12 +410,6 @@ export function OutputsPanel() {
               )}
             </>
           )}
-          <div className="flex justify-end gap-2 pt-1">
-            <Button variant="ghost" onClick={() => { resetAdd(); setAddOpen(false) }}>Cancel</Button>
-            <Button variant="active" onClick={() => void handleAdd()} disabled={!addReady}>
-              Save
-            </Button>
-          </div>
         </div>
       </Modal>
 

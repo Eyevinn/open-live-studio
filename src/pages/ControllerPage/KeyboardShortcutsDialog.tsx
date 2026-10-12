@@ -205,7 +205,35 @@ export function KeyboardShortcutsDialog({ open, onClose }: KeyboardShortcutsDial
   }
 
   return (
-    <Modal open={open} title="Keyboard Shortcuts" onClose={onClose} className="max-w-2xl">
+    <Modal
+      open={open}
+      title="Keyboard Shortcuts"
+      onClose={onClose}
+      className="max-w-2xl"
+      footer={
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={handleReset}>
+              Reset to defaults
+            </Button>
+            <Button variant="ghost" size="sm" onClick={handleImportClick}>
+              Import…
+            </Button>
+            <Button variant="ghost" size="sm" onClick={handleExport}>
+              Export
+            </Button>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="default" size="sm" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button variant="primary" size="sm" onClick={handleSave}>
+              Save
+            </Button>
+          </div>
+        </div>
+      }
+    >
       <div className="flex flex-col gap-4">
         <p className="text-xs text-[--color-text-muted]">
           Click a shortcut to rebind it, then press the key combination you want.
@@ -286,28 +314,6 @@ export function KeyboardShortcutsDialog({ open, onClose }: KeyboardShortcutsDial
           className="hidden"
           onChange={(e) => void handleFileChange(e)}
         />
-
-        <div className="flex items-center justify-between pt-1">
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" onClick={handleReset}>
-              Reset to defaults
-            </Button>
-            <Button variant="ghost" size="sm" onClick={handleImportClick}>
-              Import…
-            </Button>
-            <Button variant="ghost" size="sm" onClick={handleExport}>
-              Export
-            </Button>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="default" size="sm" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button variant="primary" size="sm" onClick={handleSave}>
-              Save
-            </Button>
-          </div>
-        </div>
       </div>
     </Modal>
   )
