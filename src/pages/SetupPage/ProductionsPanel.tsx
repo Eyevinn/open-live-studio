@@ -515,7 +515,18 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
   const cfgOnChange = isActive ? undefined : handleValueChange
 
   return (
-    <Modal open title="Production Options" onClose={onClose} className="max-w-6xl">
+    <Modal
+      open
+      title="Production Options"
+      onClose={onClose}
+      className="max-w-6xl"
+      footer={
+        <div className="flex items-center justify-between">
+          {isActive && <span className="text-xs text-[--color-text-muted] italic">Deactivate this production to make changes.</span>}
+          <Button variant="active" onClick={() => { if (valuesDirty) void updateValues(production.id, configValues); onClose() }} className="ml-auto">Done</Button>
+        </div>
+      }
+    >
       <div className="flex flex-col gap-5">
 
         {/* Two-column split: left = General+Sources+Graphics+Outputs, right = Configuration */}
@@ -686,11 +697,6 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
 
           </div>
         </div>
-
-        <div className="flex items-center justify-between">
-          {isActive && <span className="text-xs text-[--color-text-muted] italic">Deactivate this production to make changes.</span>}
-          <Button variant="active" onClick={() => { if (valuesDirty) void updateValues(production.id, configValues); onClose() }} className="ml-auto">Done</Button>
-        </div>
       </div>
     </Modal>
   )
@@ -795,7 +801,20 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
   const tProps = PRODUCTION_PROPERTIES
 
   return (
-    <Modal open title="New Production" onClose={onClose} className="max-w-6xl">
+    <Modal
+      open
+      title="New Production"
+      onClose={onClose}
+      className="max-w-6xl"
+      footer={
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
+          <Button variant="active" onClick={() => void handleCreate()} disabled={!name.trim() || (saveAsConfig && !configName.trim()) || saving}>
+            {saving ? 'Creating…' : 'Create'}
+          </Button>
+        </div>
+      }
+    >
       <div className="flex flex-col gap-4">
 
         {/* Two-column split: left = General+Sources+Graphics+Outputs, right = Configuration */}
@@ -933,13 +952,6 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
             </div>
           )}
 
-        </div>
-
-        <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={onClose} disabled={saving}>Cancel</Button>
-          <Button variant="active" onClick={() => void handleCreate()} disabled={!name.trim() || (saveAsConfig && !configName.trim()) || saving}>
-            {saving ? 'Creating…' : 'Create'}
-          </Button>
         </div>
       </div>
     </Modal>
