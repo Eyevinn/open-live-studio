@@ -43,10 +43,35 @@ export interface GuestView {
   muted: boolean
 }
 
+/**
+ * A guest that dropped off its mixer input — left voluntarily or was kicked
+ * (`GUEST_STATE` with `state: 'left'`, broadcast from open-live `guests.ts`
+ * `broadcastGuestState`). The live guest is removed from `guests` on `left`, so
+ * this record is retained separately, keyed by `mixerInput`, to drive the
+ * controller "guest dropped" warning on that input's PGM/PiP tile until the
+ * operator acts (studio#193, split from open-live#491). Warning only — it never
+ * triggers an automatic cut.
+ */
+export interface DroppedGuest {
+  mixerInput: string
+  /** Last known guest label, for the warning tooltip. */
+  label?: string
+  /** Epoch ms the drop was observed. */
+  at: number
+}
+
 interface GuestsState {
   invites: GuestInvite[]
   guests: Record<string, GuestView>
   returnModes: Record<string, ReturnMode>
+  /**
+   * Inputs whose live guest dropped, keyed by `mixerInput`. Populated by
+   * `applyGuestState` on a `left` event and cleared when a guest (re)occupies
+   * that input or on production change. The controller only surfaces a warning
+   * for an entry here whose input is *currently* live on program / in a PiP
+   * (see `src/lib/guest-drop.ts`), so a drop on an idle input stays silent.
+   */
+  droppedInputs: Record<string, DroppedGuest>
 }
 
 interface GuestsActions {
@@ -59,6 +84,8 @@ interface GuestsActions {
   applyGuestState: (guest: GuestView) => void
   /** Apply a `RETURN_STATE` WS event (or crew `RETURN_SET` echo). */
   applyReturnState: (mixerInput: string, mode: ReturnMode) => void
+  /** Acknowledge/clear the "guest dropped" warning for a single input. */
+  clearDroppedInput: (mixerInput: string) => void
   reset: () => void
 }
 
@@ -68,6 +95,7 @@ export const useGuestsStore = create<GuestsState & GuestsActions>()(
       invites: [],
       guests: {},
       returnModes: {},
+      droppedInputs: {},
 
       setInvites: (invites) => set({ invites }),
 
@@ -78,13 +106,18 @@ export const useGuestsStore = create<GuestsState & GuestsActions>()(
         set((state) => ({ invites: state.invites.filter((i) => i.id !== inviteId) })),
 
       setGuests: (guests) =>
-        set(() => ({
+        set((state) => {
+          const live = guests.filter((g) => g.state !== 'left')
+          // A guest present in the REST seed occupies its input, so any stale
+          // "guest dropped" warning for that input is cleared.
+          const droppedInputs = { ...state.droppedInputs }
+          for (const g of live) delete droppedInputs[g.mixerInput]
+          return {
           // The REST list returns `left` sessions unfiltered; drop them so a
           // kicked/departed guest does not linger with a live Kick button —
           // matching how the WS connect-sync drops `left` via applyGuestState.
           guests: Object.fromEntries(
-            guests
-              .filter((g) => g.state !== 'left')
+            live
               .map((g) => [
                 g.id,
                 {
@@ -102,17 +135,35 @@ export const useGuestsStore = create<GuestsState & GuestsActions>()(
                 } satisfies GuestView,
               ]),
           ),
-        })),
+          droppedInputs,
+          }
+        }),
 
       applyGuestState: (guest) =>
         set((state) => {
+          const prev = state.guests[guest.guestId]
           if (guest.state === 'left') {
             const next = { ...state.guests }
             delete next[guest.guestId]
-            return { guests: next }
+            // Record the drop so the controller can warn on that input's PGM/PiP
+            // tile while it is live (studio#193). Warning only — no auto-cut.
+            return {
+              guests: next,
+              droppedInputs: {
+                ...state.droppedInputs,
+                [guest.mixerInput]: {
+                  mixerInput: guest.mixerInput,
+                  label: guest.label ?? prev?.label,
+                  at: Date.now(),
+                } satisfies DroppedGuest,
+              },
+            }
           }
-          const prev = state.guests[guest.guestId]
+          // A guest (re)occupies this input, so any stale drop warning clears.
+          const droppedInputs = { ...state.droppedInputs }
+          delete droppedInputs[guest.mixerInput]
           return {
+            droppedInputs,
             guests: {
               ...state.guests,
               [guest.guestId]: {
@@ -134,7 +185,15 @@ export const useGuestsStore = create<GuestsState & GuestsActions>()(
       applyReturnState: (mixerInput, mode) =>
         set((state) => ({ returnModes: { ...state.returnModes, [mixerInput]: mode } })),
 
-      reset: () => set({ invites: [], guests: {}, returnModes: {} }),
+      clearDroppedInput: (mixerInput) =>
+        set((state) => {
+          if (!(mixerInput in state.droppedInputs)) return {}
+          const droppedInputs = { ...state.droppedInputs }
+          delete droppedInputs[mixerInput]
+          return { droppedInputs }
+        }),
+
+      reset: () => set({ invites: [], guests: {}, returnModes: {}, droppedInputs: {} }),
     }),
     { name: 'guests', enabled: import.meta.env.DEV },
   ),
