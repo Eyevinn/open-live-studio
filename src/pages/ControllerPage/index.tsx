@@ -27,6 +27,7 @@ import { useProductionStore, type PipConfig } from '@/store/production.store'
 import { useToastStore } from '@/store/toast.store'
 import { pipShowsBlackBehind } from '@/lib/pip'
 import { useGuestsStore } from '@/store/guests.store'
+import { liveDroppedMixerInputs, droppedPipIndices } from '@/lib/guest-drop'
 import { useIsOnAir } from '@/store/programClock.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
@@ -675,6 +676,16 @@ export function ControllerPage() {
     Object.values(guestsMap).filter((g) => g.muted).map((g) => g.mixerInput),
   )
 
+  // Guest inputs that dropped (`GUEST_STATE` state:'left') while live — surfaced
+  // as a "guest dropped" warning on the vision-mixer PGM/PVW tiles and PiP
+  // buttons so the operator gets an explicit drop signal (studio#193). Warning
+  // only: the operator still chooses which source to cut to. The live/PiP check
+  // uses the same PGM state that drives tally, so no new backend contract is
+  // needed — the connect-time snapshot already carries it.
+  const droppedInputs = useGuestsStore((s) => s.droppedInputs)
+  const droppedGuestMixerInputs = liveDroppedMixerInputs(droppedInputs, { pgmInput, pgmPip, pips })
+  const droppedGuestPipIdxs = droppedPipIndices(pips, droppedInputs)
+
   // Keyboard shortcuts resolve through the keymap-as-data dispatcher
   // (studio#173) rather than a hardcoded key ladder. The default keymap
   // reproduces the historical bindings exactly; see src/lib/keymap.
@@ -1089,7 +1100,7 @@ export function ControllerPage() {
                   </>
                 }>Controller</SectionLabel>
                 <div className="flex flex-col flex-1 gap-2 overflow-y-auto min-h-0">
-                  <TransitionPanel onCut={handleCut} onAuto={handleAuto} onFtb={handleFtb} onSelectPvw={handleSelectPvw} onSetOvl={handleSetOvl} onSelectPvwPip={handleSelectPvwPip} pips={pips} pgmPip={pgmPip} pvwPip={pvwPip} className="flex-1" visibleTransitions={controllerOptions.visibleTransitions} mutedMixerInputs={mutedGuestMixerInputs} />
+                  <TransitionPanel onCut={handleCut} onAuto={handleAuto} onFtb={handleFtb} onSelectPvw={handleSelectPvw} onSetOvl={handleSetOvl} onSelectPvwPip={handleSelectPvwPip} pips={pips} pgmPip={pgmPip} pvwPip={pvwPip} className="flex-1" visibleTransitions={controllerOptions.visibleTransitions} mutedMixerInputs={mutedGuestMixerInputs} droppedMixerInputs={droppedGuestMixerInputs} droppedPipIdxs={droppedGuestPipIdxs} />
                   <DskPanel onToggle={handleDskToggle} />
                   {MACROS_ENABLED && activeProductionId && (
                     <MacroBar productionId={activeProductionId!} onExec={handleMacroExec} />

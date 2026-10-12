@@ -7,6 +7,7 @@ import { pipShowsBlackBehind } from '@/lib/pip'
 import { compareMixerInput } from '@/lib/mixer-input-order'
 import { useRef, useCallback, useState, useEffect } from 'react'
 import { MutedMicIcon } from '@/components/ui/MutedMicIcon'
+import { GuestDroppedBadge } from '@/components/ui/GuestDroppedBadge'
 
 const DURATION_PRESETS_MS = [500, 1000, 2000]
 const TRANSITION_TYPES: TransitionType[] = [
@@ -106,9 +107,16 @@ interface TransitionPanelProps {
    * open-live#382) — renders a mic-muted badge on that source's PGM/PVW tile,
    * so a muted guest is never taken to air unnoticed (studio#163). */
   mutedMixerInputs?: Set<string>
+  /** Mixer inputs whose live guest dropped (`GUEST_STATE` state:'left') while
+   * the input is live on program / the program PiP — renders a "guest dropped"
+   * warning on that source's PGM/PVW tile. Warning only; no auto-cut (studio#193). */
+  droppedMixerInputs?: Set<string>
+  /** Indices of PiPs that contain a dropped guest's input — renders the same
+   * "guest dropped" warning on the PiP button (studio#193). */
+  droppedPipIdxs?: Set<number>
 }
 
-export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, onSelectPvwPip, pips, pgmPip, pvwPip, className, visibleTransitions, mutedMixerInputs }: TransitionPanelProps) {
+export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, onSelectPvwPip, pips, pgmPip, pvwPip, className, visibleTransitions, mutedMixerInputs, droppedMixerInputs, droppedPipIdxs }: TransitionPanelProps) {
   const ovlTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const debouncedSetOvl = useCallback((alpha: number) => {
     if (ovlTimerRef.current) clearTimeout(ovlTimerRef.current)
@@ -227,6 +235,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
                 >
                   {slot.name}
                   {muted && <MutedMicIcon emphasized={isOnPgmRow} className="absolute top-0.5 right-0.5" size={8} />}
+                  {droppedMixerInputs?.has(slot.mixerInput) && <GuestDroppedBadge emphasized={isOnPgmRow} className="absolute top-0.5 left-0.5" size={8} />}
                 </button>
               )
             })}
@@ -247,6 +256,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
                 >
                   PiP {pipIdx + 1}
                   {noBg && <NoBgBadge emphasized={pgmPip === pipIdx} />}
+                  {droppedPipIdxs?.has(pipIdx) && <GuestDroppedBadge emphasized={pgmPip === pipIdx} className="absolute top-0.5 left-0.5" size={8} />}
                 </button>
               )
             })}
@@ -284,6 +294,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
                 >
                   {slot.name}
                   {muted && <MutedMicIcon emphasized={isActive || isOnPgm} className="absolute top-0.5 right-0.5" size={8} />}
+                  {droppedMixerInputs?.has(slot.mixerInput) && <GuestDroppedBadge emphasized={isActive || isOnPgm} className="absolute top-0.5 left-0.5" size={8} />}
                 </button>
               )
             })}
@@ -309,6 +320,7 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
                 >
                   PiP {pipIdx + 1}
                   {noBg && <NoBgBadge emphasized={isActive || isOnPgm} />}
+                  {droppedPipIdxs?.has(pipIdx) && <GuestDroppedBadge emphasized={isActive || isOnPgm} className="absolute top-0.5 left-0.5" size={8} />}
                 </button>
               )
             })}
