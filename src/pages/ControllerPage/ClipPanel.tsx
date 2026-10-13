@@ -130,7 +130,10 @@ function ClipRow({ mixerInput, name, send }: ClipRowProps) {
 
   const isLoaded = state !== 'idle'
   const isPlaying = state === 'playing'
-  const canPlay = state === 'cued' || state === 'paused' || state === 'stopped' || state === 'completed'
+  // Playback can only start/resume from a cued or paused clip. In every other state
+  // (idle/stopped/completed/error) the Strom API rejects resume with a 400, so the
+  // Play button stays disabled and hints the operator to cue the clip first.
+  const canPlay = state === 'cued' || state === 'paused'
   // Seeking is meaningful once a clip is loaded (not idle) and not in an error state.
   const canSeek = isLoaded && state !== 'error'
 
@@ -161,7 +164,7 @@ function ClipRow({ mixerInput, name, send }: ClipRowProps) {
         />
         <ClipButton
           label="Play"
-          title="Play the cued clip"
+          title={canPlay ? 'Play the cued clip' : 'Cue the clip first'}
           disabled={!canPlay}
           active={isPlaying}
           onClick={() => send({ type: 'CLIP_PLAY', mixerInput })}
