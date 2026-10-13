@@ -13,6 +13,14 @@ interface VideoTileProps {
   className?: string
   muted?: boolean
   aspectRatio?: '16/9'
+  /**
+   * How the video fills its 16:9 tile. Defaults to 'contain' (letterbox/pillarbox,
+   * never crops). Guest-camera (WHIP) feeds publish at the device's native aspect
+   * ratio — a front iPhone camera is ~4:3 — so they are rendered with 'cover' to
+   * crop and fill the 16:9 production frame instead of showing black side bars
+   * (open-live-studio#200). Composited mixer output is already 16:9 and stays 'contain'.
+   */
+  objectFit?: 'contain' | 'cover'
   noSignal?: boolean
   noCursor?: boolean
   onHasVideo?: (hasVideo: boolean) => void
@@ -47,6 +55,7 @@ export const VideoTile = forwardRef<VideoTileHandle, VideoTileProps>(function Vi
   className,
   muted = true,
   aspectRatio = '16/9',
+  objectFit = 'contain',
   noSignal = false,
   noCursor = false,
   onHasVideo,
@@ -112,7 +121,7 @@ export const VideoTile = forwardRef<VideoTileHandle, VideoTileProps>(function Vi
       {/* Video element — playsinline required for iOS Safari */}
       <video
         ref={videoRef}
-        className="w-full h-full object-contain"
+        className={cn('w-full h-full', objectFit === 'cover' ? 'object-cover' : 'object-contain')}
         style={{ visibility: (noSignal || !stream || !hasVideo) ? 'hidden' : 'visible' }}
         playsInline
         autoPlay

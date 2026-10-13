@@ -38,6 +38,7 @@ function SourceCell({ sourceId }: { sourceId: string }) {
       tally={tally}
       onClick={() => setPvw(sourceId)}
       onDoubleClick={() => { setPvw(sourceId); cut() }}
+      objectFit={source.streamType === 'whip' ? 'cover' : 'contain'}
       className="min-w-[140px]"
     />
   )

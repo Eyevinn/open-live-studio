@@ -50,6 +50,7 @@ function SourceCell({
         stream={stream}
         label={source.name}
         tally={tally}
+        objectFit={source.streamType === 'whip' ? 'cover' : 'contain'}
         className="w-full"
       />
     </div>
