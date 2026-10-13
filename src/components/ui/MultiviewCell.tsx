@@ -35,6 +35,7 @@ export function MultiviewCell({ source }: MultiviewCellProps) {
         label={source.name}
         sublabel={source.address}
         tally={tally}
+        objectFit={source.streamType === 'whip' ? 'cover' : 'contain'}
         className="w-full rounded-none"
         noCursor
       />
