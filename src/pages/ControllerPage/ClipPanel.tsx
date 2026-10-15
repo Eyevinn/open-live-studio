@@ -117,13 +117,19 @@ function ScrubBar({
   )
 }
 
+interface ClipLibraryEntry {
+  id: string
+  name: string
+}
+
 interface ClipRowProps {
   mixerInput: string
   name: string
+  library: ClipLibraryEntry[]
   send: (msg: OutboundMessage) => void
 }
 
-function ClipRow({ mixerInput, name, send }: ClipRowProps) {
+function ClipRow({ mixerInput, name, library, send }: ClipRowProps) {
   const clip = useProductionStore((s) => s.clipStates[mixerInput])
   const state: ClipPlaybackState = clip?.state ?? 'idle'
   const meta = STATE_META[state]
@@ -137,12 +143,26 @@ function ClipRow({ mixerInput, name, send }: ClipRowProps) {
   // Seeking is meaningful once a clip is loaded (not idle) and not in an error state.
   const canSeek = isLoaded && state !== 'error'
 
+  // On-air guard: the server rejects CLIP_CUE with a 409 while the slot is playing,
+  // so the picker and Cue are disabled here to mirror it.
+  const onAirTitle = 'Clip is on air - stop or pause it before changing or re-cueing'
+
+  // The loaded clip (CLIP_STATE.clipId) names the row; fall back to the slot's
+  // assigned source until something has been cued.
+  const loadedId = clip?.clipId
+  const loadedName = loadedId ? (library.find((c) => c.id === loadedId)?.name ?? loadedId) : undefined
+  const displayName = loadedName ?? name
+
+  // Operator's pending pick; null means "follow the loaded clip".
+  const [pickedId, setPickedId] = useState<string | null>(null)
+  const selectedId = pickedId ?? loadedId ?? ''
+
   return (
     <div className="flex flex-col gap-1 border border-zinc-800 bg-zinc-950 px-2.5 py-2">
       {/* Header: source name + live state */}
       <div className="flex items-center gap-2">
         <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-300 truncate flex-1 min-w-0">
-          {name}
+          {displayName}
         </span>
         <span className={cn('text-[9px] font-bold uppercase tracking-widest shrink-0', meta.className)}>
           {meta.label}
@@ -154,13 +174,44 @@ function ClipRow({ mixerInput, name, send }: ClipRowProps) {
         <span className="text-[9px] text-red-400/90 leading-snug break-words">{clip.error}</span>
       )}
 
+      {/* Clip picker */}
+      <select
+        value={selectedId}
+        disabled={isPlaying}
+        title={isPlaying ? onAirTitle : 'Choose the clip to cue into this slot'}
+        aria-label={`Clip for ${name}`}
+        onChange={(e) => setPickedId(e.target.value)}
+        className={cn(
+          'bg-zinc-900 border border-zinc-700 text-[10px] text-zinc-300 px-1.5 py-1 min-w-0',
+          isPlaying ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:border-zinc-500',
+        )}
+      >
+        {selectedId === '' && <option value="">Select clip...</option>}
+        {selectedId !== '' && !library.some((c) => c.id === selectedId) && (
+          <option value={selectedId}>{selectedId}</option>
+        )}
+        {library.map((c) => (
+          <option key={c.id} value={c.id}>{c.name}</option>
+        ))}
+      </select>
+
       {/* Transport controls */}
       <div className="flex items-center gap-1">
         <ClipButton
           label="Cue"
-          title="Preload this clip (preview-ready, does not go to air)"
+          title={
+            isPlaying
+              ? onAirTitle
+              : selectedId === ''
+                ? 'Select a clip first'
+                : 'Preload the selected clip (preview-ready, does not go to air)'
+          }
+          disabled={isPlaying || selectedId === ''}
           active={state === 'cued'}
-          onClick={() => send({ type: 'CLIP_CUE', mixerInput })}
+          onClick={() => {
+            send({ type: 'CLIP_CUE', mixerInput, clipId: selectedId })
+            setPickedId(null)
+          }}
         />
         <ClipButton
           label="Play"
@@ -202,22 +253,27 @@ function ClipRow({ mixerInput, name, send }: ClipRowProps) {
 interface ClipPanelProps {
   /** Clip-type sources assigned to this production, in display order. */
   clips: Array<{ mixerInput: string; name: string }>
+  /** All clip-type sources in the library, offered by each slot's picker. */
+  library: ClipLibraryEntry[]
   send: (msg: OutboundMessage) => void
 }
 
-export function ClipPanel({ clips, send }: ClipPanelProps) {
+export function ClipPanel({ clips, library, send }: ClipPanelProps) {
   if (clips.length === 0) {
     return (
-      <p className="text-[9px] text-zinc-600 px-1 py-2">
-        No clip sources assigned to this production.
-      </p>
+      <div className="px-1 py-2 flex flex-col gap-1">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">No clip slots</p>
+        <p className="text-[9px] text-zinc-600 leading-snug">
+          This production has no clip slots. Assign a clip source to a slot in Setup before activating the production, then pick and cue clips here.
+        </p>
+      </div>
     )
   }
 
   return (
     <div className="flex flex-col gap-1.5">
       {clips.map((clip) => (
-        <ClipRow key={clip.mixerInput} mixerInput={clip.mixerInput} name={clip.name} send={send} />
+        <ClipRow key={clip.mixerInput} mixerInput={clip.mixerInput} name={clip.name} library={library} send={send} />
       ))}
     </div>
   )

@@ -846,20 +846,24 @@ export function ControllerPage() {
     })
     .filter((s) => s.streamType === 'clip')
     .map(({ mixerInput, name }) => ({ mixerInput, name }))
-  const hasClips = clipSources.length > 0
+  // Every clip-type source in the library — the picker offers all of them, not
+  // just the one assigned to the slot (open-live-studio#202).
+  const clipLibrary = sources
+    .filter((s) => s.streamType === 'clip')
+    .map((s) => ({ id: s.id, name: s.name }))
 
   const PANEL_ICONS = [
     { key: 'multiviewer', Icon: MultiviewerIcon },
     { key: 'pgm',         Icon: MonitorIcon     },
     { key: 'controller',  Icon: ControllerIcon  },
     ...(numPips > 0 ? [{ key: 'pip', Icon: PipIcon } as const] : []),
-    ...(hasClips ? [{ key: 'clip', Icon: ClipIcon } as const] : []),
+    { key: 'clip',        Icon: ClipIcon        },
     { key: 'guests',      Icon: GuestsIcon       },
     { key: 'audio',       Icon: AudioIcon        },
     { key: 'fx',          Icon: LooksIcon        },
   ] as const
 
-  const showBottomRow = panels.controller || panels.audio || (panels.pip && numPips > 0) || panels.fx || (panels.clip && hasClips) || panels.guests
+  const showBottomRow = panels.controller || panels.audio || (panels.pip && numPips > 0) || panels.fx || panels.clip || panels.guests
 
   return (
     <>
@@ -1122,16 +1126,16 @@ export function ControllerPage() {
                 </div>
               </div>
             )}
-            {panels.clip && hasClips && (
+            {panels.clip && (
               <div className={`flex flex-col gap-2 panel-col-fixed h-full ${panels.controller || panels.fx ? 'pr-3' : 'px-3'}`} style={{ width: 320 }}>
-                <SectionLabel icon={<ClipIcon />} tooltip="Clip bin. Cue a clip to preload it (preview-ready, does not go to air), then Play, Pause, Stop, or scrub. Live state and playhead come from the server. Take a cued clip to programme with the vision-mixer controls." onHide={() => togglePanel('clip')}>Clips</SectionLabel>
+                <SectionLabel icon={<ClipIcon />} tooltip="Clip bin. Pick a clip for each slot and Cue to preload it (preview-ready, does not go to air), then Play, Pause, Stop, or scrub. Live state and playhead come from the server. Take a cued clip to programme with the vision-mixer controls." onHide={() => togglePanel('clip')}>Clips</SectionLabel>
                 <div className="border border-zinc-800 overflow-y-auto flex-1 min-h-0 p-1.5" style={{ background: '#0d0d0d' }}>
-                  <ClipPanel clips={clipSources} send={send} />
+                  <ClipPanel clips={clipSources} library={clipLibrary} send={send} />
                 </div>
               </div>
             )}
             {panels.guests && activeProduction && (
-              <div className={`flex flex-col gap-2 panel-col-fixed h-full ${panels.controller || panels.fx || (panels.clip && hasClips) ? 'pr-3' : 'px-3'}`} style={{ width: 320 }}>
+              <div className={`flex flex-col gap-2 panel-col-fixed h-full ${panels.controller || panels.fx || panels.clip ? 'pr-3' : 'px-3'}`} style={{ width: 320 }}>
                 <SectionLabel icon={<GuestsIcon />} tooltip="Guest calling. Invite a guest into a reserved slot (configured in Production Options → Guest Slots) and share the guest-page link. Joined guests appear here and in the vision-mixer tiles — take them to air with the vision-mixer controls. A muted-mic badge shows when a guest has muted, emphasized while they're on PVW/PGM. Switch a guest's return-feed mode between full program (PGM) and mix-minus (PGM-N1, program without the guest's own audio). Talkback is shown when an intercom line is present." onHide={() => togglePanel('guests')}>Guests</SectionLabel>
                 <div className="border border-zinc-800 overflow-y-auto flex-1 min-h-0 p-1.5" style={{ background: '#0d0d0d' }}>
                   <GuestPanel production={activeProduction} send={send} />
