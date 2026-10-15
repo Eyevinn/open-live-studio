@@ -1,8 +1,10 @@
 import { useEffect } from 'react'
-import { useProductionStore } from '@/store/production.store'
+import { useProductionStore, type ClipState } from '@/store/production.store'
 import { getApiToken, wsAuthProtocols } from '@/lib/sat'
 import { BASE } from '@/lib/base'
 import { hasControllerConnection, subscribeControllerRegistry } from '@/hooks/useControllerWs'
+
+const CLIP_PLAYBACK_STATES: readonly string[] = ['idle', 'cued', 'playing', 'paused', 'stopped', 'completed', 'error']
 
 const WS_BASE = BASE.replace(/^http/, 'ws')
 
@@ -118,10 +120,28 @@ export function useSessionKeepAlive(): void {
         keepAliveTimer = setInterval(sendKeepAlive, KEEP_ALIVE_INTERVAL_MS)
       }
 
-      // This session-level subscription intentionally ignores inbound state
-      // frames — the mixer view owns full state sync. Its sole job is to keep a
-      // subscriber attached so the idle watchdog does not fire.
-      socket.onmessage = null
+      // This session-level subscription ignores inbound state frames — the
+      // mixer view owns full state sync — with ONE exception: CLIP_STATE, so
+      // the Setup view can tell whether a clip is on air (OL-20c). Its main job
+      // remains keeping a subscriber attached so the idle watchdog does not fire.
+      socket.onmessage = (event: MessageEvent) => {
+        if (typeof event.data !== 'string') return
+        let msg: unknown
+        try { msg = JSON.parse(event.data) } catch { return }
+        if (msg === null || typeof msg !== 'object') return
+        const frame = msg as Record<string, unknown>
+        if (frame['type'] !== 'CLIP_STATE') return
+        const state = frame['state']
+        if (typeof frame['mixerInput'] !== 'string' || typeof state !== 'string' || !CLIP_PLAYBACK_STATES.includes(state)) return
+        useProductionStore.getState().applyClipState({
+          mixerInput: frame['mixerInput'],
+          state: state as ClipState['state'],
+          ...(typeof frame['clipId'] === 'string' ? { clipId: frame['clipId'] } : {}),
+          ...(typeof frame['positionMs'] === 'number' ? { positionMs: frame['positionMs'] } : {}),
+          ...(typeof frame['durationMs'] === 'number' ? { durationMs: frame['durationMs'] } : {}),
+          ...(typeof frame['error'] === 'string' ? { error: frame['error'] } : {}),
+        })
+      }
 
       socket.onerror = () => {
         // onclose fires next and schedules the reconnect.
