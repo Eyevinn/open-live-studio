@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useSourcesStore } from '@/store/sources.store'
 import { useProductionsStore } from '@/store/productions.store'
+import { useProductionStore } from '@/store/production.store'
 import { useGatewaysStore } from '@/store/gateways.store'
 import { useServerInfo } from '@/hooks/useServerInfo'
 import { ApiError, type HtmlSourceAuth, type HtmlSourceAuthInput, type StreamType } from '@/lib/api'
@@ -337,6 +338,15 @@ export function SourcesPanel() {
       .flatMap((p) => p.sources.map((s) => s.sourceId)),
   )
 
+  // sourceId -> mixerInput for the same active/activating productions, so a
+  // clip source row can look up its live playback state (OL-20c).
+  const mixerInputBySource = new Map(
+    productions
+      .filter((p) => p.status === 'active' || p.status === 'activating')
+      .flatMap((p) => p.sources.map((s) => [s.sourceId, s.mixerInput] as const)),
+  )
+  const clipStates = useProductionStore((s) => s.clipStates)
+
   function validateAddress(address: string, streamType: StreamType, direction: SrtDirection): string | null {
     if (!STREAM_TYPE_HAS_ADDRESS[streamType]) return null
     if (isSrt(streamType) && direction === 'listener') return null
@@ -644,10 +654,21 @@ export function SourcesPanel() {
           const gatewayOwned = !!src.gatewayId
           const gatewayOffline = gatewayOwned && (!gateway || gateway.health !== 'healthy')
           const uplink = link?.input?.uplink ?? null
-          const locked = inActiveProduction || gatewayOwned
+          // OL-20c: clip sources stay editable in a live production unless the
+          // clip is on air (playing/paused); edits apply at the next Cue.
+          // Delete and every other source type stay locked as before.
+          const isClip = src.streamType === 'clip'
+          const mixerInput = mixerInputBySource.get(src.id)
+          const clipState = isClip && mixerInput !== undefined ? clipStates[mixerInput]?.state : undefined
+          const clipOnAir = clipState === 'playing' || clipState === 'paused'
+          const editLocked = gatewayOwned || (inActiveProduction && (!isClip || clipOnAir))
+          const deleteLocked = inActiveProduction || gatewayOwned
           const editTitle = gatewayOwned
             ? 'Managed by its gateway; edit it on the gateway box'
-            : inActiveProduction ? 'Cannot edit source in an active production' : 'Edit source'
+            : !inActiveProduction ? 'Edit source'
+            : !isClip ? 'Cannot edit source in an active production'
+            : clipOnAir ? 'Cannot edit while the clip is playing'
+            : 'Editable while live \u2014 changes apply at the next Cue'
           const deleteTitle = gatewayOwned
             ? 'Managed by its gateway; the gateway recreates it each tick'
             : inActiveProduction ? 'Cannot delete source in an active production' : 'Delete source'
@@ -655,13 +676,13 @@ export function SourcesPanel() {
             <div
               key={src.id}
               className={`flex items-center gap-3 px-3 py-2.5 rounded bg-[--color-surface-3] border transition-colors ${
-                locked || isPhone
+                editLocked || isPhone
                   ? 'border-[--color-border] hover:border-zinc-600 cursor-not-allowed'
                   : 'border-[--color-border] hover:border-orange-500 cursor-pointer'
               }`}
               // Phone tier: opening the edit form would expose a state-mutating
               // form, so rows are inert (glanceable status only) at <768px (#105).
-              onClick={() => { if (!locked && !isPhone) openEdit(src) }}
+              onClick={() => { if (!editLocked && !isPhone) openEdit(src) }}
             >
               <StatusDot color={gatewayOffline ? 'yellow' : inActiveProduction ? 'red' : 'gray'} />
               <div className="flex-1 min-w-0">
@@ -707,8 +728,8 @@ export function SourcesPanel() {
                   <Button
                     size="sm"
                     variant="ghost"
-                    onClick={(e) => { e.stopPropagation(); if (!locked) openEdit(src) }}
-                    disabled={locked}
+                    onClick={(e) => { e.stopPropagation(); if (!editLocked) openEdit(src) }}
+                    disabled={editLocked}
                     className="text-white hover:text-orange-500 disabled:opacity-30 disabled:cursor-not-allowed"
                     title={editTitle}
                   >
@@ -718,7 +739,7 @@ export function SourcesPanel() {
                     size="sm"
                     variant="ghost"
                     onClick={(e) => { e.stopPropagation(); if (!gatewayOwned) setDeleteTargetId(src.id) }}
-                    disabled={locked}
+                    disabled={deleteLocked}
                     className="text-white hover:text-red-400 disabled:opacity-30 disabled:cursor-not-allowed"
                     title={deleteTitle}
                   >
@@ -767,6 +788,11 @@ export function SourcesPanel() {
                 className={inputCls}
               />
             </div>
+            {editTarget.streamType === 'clip' && activeSourceIds.has(editTarget.id) && (
+              <p className="text-xs italic text-[--color-text-muted]">
+                This production is live. Changes to this clip apply at the next Cue.
+              </p>
+            )}
             {isSrt(editTarget.streamType) && (
               <DirectionToggle
                 value={editTarget.direction}
