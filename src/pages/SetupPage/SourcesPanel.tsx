@@ -8,6 +8,7 @@ import { ApiError, sourcesApi, type AudioStreamsResponse, type HtmlSourceAuth, t
 import { openHtmlAuthPopup, originOf, maskCredential } from '@/lib/htmlSourceAuthPopup'
 import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
 import { buildListenerAddress, isCallerAddress, listenerPort, passphraseOf, srtDirection, toCallerUrl, type SrtDirection } from '@/lib/srt'
+import { decideAudioStreamIndex } from '@/lib/audio-stream-index'
 import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
@@ -555,13 +556,12 @@ export function SourcesPanel() {
       }
       if (address === editTarget.stored) address = undefined
     }
-    const parsedAudio = Number(editTarget.audioStreamIndex)
-    const audioIndex = editTarget.audioStreamIndex.trim() !== '' && Number.isInteger(parsedAudio) && parsedAudio >= 0 ? parsedAudio : undefined
+    const audioDecision = decideAudioStreamIndex(editTarget.audioStreamIndex, editTarget.initialAudioStreamIndex)
     void updateSource(editTarget.id, {
       name: editTarget.name.trim(),
       ...(address !== undefined ? { address } : {}),
       ...(STREAM_TYPE_HAS_LATENCY[editTarget.streamType] ? { latency: parseInt(editTarget.latency, 10) || 125 } : {}),
-      ...(isSrt(editTarget.streamType) && audioIndex !== undefined && editTarget.audioStreamIndex !== editTarget.initialAudioStreamIndex ? { audioStreamIndex: audioIndex } : {}),
+      ...(isSrt(editTarget.streamType) && audioDecision.send ? { audioStreamIndex: audioDecision.audioStreamIndex } : {}),
       ...(authPayload ? { auth: authPayload } : {}),
     })
     setEditAddressError(null)
