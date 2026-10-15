@@ -14,6 +14,8 @@ export interface Source {
   color: string
   liveCamera?: boolean
   latency?: number
+  /** 0-based audio stream index (SRT/EFP only); absent means 0 (ADR-006). */
+  audioStreamIndex?: number
   /** Id of the gateway that registered this source, if gateway-owned (open-live #263). */
   gatewayId?: string
   /**
@@ -40,7 +42,7 @@ interface SourcesActions {
    * (studio#154) so e.g. an HTML source's interactive credential is not lost
    * when the operator uses the main Save instead of "Save Credential".
    */
-  updateSource: (id: string, fields: Partial<Pick<Source, 'name' | 'address' | 'latency'>> & { auth?: HtmlSourceAuthInput }) => Promise<void>
+  updateSource: (id: string, fields: Partial<Pick<Source, 'name' | 'address' | 'latency' | 'audioStreamIndex'>> & { auth?: HtmlSourceAuthInput }) => Promise<void>
   updateStatus: (id: string, status: SourceStatus) => Promise<void>
   /**
    * Set/replace the HTML-source header credential (Design B). The credential
@@ -63,6 +65,7 @@ function fromApi(s: ApiSource): Source {
     color: SOURCE_COLOR,
     liveCamera: s.liveCamera,
     latency: s.latency,
+    audioStreamIndex: s.audioStreamIndex,
     gatewayId: s.gatewayId,
     auth: s.auth,
   }
@@ -126,6 +129,7 @@ export const useSourcesStore = create<SourcesState & SourcesActions>()(
             if (updated.name !== undefined) source.name = updated.name
             if (updated.address !== undefined) source.address = updated.address
             if (updated.latency !== undefined) source.latency = updated.latency
+            if (updated.audioStreamIndex !== undefined) source.audioStreamIndex = updated.audioStreamIndex
             // The endpoint always echoes the current `auth` (masked); keep the
             // store in sync even when this call didn't itself touch auth, since
             // a stale cached value would otherwise re-derive the wrong checkbox

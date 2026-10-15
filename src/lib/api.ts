@@ -111,6 +111,8 @@ export interface ApiSource {
   status: 'active' | 'inactive'
   liveCamera?: boolean
   latency?: number
+  /** 0-based audio elementary-stream index (SRT/EFP only); absent means 0 (ADR-006). */
+  audioStreamIndex?: number
   /**
    * Id of the Gateway (open-live `GatewayDoc._id`) that registered this source,
    * if any. Present only on gateway-owned sources; the gateway recreates these
@@ -351,9 +353,24 @@ export const productionsApi = {
     request<void>(`/api/v1/productions/${encodeURIComponent(id)}/outputs/${encodeURIComponent(outputId)}`, { method: 'DELETE' }),
 }
 
+/** One audio elementary stream reported by `GET /api/v1/sources/:id/audio-streams`. */
+export interface AudioStreamInfo {
+  index: number
+  codec?: string
+  channels?: number
+  language?: string
+}
+
+/** Response of `GET /api/v1/sources/:id/audio-streams` (open-live ADR-006 Decision 3). */
+export type AudioStreamsResponse =
+  | { selectedIndex: number; discovery: 'available'; streams: AudioStreamInfo[] }
+  | { selectedIndex: number; discovery: 'unavailable'; reason?: 'no-live-flow' | 'strom-probe-unsupported'; streams: null }
+
 export const sourcesApi = {
   list: () =>
     request<ApiSource[]>('/api/v1/sources'),
+  audioStreams: (id: string) =>
+    request<AudioStreamsResponse>(`/api/v1/sources/${encodeURIComponent(id)}/audio-streams`),
 
   create: (body: Omit<ApiSource, 'id'>) =>
     request<ApiSource>('/api/v1/sources', {
