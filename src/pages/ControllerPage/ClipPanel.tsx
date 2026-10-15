@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { cn } from '@/lib/cn'
 import { useProductionStore, type ClipPlaybackState } from '@/store/production.store'
 import type { OutboundMessage } from '@/hooks/useControllerWs'
+import { NewClipDialog } from './NewClipDialog'
 
 // ─── Clip cueing / playback operator UI (epic open-live#206, studio#145) ────────
 //
@@ -259,19 +260,39 @@ interface ClipPanelProps {
 }
 
 export function ClipPanel({ clips, library, send }: ClipPanelProps) {
+  const [newClipOpen, setNewClipOpen] = useState(false)
+
+  const newClip = (
+    <>
+      <div className="flex">
+        <ClipButton label="+ New clip" title="Add a clip from a URL or S3 object" onClick={() => setNewClipOpen(true)} />
+      </div>
+      <NewClipDialog
+        open={newClipOpen}
+        onClose={() => setNewClipOpen(false)}
+        slots={clips}
+        onCue={(mixerInput, clipId) => send({ type: 'CLIP_CUE', mixerInput, clipId })}
+      />
+    </>
+  )
+
   if (clips.length === 0) {
     return (
-      <div className="px-1 py-2 flex flex-col gap-1">
-        <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">No clip slots</p>
-        <p className="text-[9px] text-zinc-600 leading-snug">
-          This production has no clip slots. Assign a clip source to a slot in Setup before activating the production, then pick and cue clips here.
-        </p>
+      <div className="px-1 py-2 flex flex-col gap-2">
+        <div className="flex flex-col gap-1">
+          <p className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">No clip slots</p>
+          <p className="text-[9px] text-zinc-600 leading-snug">
+            This production has no clip slots. Assign a clip source to a slot in Setup before activating the production, then pick and cue clips here.
+          </p>
+        </div>
+        {newClip}
       </div>
     )
   }
 
   return (
     <div className="flex flex-col gap-1.5">
+      {newClip}
       {clips.map((clip) => (
         <ClipRow key={clip.mixerInput} mixerInput={clip.mixerInput} name={clip.name} library={library} send={send} />
       ))}
