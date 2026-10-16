@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { useProductionStore, type PipConfig, type SourceCrop, type PipTransforms, type ZoneBorder } from '@/store/production.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
+import { useGuestsStore } from '@/store/guests.store'
 import { cn } from '@/lib/cn'
 import { pipShowsBlackBehind } from '@/lib/pip'
 import { compareMixerInput } from '@/lib/mixer-input-order'
@@ -26,6 +27,15 @@ const GRID_DIVISIONS = 9
 function padToIndex(mixerInput: string): number | null {
   const m = /video_in_(\d+)$/.exec(mixerInput ?? '')
   return m?.[1] !== undefined ? parseInt(m[1], 10) : null
+}
+
+/** Trailing numeric index of a mixer-input key, used to order guest slots into
+ *  the same "Slot 1, Slot 2, …" sequence the Guests panel shows (it allocates
+ *  slots from the top of the mixer-input range down, so the highest index is
+ *  Slot 1). Keeps the "GUEST N" tile label aligned with the Guests panel.
+ *  Mirrors TransitionPanel.guestSlotIndex. */
+function guestSlotIndex(mixerInput: string): number {
+  return parseInt(/(\d+)$/.exec(mixerInput)?.[1] ?? '0', 10)
 }
 
 function parsePgmResolution(val: unknown): { w: number; h: number } {
@@ -456,6 +466,7 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
   const { pips, activeProductionId } = useProductionStore()
   const production = useProductionsStore((s) => s.productions.find((p) => p.id === activeProductionId))
   const sources = useSourcesStore((s) => s.sources)
+  const guests = useGuestsStore((s) => s.guests)
 
   const pgmResolution = parsePgmResolution(production?.values?.pgm_resolution)
 
@@ -516,13 +527,34 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
 
   // Input slots: same pattern as TransitionPanel
   const VIRTUAL_SOURCE_NAMES: Record<string, string> = { '__test1__': 'PINWHEEL', '__test2__': 'COLORS' }
+
+  // Guest slots (open-live#381): a source assignment carrying `returnFeed` is a
+  // reserved guest input whose source is the virtual `Whip` (or a return-only
+  // encoder). Number them the way the Guests panel does so a free slot can be
+  // labelled "GUEST 1", "GUEST 2", … instead of the raw sourceId ("WHIP").
+  const guestSlotNumbers = new Map<string, number>()
+  const orderedGuestSlots = [...(production?.sources ?? [])]
+    .filter((a) => !!a.returnFeed)
+    .sort((a, b) => guestSlotIndex(b.mixerInput) - guestSlotIndex(a.mixerInput))
+  orderedGuestSlots.forEach((a, i) => guestSlotNumbers.set(a.mixerInput, i + 1))
+
   const inputSlots = [...(production?.sources ?? [])]
     .sort((a, b) => compareMixerInput(a.mixerInput, b.mixerInput))
     .map((a) => {
       const idx = padToIndex(a.mixerInput)
-      const src = sources.find((s) => s.id === a.sourceId)
-      const name = (src?.name ?? VIRTUAL_SOURCE_NAMES[a.sourceId] ?? a.sourceId).toUpperCase()
-      return idx === null ? null : { idx, name }
+      let name: string
+      if (a.returnFeed) {
+        // Joined guest → their own label (the same name the Guests panel shows);
+        // free slot → its slot number. Never the raw `Whip` sourceId (studio#212).
+        const guest = Object.values(guests).find((g) => g.mixerInput === a.mixerInput)
+        name = guest
+          ? guest.label?.trim() || guest.mixerInput
+          : `Guest ${guestSlotNumbers.get(a.mixerInput) ?? ''}`.trim()
+      } else {
+        const src = sources.find((s) => s.id === a.sourceId)
+        name = src?.name ?? VIRTUAL_SOURCE_NAMES[a.sourceId] ?? a.sourceId
+      }
+      return idx === null ? null : { idx, name: name.toUpperCase() }
     })
     .filter((slot): slot is { idx: number; name: string } => slot !== null)
 
