@@ -4,10 +4,11 @@ import { useProductionsStore } from '@/store/productions.store'
 import { useProductionStore } from '@/store/production.store'
 import { useGatewaysStore } from '@/store/gateways.store'
 import { useServerInfo } from '@/hooks/useServerInfo'
-import { ApiError, type HtmlSourceAuth, type HtmlSourceAuthInput, type StreamType } from '@/lib/api'
+import { ApiError, sourcesApi, type AudioStreamsResponse, type HtmlSourceAuth, type HtmlSourceAuthInput, type StreamType } from '@/lib/api'
 import { openHtmlAuthPopup, originOf, maskCredential } from '@/lib/htmlSourceAuthPopup'
 import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
 import { buildListenerAddress, isCallerAddress, listenerPort, passphraseOf, srtDirection, toCallerUrl, type SrtDirection } from '@/lib/srt'
+import { decideAudioStreamIndex } from '@/lib/audio-stream-index'
 import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
@@ -107,6 +108,10 @@ interface EditState {
   name: string
   streamType: StreamType
   latency: string
+  /** SRT/EFP: chosen 0-based audio stream index, as typed/selected (ADR-006). */
+  audioStreamIndex: string
+  /** SRT/EFP: the index as loaded, so Save only PATCHes it when changed. */
+  initialAudioStreamIndex: string
   /** The address as stored (passphrase masked by the backend). */
   stored: string
   direction: SrtDirection
@@ -171,6 +176,9 @@ export function SourcesPanel() {
   const [newClipRef, setNewClipRef] = useState<ClipRefState>({ ...emptyClipRef })
   const [addAddressError, setAddAddressError] = useState<string | null>(null)
   const [editAddressError, setEditAddressError] = useState<string | null>(null)
+  // Audio-stream discovery for the open SRT/EFP edit dialog (ADR-006).
+  // `null` = loading; `'error'` = request failed (treated like unavailable).
+  const [audioStreams, setAudioStreams] = useState<AudioStreamsResponse | 'error' | null>(null)
   // HTML-auth (studio#129) inline error + in-flight guard for the popup/save flow.
   const [authError, setAuthError] = useState<string | null>(null)
   const [authBusy, setAuthBusy] = useState(false)
@@ -296,7 +304,7 @@ export function SourcesPanel() {
     setAddOpen(false)
   }
 
-  function openEdit(src: { id: string; name: string; address?: string; latency?: number; streamType: StreamType; auth?: HtmlSourceAuth }) {
+  function openEdit(src: { id: string; name: string; address?: string; latency?: number; audioStreamIndex?: number; streamType: StreamType; auth?: HtmlSourceAuth }) {
     const stored = src.address ?? ''
     const direction: SrtDirection = isSrt(src.streamType) ? srtDirection(stored) : 'caller'
     const storedValueSet = hasStoredHeaderValue(src.auth)
@@ -305,6 +313,8 @@ export function SourcesPanel() {
       name: src.name,
       streamType: src.streamType,
       latency: src.latency != null ? String(src.latency) : '',
+      audioStreamIndex: String(src.audioStreamIndex ?? 0),
+      initialAudioStreamIndex: String(src.audioStreamIndex ?? 0),
       stored,
       direction,
       address: direction === 'caller' ? stored : '',
@@ -322,6 +332,21 @@ export function SourcesPanel() {
     setAuthError(null)
     setAuthBusy(false)
   }
+
+  // Discover audio streams when the edit dialog opens for an SRT/EFP source.
+  // Other source types never call the endpoint (the backend rejects them).
+  const editId = editTarget?.id ?? null
+  const editAudioApplies = !!editTarget && isSrt(editTarget.streamType)
+  useEffect(() => {
+    setAudioStreams(null)
+    if (editId === null || !editAudioApplies) return
+    let cancelled = false
+    sourcesApi.audioStreams(editId).then(
+      (res) => { if (!cancelled) setAudioStreams(res) },
+      () => { if (!cancelled) setAudioStreams('error') },
+    )
+    return () => { cancelled = true }
+  }, [editId, editAudioApplies])
 
   const editIsListener = !!editTarget && isSrt(editTarget.streamType) && editTarget.direction === 'listener'
   const editReady = !!editTarget && !!editTarget.name.trim() && (!editIsListener || listenerReady(portMode, editTarget.manualPort, editTarget.port))
@@ -383,10 +408,12 @@ export function SourcesPanel() {
       }
       if (address === editTarget.stored) address = undefined
     }
+    const audioDecision = decideAudioStreamIndex(editTarget.audioStreamIndex, editTarget.initialAudioStreamIndex)
     void updateSource(editTarget.id, {
       name: editTarget.name.trim(),
       ...(address !== undefined ? { address } : {}),
       ...(STREAM_TYPE_HAS_LATENCY[editTarget.streamType] ? { latency: parseInt(editTarget.latency, 10) || 125 } : {}),
+      ...(isSrt(editTarget.streamType) && audioDecision.send ? { audioStreamIndex: audioDecision.audioStreamIndex } : {}),
       ...(authPayload ? { auth: authPayload } : {}),
     })
     setEditAddressError(null)
@@ -799,6 +826,50 @@ export function SourcesPanel() {
                   onChange={(e) => setEditTarget({ ...editTarget, latency: e.target.value })}
                   className={inputCls}
                 />
+              </div>
+            )}
+            {isSrt(editTarget.streamType) && (
+              <div>
+                <label className={labelCls} htmlFor="edit-audio-stream">Audio stream</label>
+                {audioStreams === null ? (
+                  <p className="text-xs text-[--color-text-muted]">Discovering audio streams…</p>
+                ) : audioStreams !== 'error' && audioStreams.discovery === 'available' ? (
+                  <select
+                    id="edit-audio-stream"
+                    value={editTarget.audioStreamIndex}
+                    onChange={(e) => setEditTarget({ ...editTarget, audioStreamIndex: e.target.value })}
+                    className={inputCls}
+                  >
+                    {!audioStreams.streams.some((st) => String(st.index) === editTarget.audioStreamIndex) && (
+                      <option value={editTarget.audioStreamIndex}>Stream {editTarget.audioStreamIndex} (current)</option>
+                    )}
+                    {audioStreams.streams.map((st) => (
+                      <option key={st.index} value={String(st.index)}>
+                        {[`Stream ${st.index}`, st.codec, st.channels != null ? `${st.channels} ch` : undefined, st.language].filter(Boolean).join(' · ')}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <>
+                    <input
+                      id="edit-audio-stream"
+                      type="number"
+                      min={0}
+                      step={1}
+                      value={editTarget.audioStreamIndex}
+                      onChange={(e) => setEditTarget({ ...editTarget, audioStreamIndex: e.target.value })}
+                      className={inputCls}
+                    />
+                    <p className="mt-1 text-xs text-[--color-text-muted] opacity-70">
+                      {audioStreams === 'error'
+                        ? 'Could not list audio streams. Enter the 0-based stream index manually.'
+                        : audioStreams.reason === 'no-live-flow'
+                          ? 'Stream list is available once the source is live. Enter the 0-based stream index manually.'
+                          : 'Audio stream discovery is not available yet. Enter the 0-based stream index manually.'}
+                      {' '}Takes effect on the next production activation.
+                    </p>
+                  </>
+                )}
               </div>
             )}
             <div className="flex justify-end gap-2 pt-1">
