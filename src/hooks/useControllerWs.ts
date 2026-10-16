@@ -142,6 +142,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   const applyLevel             = useAudioStore((s) => s.applyLevel)
   const applyMuted             = useAudioStore((s) => s.applyMuted)
   const applyAfvByMixerInput   = useAudioStore((s) => s.applyAfvByMixerInput)
+  const applyGuestLabelByMixerInput = useAudioStore((s) => s.applyGuestLabelByMixerInput)
   const applyPfl               = useAudioStore((s) => s.applyPfl)
   const applyAfl               = useAudioStore((s) => s.applyAfl)
   const applyAuxSend           = useAudioStore((s) => s.applyAuxSend)
@@ -173,7 +174,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
 
   const actionsRef = useRef({
     setPgm, setPvw, applyTallyContributions, setTBarPosition, setDskState,
-    applyLevel, applyMuted, applyAfvByMixerInput,
+    applyLevel, applyMuted, applyAfvByMixerInput, applyGuestLabelByMixerInput,
     applyPfl, applyAfl,
     applyAuxSend, applyAuxSendPre, applyAuxMaster,
     applyGrpSend, applyGrpMaster, applyMonitorMaster, resetGrpState,
@@ -185,7 +186,7 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   })
   actionsRef.current = {
     setPgm, setPvw, applyTallyContributions, setTBarPosition, setDskState,
-    applyLevel, applyMuted, applyAfvByMixerInput,
+    applyLevel, applyMuted, applyAfvByMixerInput, applyGuestLabelByMixerInput,
     applyPfl, applyAfl,
     applyAuxSend, applyAuxSendPre, applyAuxMaster,
     applyGrpSend, applyGrpMaster, applyMonitorMaster, resetGrpState,
@@ -437,6 +438,13 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
                   ...(typeof msg['label'] === 'string' ? { label: msg['label'] as string } : {}),
                   ...(intercomLine ? { intercomLine } : {}),
                 })
+                // Mirror the invite name onto the audio strip live (open-live#522);
+                // a guest that left reverts the strip to "Guest N".
+                const guestLabel = typeof msg['label'] === 'string' ? (msg['label'] as string).trim() : ''
+                a.applyGuestLabelByMixerInput(
+                  msg['mixerInput'] as string,
+                  msg['state'] === 'left' || !guestLabel ? null : guestLabel,
+                )
               }
               break
             }
