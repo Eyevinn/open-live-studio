@@ -201,9 +201,12 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
   // `GET /api/v1/productions/:id/audio` payload is the source of truth for every
   // strip's label — the invite name for a joined named guest, the correctly
   // pad-index-ranked "Guest N" otherwise (open-live#532). Rather than guess a
-  // revert label client-side, we re-fetch `/audio` and feed it through the normal
-  // `setElements` path on every guest transition. Debounced so the connect-time
-  // GUEST_STATE burst and rapid changes coalesce into a single fetch.
+  // revert label client-side, we re-fetch `/audio` on every guest transition and
+  // apply it through the label-ONLY `applyElementLabels` action. It must not go
+  // through `setElements`: that payload carries no AFV field, so `setElements`
+  // would reset AFV to false on every strip not in the pending queue, wiping live
+  // AFV that only ever arrives via AFV_STATE (connect snapshot / operator toggle).
+  // Debounced so the connect-time GUEST_STATE burst and rapid changes coalesce.
   const audioRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const refreshAudioLabelsRef = useRef<() => void>(() => {})
   refreshAudioLabelsRef.current = () => {
@@ -213,13 +216,22 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     audioRefreshTimerRef.current = setTimeout(() => {
       audioRefreshTimerRef.current = null
       void audioApi.discoverElements(pid)
-        .then((els) => { useAudioStore.getState().setElements(els, pid) })
+        .then((els) => {
+          // Discard a stale fetch: the production may have switched while the
+          // request was in flight. `applyElementLabels` also re-checks this
+          // against the store's current productionId before mutating.
+          if (useAudioStore.getState().productionId !== pid) return
+          useAudioStore.getState().applyElementLabels(els, pid)
+        })
         .catch(() => {})
     }, 250)
   }
+  // Clear any pending debounced `/audio` re-fetch when the production changes or
+  // on unmount, so a timer scheduled for the previous production cannot fire and
+  // apply a stale label set after a switch.
   useEffect(() => () => {
     if (audioRefreshTimerRef.current) clearTimeout(audioRefreshTimerRef.current)
-  }, [])
+  }, [productionId])
 
   // Invites are REST-only (no WS broadcast), so the operator's own
   // create/replace/revoke of an invite is the sole client-side signal that a
