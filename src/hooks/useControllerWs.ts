@@ -4,7 +4,7 @@ import { useProductionsStore } from '@/store/productions.store'
 import { useAudioStore } from '@/store/audio.store'
 import { useGuestsStore } from '@/store/guests.store'
 import { useToastStore } from '@/store/toast.store'
-import type { GuestState, ReturnMode } from '@/lib/api'
+import { audioApi, type GuestState, type ReturnMode } from '@/lib/api'
 import { parseGuestHealth, guestHealthProblem } from '@/lib/guest-health'
 import { guestSlotNumber } from '@/lib/guest-slots'
 import { getApiToken, wsAuthProtocols } from '@/lib/sat'
@@ -196,6 +196,44 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     upsertToastByTag, removeToastsByTag, markInactive,
     applyGuestState, applyReturnState, applyGuestHealth, clearGuestHealth,
   }
+
+  // Authoritative guest strip labels (open-live#522). The server-provided
+  // `GET /api/v1/productions/:id/audio` payload is the source of truth for every
+  // strip's label — the invite name for a joined named guest, the correctly
+  // pad-index-ranked "Guest N" otherwise (open-live#532). Rather than guess a
+  // revert label client-side, we re-fetch `/audio` and feed it through the normal
+  // `setElements` path on every guest transition. Debounced so the connect-time
+  // GUEST_STATE burst and rapid changes coalesce into a single fetch.
+  const audioRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const refreshAudioLabelsRef = useRef<() => void>(() => {})
+  refreshAudioLabelsRef.current = () => {
+    if (!productionId) return
+    const pid = productionId
+    if (audioRefreshTimerRef.current) clearTimeout(audioRefreshTimerRef.current)
+    audioRefreshTimerRef.current = setTimeout(() => {
+      audioRefreshTimerRef.current = null
+      void audioApi.discoverElements(pid)
+        .then((els) => { useAudioStore.getState().setElements(els, pid) })
+        .catch(() => {})
+    }, 250)
+  }
+  useEffect(() => () => {
+    if (audioRefreshTimerRef.current) clearTimeout(audioRefreshTimerRef.current)
+  }, [])
+
+  // Invites are REST-only (no WS broadcast), so the operator's own
+  // create/replace/revoke of an invite is the sole client-side signal that a
+  // strip's authoritative name may have changed. Re-fetch `/audio` on any change
+  // after the initial seed so revoking an invite reverts the strip to "Guest N"
+  // live on this client, without a reload (open-live#522). NOTE: other operator
+  // clients receive no such signal — cross-client live revert on revoke still
+  // needs a server-side emit (see PR notes).
+  const invites = useGuestsStore((s) => s.invites)
+  const invitesSeededRef = useRef(false)
+  useEffect(() => {
+    if (!invitesSeededRef.current) { invitesSeededRef.current = true; return }
+    refreshAudioLabelsRef.current()
+  }, [invites])
 
   useEffect(() => {
     if (!productionId) return
@@ -438,13 +476,17 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
                   ...(typeof msg['label'] === 'string' ? { label: msg['label'] as string } : {}),
                   ...(intercomLine ? { intercomLine } : {}),
                 })
-                // Mirror the invite name onto the audio strip live (open-live#522);
-                // a guest that left reverts the strip to "Guest N".
+                // Mirror the invite name onto the audio strip live (open-live#522).
+                // Optimistically rename the strip right away on a join carrying a
+                // name for responsiveness; the authoritative label — including the
+                // correct "Guest N" revert on leave/kick, which the server numbers
+                // by pad-index rank, not by the mixerInput's own digits — then
+                // lands via the debounced `/audio` re-fetch below.
                 const guestLabel = typeof msg['label'] === 'string' ? (msg['label'] as string).trim() : ''
-                a.applyGuestLabelByMixerInput(
-                  msg['mixerInput'] as string,
-                  msg['state'] === 'left' || !guestLabel ? null : guestLabel,
-                )
+                if (msg['state'] !== 'left' && guestLabel) {
+                  a.applyGuestLabelByMixerInput(msg['mixerInput'] as string, guestLabel)
+                }
+                refreshAudioLabelsRef.current()
               }
               break
             }

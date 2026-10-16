@@ -34,8 +34,6 @@ interface AudioState {
   grpMasterMuted: Record<number, boolean>              // grpBus(1-indexed) → master muted (output silenced)
   meters: Record<string, MeterReading>                 // elementId → peak/rms in dB
   pendingAfvByMixerInput: Record<string, boolean>      // mixerInput → AFV queued before elements loaded
-  guestBaseLabels: Record<string, string>              // elementId → "Guest N" label captured before a live invite-name override
-  pendingGuestLabelByMixerInput: Record<string, string | null> // mixerInput → invite name (null = revert) queued before elements loaded
   productionId: string | null
 }
 
@@ -47,10 +45,13 @@ interface AudioActions {
   /** Server-authoritative AFV setter. Keyed by mixerInput so it works even when
    *  elements haven't loaded yet — the value is queued and applied by setElements. */
   applyAfvByMixerInput: (mixerInput: string, enabled: boolean) => void
-  /** Live guest strip label (open-live#522). A non-empty `label` is the invite
-   *  name and replaces the strip label; `null` reverts to the "Guest N" label.
-   *  Queued when elements have not loaded yet. */
-  applyGuestLabelByMixerInput: (mixerInput: string, label: string | null) => void
+  /** Optimistic live guest strip label (open-live#522). Sets the invite `name`
+   *  on the matching strip immediately on a guest join so the operator sees it
+   *  without a reload. This is a responsiveness-only hint: the authoritative
+   *  label — including the correct "Guest N" revert on leave/kick/revoke, which
+   *  the server numbers by pad-index rank — always arrives via a `/audio`
+   *  re-fetch through `setElements`, so this never guesses a revert label. */
+  applyGuestLabelByMixerInput: (mixerInput: string, name: string) => void
   /** Server-authoritative PFL setter — syncs across all connected operator clients. */
   applyPfl: (elementId: string, enabled: boolean) => void
   /** Server-authoritative AFL setter — syncs across all connected operator clients. */
@@ -130,8 +131,6 @@ export const useAudioStore = create<AudioState & AudioActions>()(
       grpMasterMuted: {},
       meters: {},
       pendingAfvByMixerInput: {},
-      guestBaseLabels: {},
-      pendingGuestLabelByMixerInput: {},
       productionId: null,
 
       setElements: (elements, productionId) =>
@@ -155,8 +154,6 @@ export const useAudioStore = create<AudioState & AudioActions>()(
             s.grpMasterMuted = {}
             s.meters = {}
             s.pendingAfvByMixerInput = {}
-            s.guestBaseLabels = {}
-            s.pendingGuestLabelByMixerInput = {}
           } else if (elements.length === 0) {
             // Same production (re)connecting after deactivation — reset all ephemeral
             // channel state. Master levels are preserved; backend re-broadcasts them.
@@ -168,19 +165,10 @@ export const useAudioStore = create<AudioState & AudioActions>()(
           }
           s.elements = elements
           s.productionId = productionId
-          // A fresh REST payload carries the authoritative label; drop captured
-          // bases, then re-apply any live guest label that arrived before it.
-          s.guestBaseLabels = {}
-          s.elements.forEach((el) => {
-            const pending = el.mixerInput ? s.pendingGuestLabelByMixerInput[el.mixerInput] : undefined
-            if (el.mixerInput && pending !== undefined) {
-              if (pending) {
-                s.guestBaseLabels[el.elementId] = el.label
-                el.label = pending
-              }
-              delete s.pendingGuestLabelByMixerInput[el.mixerInput]
-            }
-          })
+          // The REST `/audio` payload carries the authoritative strip label
+          // (the invite name for a joined named guest, the correctly-numbered
+          // "Guest N" otherwise, after open-live#532), so it is applied as-is —
+          // the WS handler re-fetches it on every guest transition (open-live#522).
           elements.forEach((el) => {
             if (s.levels[el.elementId] === undefined) s.levels[el.elementId] = 1.0
             if (s.muted[el.elementId] === undefined) s.muted[el.elementId] = false
@@ -218,27 +206,14 @@ export const useAudioStore = create<AudioState & AudioActions>()(
         }
       },
 
-      applyGuestLabelByMixerInput: (mixerInput, label) =>
+      applyGuestLabelByMixerInput: (mixerInput, name) =>
         _set((s) => {
+          // Optimistic-only: name the matching strip immediately on a join so
+          // the operator does not wait for the `/audio` re-fetch to land. When
+          // the strip is not loaded yet there is nothing to show early against,
+          // and the re-fetch will carry the name, so this is a no-op then.
           const el = s.elements.find((e) => e.mixerInput === mixerInput)
-          if (!el) {
-            s.pendingGuestLabelByMixerInput[mixerInput] = label
-            return
-          }
-          if (label) {
-            if (s.guestBaseLabels[el.elementId] === undefined) s.guestBaseLabels[el.elementId] = el.label
-            el.label = label
-          } else {
-            const base = s.guestBaseLabels[el.elementId]
-            if (base !== undefined) {
-              el.label = base
-              delete s.guestBaseLabels[el.elementId]
-            } else {
-              // Strip was loaded already named (REST after the fix): derive "Guest N".
-              const n = /(\d+)$/.exec(mixerInput)?.[1]
-              el.label = n ? `Guest ${n}` : 'Guest'
-            }
-          }
+          if (el && name) el.label = name
         }),
 
       applyMeter: (elementId, peak, rms) =>
