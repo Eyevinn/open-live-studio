@@ -547,9 +547,10 @@ export function PipPanel({ onApply, className }: PipPanelProps) {
         // Joined guest → their own label (the same name the Guests panel shows);
         // free slot → its slot number. Never the raw `Whip` sourceId (studio#212).
         const guest = Object.values(guests).find((g) => g.mixerInput === a.mixerInput)
-        name = guest
-          ? guest.label?.trim() || guest.mixerInput
-          : `Guest ${guestSlotNumbers.get(a.mixerInput) ?? ''}`.trim()
+        // A joined guest with no known label also falls back to its slot
+        // number, never the raw mixer input (studio#221).
+        const slotName = `Guest ${guestSlotNumbers.get(a.mixerInput) ?? ''}`.trim()
+        name = guest?.label?.trim() || slotName
       } else {
         const src = sources.find((s) => s.id === a.sourceId)
         name = src?.name ?? VIRTUAL_SOURCE_NAMES[a.sourceId] ?? a.sourceId

@@ -61,9 +61,12 @@ const STATE_BADGE: Record<GuestState, { variant: 'idle' | 'connected' | 'preview
   error:      { variant: 'error',        label: 'ERROR' },
 }
 
-/** Best-effort human name for a guest row. */
-function guestName(g: GuestView): string {
-  return g.label?.trim() || g.mixerInput
+/**
+ * Best-effort human name for a guest row: the invite label, else the slot's
+ * "Guest N" number — never the raw mixer input (`video_in_15`, studio#221).
+ */
+function guestName(g: GuestView, slotNumber: number): string {
+  return g.label?.trim() || `Guest ${slotNumber}`
 }
 
 /** Relative "expires in" / "expired" label for an ISO 8601 timestamp. */
@@ -262,7 +265,7 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
                   {guest ? (
                     <>
                       <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-300 truncate flex-1 min-w-0">
-                        {guestName(guest)}
+                        {guestName(guest, i + 1)}
                       </span>
                       {!returnOnly && guest.muted && <MutedMicIcon emphasized={onAirOrPvw} />}
                       {guest.intercomLine && (
