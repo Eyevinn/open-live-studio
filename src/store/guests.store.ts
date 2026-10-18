@@ -97,6 +97,36 @@ interface GuestsActions {
   reset: () => void
 }
 
+function inviteLabel(invites: GuestInvite[], inviteId: string | undefined): string | undefined {
+  if (!inviteId) return undefined
+  return invites.find((i) => i.id === inviteId)?.label?.trim() || undefined
+}
+
+/**
+ * Fill in the fields a REST `GuestSession` does not carry. The REST seed has no
+ * `label`, and it typically lands *after* the WS connect-sync `GUEST_STATE`
+ * (which does carry it), so replacing the entry wholesale would wipe the guest
+ * name after a Studio reload (studio#221). Keep `label` / `intercomLine` from an
+ * existing entry for the same guest, falling back to the invite's label.
+ */
+function withSeedExtras(
+  base: Omit<GuestView, 'label' | 'intercomLine'>,
+  g: GuestSession,
+  prev: GuestView | undefined,
+  invites: GuestInvite[],
+): GuestView {
+  const label = prev?.label?.trim() || inviteLabel(invites, g.inviteId)
+  // REST carries the talkback line as the raw `intercomLineId` doc field (a
+  // string); the WS `GUEST_STATE` event calls the same value `intercomLine`.
+  // Map it in so the Talkback badge renders from the REST seed too.
+  const intercomLine = g.intercomLineId || prev?.intercomLine
+  return {
+    ...base,
+    ...(label ? { label } : {}),
+    ...(intercomLine ? { intercomLine } : {}),
+  }
+}
+
 export const useGuestsStore = create<GuestsState & GuestsActions>()(
   devtools(
     (set) => ({
@@ -106,7 +136,21 @@ export const useGuestsStore = create<GuestsState & GuestsActions>()(
       droppedInputs: {},
       health: {},
 
-      setInvites: (invites) => set({ invites }),
+      setInvites: (invites) =>
+        set((state) => {
+          // Backfill the name of any live guest still missing one (e.g. the
+          // REST guest seed landed before the invites list and before any
+          // GUEST_STATE carrying `label`) — studio#221.
+          let guests = state.guests
+          for (const g of Object.values(state.guests)) {
+            if (g.label?.trim() || !g.inviteId) continue
+            const label = inviteLabel(invites, g.inviteId)
+            if (!label) continue
+            if (guests === state.guests) guests = { ...state.guests }
+            guests[g.guestId] = { ...g, label }
+          }
+          return { invites, guests }
+        }),
 
       addInvite: (invite) =>
         set((state) => ({ invites: [invite, ...state.invites.filter((i) => i.id !== invite.id)] })),
@@ -129,19 +173,19 @@ export const useGuestsStore = create<GuestsState & GuestsActions>()(
             live
               .map((g) => [
                 g.id,
-                {
-                  guestId: g.id,
-                  mixerInput: g.mixerInput,
-                  state: g.state,
-                  inviteId: g.inviteId,
-                  // The backend always projects `muted` (default false, open-live#382).
-                  muted: g.muted,
-                  // REST carries the talkback line as the raw `intercomLineId`
-                  // doc field (a string); the WS `GUEST_STATE` event calls the
-                  // same value `intercomLine`. Map it in so the Talkback badge
-                  // renders from the REST seed too.
-                  ...(g.intercomLineId ? { intercomLine: g.intercomLineId } : {}),
-                } satisfies GuestView,
+                withSeedExtras(
+                  {
+                    guestId: g.id,
+                    mixerInput: g.mixerInput,
+                    state: g.state,
+                    inviteId: g.inviteId,
+                    // The backend always projects `muted` (default false, open-live#382).
+                    muted: g.muted,
+                  },
+                  g,
+                  state.guests[g.id],
+                  state.invites,
+                ),
               ]),
           ),
           droppedInputs,
