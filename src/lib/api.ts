@@ -155,7 +155,12 @@ export interface ProductionGraphicAssignment {
   dskInput: string
 }
 
-export type OutputType = 'mpegtssrt' | 'efpsrt' | 'whep' | 'rtmp'
+/**
+ * `recording` archives the programme to object storage while the production is
+ * active (open-live #41, #534). Its storage target is `connectionId` (absent or
+ * `"default"` = the instance's env storage).
+ */
+export type OutputType = 'mpegtssrt' | 'efpsrt' | 'whep' | 'rtmp' | 'recording'
 
 /**
  * RTMP multi-destination platform presets (open-live epic #319, spec
@@ -214,6 +219,11 @@ export interface ApiOutput {
   rtmp?: RtmpDestination
   /** Derived health, present on list/get responses (open-live #255). */
   status?: OutputStatus
+  /**
+   * Storage connection of a `recording` output (open-live #520). Absent or
+   * `"default"` means the instance default storage.
+   */
+  connectionId?: string
   createdAt: string
   updatedAt: string
 }
@@ -718,20 +728,41 @@ export const graphicsApi = {
     request<void>(`/api/v1/graphics/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 }
 
+/** `POST /api/v1/outputs` body. `connectionId` is valid on a `recording` output only. */
+export interface OutputCreateInput {
+  name: string
+  outputType: OutputType
+  url?: string
+  rtmp?: RtmpDestinationInput
+  connectionId?: string
+}
+
+/** `PATCH /api/v1/outputs/:id` body. `connectionId` re-points a `recording` output. */
+export interface OutputPatchInput {
+  name?: string
+  url?: string
+  rtmp?: RtmpDestinationInput
+  connectionId?: string
+}
+
 export const outputsApi = {
   list: () =>
     request<ApiOutput[]>('/api/v1/outputs'),
 
-  create: (body: { name: string; outputType: OutputType; url?: string; rtmp?: RtmpDestinationInput }) =>
+  // Quiet: the New/Edit Output dialogs show the backend message inline, so it
+  // is not shown a second time as a toast (studio#216 item 18).
+  create: (body: OutputCreateInput) =>
     request<ApiOutput>('/api/v1/outputs', {
       method: 'POST',
       body: JSON.stringify(body),
+      quiet: true,
     }),
 
-  update: (id: string, body: { name?: string; url?: string; rtmp?: RtmpDestinationInput }) =>
+  update: (id: string, body: OutputPatchInput) =>
     request<ApiOutput>(`/api/v1/outputs/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
+      quiet: true,
     }),
 
   remove: (id: string) =>
