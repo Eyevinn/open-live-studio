@@ -18,6 +18,7 @@ import { Modal } from '@/components/ui/Modal'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { selectCls, inputCls, InfoTip, ConfigFieldGroup } from '@/components/ui/ProductionConfigFields'
 import { useIsPhone } from '@/hooks/usePhoneLayout'
+import { ONE_RECORDING_PER_PRODUCTION, RECORDING_SLOT_HELP, isRecordingOutput, recordingSlotConflict } from '@/lib/recordingOutput'
 
 // ---------------------------------------------------------------------------
 // Stream type labels — used for grouping source dropdowns
@@ -251,55 +252,94 @@ const VIRTUAL_OUTPUT_ID = '__whep__'
 const OUTPUT_TYPE_LABELS: Record<string, string> = {
   mpegtssrt: 'MPEG-TS/SRT',
   efpsrt: 'EFP/SRT',
+  rtmp: 'RTMP',
+  recording: 'Recording',
+}
+
+const OUTPUTS_INFO = 'Output destinations for the programme signal: SRT transmitters, EFP encoders, RTMP platforms, and a Recording to object storage.'
+
+/** "Recording" tag on a production output slot (studio#219). */
+function RecordingTag() {
+  return (
+    <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-red-500/15 text-red-400 shrink-0">Recording</span>
+  )
 }
 
 interface OutputSlotRowProps {
   value: string
+  /** Index of this slot in `usedIds`. */
+  slotIndex: number
   usedIds: string[]
   canRemove: boolean
   onChange: (id: string) => void
   onRemove: () => void
 }
 
-function OutputSlotRow({ value, usedIds, canRemove, onChange, onRemove }: OutputSlotRowProps) {
+function OutputSlotRow({ value, slotIndex, usedIds, canRemove, onChange, onRemove }: OutputSlotRowProps) {
   const outputs = useOutputsStore((s) => s.outputs)
+  const [refused, setRefused] = useState<string | null>(null)
+  const selected = outputs.find((o) => o.id === value)
+  const isRecording = isRecordingOutput(selected)
+  const otherRecordings = outputs.some((o) => isRecordingOutput(o) && o.id !== value)
+
+  function handleChange(id: string) {
+    // Only one Recording output per production (studio#216 item 17).
+    const conflict = recordingSlotConflict(usedIds, slotIndex, id, outputs)
+    if (conflict) { setRefused(conflict); return }
+    setRefused(null)
+    onChange(id)
+  }
+
   return (
-    <div className="flex items-center gap-2">
-      <select value={value} onChange={(e) => onChange(e.target.value)} className={`${selectCls} flex-1`}>
-        <option value="">— none —</option>
-        {Object.entries(
-          [...outputs]
-            .filter((o) => o.outputType !== 'whep')
-            .filter((o) => o.id === value || !usedIds.includes(o.id))
-            .sort((a, b) => a.name.localeCompare(b.name))
-            .reduce<Record<string, typeof outputs>>((acc, o) => {
-              ;(acc[o.outputType] ??= []).push(o)
-              return acc
-            }, {}),
-        )
-          .sort(([a], [b]) => {
-            const ORDER = ['mpegtssrt', 'efpsrt']
-            const ai = ORDER.indexOf(a), bi = ORDER.indexOf(b)
-            if (ai !== -1 && bi !== -1) return ai - bi
-            if (ai !== -1) return -1
-            if (bi !== -1) return 1
-            return a.localeCompare(b)
-          })
-          .map(([type, group]) => (
-            <optgroup key={type} label={OUTPUT_TYPE_LABELS[type] ?? type.toUpperCase()}>
-              {group.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
-            </optgroup>
-          ))}
-      </select>
-      <button
-        type="button"
-        onClick={onRemove}
-        disabled={!canRemove}
-        className="text-[--color-text-muted] hover:text-red-400 disabled:opacity-20 disabled:cursor-not-allowed text-sm px-1 transition-colors"
-        title="Remove output"
-      >
-        ✕
-      </button>
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        {isRecording && <RecordingTag />}
+        <select value={value} onChange={(e) => handleChange(e.target.value)} className={`${selectCls} flex-1`}>
+          <option value="">— none —</option>
+          {Object.entries(
+            [...outputs]
+              .filter((o) => o.outputType !== 'whep')
+              .filter((o) => o.id === value || !usedIds.includes(o.id))
+              .sort((a, b) => a.name.localeCompare(b.name))
+              .reduce<Record<string, typeof outputs>>((acc, o) => {
+                ;(acc[o.outputType] ??= []).push(o)
+                return acc
+              }, {}),
+          )
+            .sort(([a], [b]) => {
+              const ORDER = ['mpegtssrt', 'efpsrt', 'rtmp', 'recording']
+              const ai = ORDER.indexOf(a), bi = ORDER.indexOf(b)
+              if (ai !== -1 && bi !== -1) return ai - bi
+              if (ai !== -1) return -1
+              if (bi !== -1) return 1
+              return a.localeCompare(b)
+            })
+            .map(([type, group]) => (
+              <optgroup key={type} label={OUTPUT_TYPE_LABELS[type] ?? type.toUpperCase()}>
+                {group.map((o) => {
+                  const blocked = recordingSlotConflict(usedIds, slotIndex, o.id, outputs) !== null
+                  return (
+                    <option key={o.id} value={o.id} disabled={blocked}>
+                      {blocked ? `${o.name} (one Recording per production)` : o.name}
+                    </option>
+                  )
+                })}
+              </optgroup>
+            ))}
+        </select>
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={!canRemove}
+          className="text-[--color-text-muted] hover:text-red-400 disabled:opacity-20 disabled:cursor-not-allowed text-sm px-1 transition-colors"
+          title="Remove output"
+        >
+          ✕
+        </button>
+      </div>
+      {isRecording && <p className="text-[10px] text-[--color-text-muted]">{RECORDING_SLOT_HELP}</p>}
+      {isRecording && otherRecordings && <p className="text-[10px] text-[--color-text-muted]">{ONE_RECORDING_PER_PRODUCTION}</p>}
+      {refused && <p className="text-[10px] text-amber-400" role="alert">{refused}</p>}
     </div>
   )
 }
@@ -348,6 +388,7 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
   }
 
   async function handleOutputChange(index: number, newId: string) {
+    if (recordingSlotConflict(outputList, index, newId, catalogueOutputs)) return
     const oldId = outputList[index]
     const next = [...outputList]
     next[index] = newId
@@ -644,22 +685,32 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-1">
                 <span className="text-xs uppercase tracking-wider text-orange-500">Outputs</span>
-                <InfoTip text="Output destinations where the programme signal is sent — SRT transmitters or EFP encoders." />
+                <InfoTip text={OUTPUTS_INFO} />
               </div>
               {isActive ? (
                 <div className="flex flex-col gap-1.5">
                   {outputList.length === 0
                     ? <span className="text-xs text-[--color-text-muted] italic">No outputs assigned</span>
                     : outputList.map((outputId) => {
-                        const label = outputId === VIRTUAL_OUTPUT_ID ? 'WHEP Output' : (catalogueOutputs.find((o) => o.id === outputId)?.name ?? outputId)
-                        return <div key={outputId}><span className="text-xs text-[--color-text-primary]">{label}</span></div>
+                        const out = catalogueOutputs.find((o) => o.id === outputId)
+                        const label = outputId === VIRTUAL_OUTPUT_ID ? 'WHEP Output' : (out?.name ?? outputId)
+                        return (
+                          <div key={outputId} className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              {isRecordingOutput(out) && <RecordingTag />}
+                              <span className="text-xs text-[--color-text-primary]">{label}</span>
+                            </div>
+                            {/* The recorder is wired at activation (studio#216 item 16). */}
+                            {isRecordingOutput(out) && <p className="text-[10px] text-amber-400" role="note">{RECORDING_SLOT_HELP}</p>}
+                          </div>
+                        )
                       })
                   }
                 </div>
               ) : (
                 <div className="flex flex-col gap-2">
                   {outputList.map((id, i) => (
-                    <OutputSlotRow key={i} value={id} usedIds={outputList} canRemove={true} onChange={(newId) => void handleOutputChange(i, newId)} onRemove={() => void handleOutputRemove(i)} />
+                    <OutputSlotRow key={i} value={id} slotIndex={i} usedIds={outputList} canRemove={true} onChange={(newId) => void handleOutputChange(i, newId)} onRemove={() => void handleOutputRemove(i)} />
                   ))}
                   {outputList.length < MAX_OUTPUTS && (
                     <button type="button" onClick={() => setOutputList((prev) => [...prev, ''])} className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity">+ New Output</button>
@@ -906,11 +957,11 @@ function CreateProductionModal({ onClose, onCreated }: CreateModalProps) {
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-1">
                 <span className="text-xs uppercase tracking-wider text-orange-500">Outputs</span>
-                <InfoTip text="Output destinations where the programme signal is sent — SRT transmitters or EFP encoders." />
+                <InfoTip text={OUTPUTS_INFO} />
               </div>
               <div className="flex flex-col gap-2">
                 {outputList.map((id, i) => (
-                  <OutputSlotRow key={i} value={id} usedIds={outputList} canRemove={true} onChange={(newId) => setOutputList((prev) => prev.map((v, j) => j === i ? newId : v))} onRemove={() => setOutputList((prev) => prev.filter((_, j) => j !== i))} />
+                  <OutputSlotRow key={i} value={id} slotIndex={i} usedIds={outputList} canRemove={true} onChange={(newId) => setOutputList((prev) => prev.map((v, j) => j === i ? newId : v))} onRemove={() => setOutputList((prev) => prev.filter((_, j) => j !== i))} />
                 ))}
                 <button type="button" onClick={() => setOutputList((prev) => [...prev, ''])} className="text-xs text-[--color-accent] hover:opacity-80 text-left transition-opacity">+ New Output</button>
               </div>
