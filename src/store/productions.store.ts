@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
 import { productionsApi, type ApiProduction, type ProductionSourceAssignment, type ProductionGraphicAssignment, type ProductionOutputAssignment } from '@/lib/api'
+import type { ActivationWarning } from '@/lib/activation-warnings'
 
 export type ProductionStatus = 'active' | 'inactive' | 'activating'
 
@@ -31,7 +32,7 @@ export interface Production {
   autoDeactivated?: boolean
   idleExpiresAt?: number
   inputResolutions?: Array<{ width: number; height: number } | null>
-  activationWarnings?: Array<{ type: 'recording-no-audio'; message: string }>
+  activationWarnings?: ActivationWarning[]
 }
 
 interface ProductionsState {
