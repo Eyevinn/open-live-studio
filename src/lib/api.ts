@@ -1,6 +1,7 @@
 export { BASE } from './base.js'
 import { BASE } from './base.js'
 import { authenticateWithOpenLive, getApiToken } from './sat.js'
+import type { ActivationWarning } from './activation-warnings.js'
 
 // Paths that manage their own error toasts — skip global handler
 const SILENT_PATHS = ['/api/v1/status', '/api/v1/reconnect']
@@ -255,7 +256,7 @@ export interface ApiProduction {
   /** Negotiated input resolutions from Strom, indexed by mixer input position. Null = caps not yet negotiated. */
   inputResolutions?: Array<{ width: number; height: number } | null>
   /** Non-blocking problems detected at activation (e.g. recording with no audio). Cleared on the next activation. */
-  activationWarnings?: Array<{ type: 'recording-no-audio'; message: string }>
+  activationWarnings?: ActivationWarning[]
 }
 
 export interface ProductionConfig {
@@ -286,7 +287,7 @@ type RawProduction = {
   subscriberCount?: number
   idleExpiresAt?: number
   inputResolutions?: Array<{ width: number; height: number } | null>
-  activationWarnings?: Array<{ type: 'recording-no-audio'; message: string }>
+  activationWarnings?: ActivationWarning[]
 }
 
 function normalizeProduction(d: RawProduction): ApiProduction {
