@@ -49,7 +49,7 @@ const api = vi.mocked(storageConnectionsApi)
 
 beforeEach(() => {
   vi.clearAllMocks()
-  useStorageStore.setState({ connections: [makeConnection()], lastFetchedAt: Date.now(), isLoading: false, loadError: null })
+  useStorageStore.setState({ connections: [makeConnection()], lastFetchedAt: Date.now(), isLoading: false, loadError: null, loaded: false })
 })
 
 describe('useStorageStore.addConnection', () => {
@@ -130,11 +130,13 @@ describe('useStorageStore.fetchAll', () => {
     await useStorageStore.getState().fetchAll()
     expect(useStorageStore.getState().connections.map((c) => c.id)).toEqual(['default', 'stconn-1'])
     expect(useStorageStore.getState().loadError).toBeNull()
+    expect(useStorageStore.getState().loaded).toBe(true)
   })
 
   it('records the load error message', async () => {
     api.list.mockRejectedValue(new ApiError('Database unavailable', 503))
     await useStorageStore.getState().fetchAll()
     expect(useStorageStore.getState().loadError).toBe('Database unavailable')
+    expect(useStorageStore.getState().loaded).toBe(false)
   })
 })

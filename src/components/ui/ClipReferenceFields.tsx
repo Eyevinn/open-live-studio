@@ -10,11 +10,14 @@ import { useStorageStore } from '@/store/storage.store'
  * instance default plus stored connections with role `clip` or `both`. '' is
  * the default and serializes to no `connectionId`. A reference that already
  * points at a connection not in that list (deleted, or role `recording`) keeps
- * it as an extra option so editing the source does not silently drop it.
+ * it as an extra option so editing the source does not silently drop it. The
+ * "no longer exists" warning waits for the first successful list (`loaded`) so
+ * it does not flash while the connections are still being fetched.
  */
 function ConnectionPicker({ value, onChange }: { value: ClipRefState; onChange: (next: ClipRefState) => void }) {
   const connections = useStorageStore((s) => s.connections)
   const loadError = useStorageStore((s) => s.loadError)
+  const loaded = useStorageStore((s) => s.loaded)
   const fetchAll = useStorageStore((s) => s.fetchAll)
 
   useEffect(() => { void fetchAll() }, [fetchAll])
@@ -45,14 +48,16 @@ function ConnectionPicker({ value, onChange }: { value: ClipRefState; onChange: 
         ))}
         {!currentListed && (
           <option value={current}>
-            {currentStored ? `${currentStored.name} (role: ${currentStored.role})` : `Unknown connection (${current})`}
+            {currentStored
+              ? `${currentStored.name} (role: ${currentStored.role})`
+              : loaded ? `Unknown connection (${current})` : `${current} (loading…)`}
           </option>
         )}
       </select>
       {loadError && (
         <p className="text-xs text-[--color-text-muted] mt-1">Could not load storage connections: {loadError}</p>
       )}
-      {!currentListed && !currentStored && !loadError && (
+      {loaded && !currentListed && !currentStored && !loadError && (
         <p className="text-xs text-amber-400 mt-1">This connection no longer exists; cueing the clip will fail until another is chosen.</p>
       )}
     </div>

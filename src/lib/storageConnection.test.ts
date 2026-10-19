@@ -55,6 +55,17 @@ describe('storage connection form helpers', () => {
     expect(buildPatchInput(formFromConnection(original), original)).toEqual({})
   })
 
+  it('sends useSsl with a changed endpoint so the backend does not default it to true', () => {
+    const original = conn({ endpoint: 'minio.internal:9000', useSsl: false })
+    const patch = buildPatchInput({ ...formFromConnection(original), endpoint: 'minio2.internal:9000' }, original)
+    expect(patch).toEqual({ endpoint: 'minio2.internal:9000', useSsl: false })
+  })
+
+  it('sends useSsl alone when only the checkbox changed', () => {
+    const original = conn({ useSsl: true })
+    expect(buildPatchInput({ ...formFromConnection(original), useSsl: false }, original)).toEqual({ useSsl: false })
+  })
+
   it('detects the TRUSTED_STORAGE_HOSTS rejection', () => {
     expect(isUntrustedEndpointError(new ApiError('endpoint resolves to a private/loopback/link-local address; add its host or CIDR to TRUSTED_STORAGE_HOSTS to allow it', 400))).toBe(true)
     expect(isUntrustedEndpointError(new ApiError('Invalid bucket', 400))).toBe(false)

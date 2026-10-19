@@ -90,8 +90,8 @@ export function buildCreateInput(form: StorageConnectionForm): StorageConnection
 }
 
 /**
- * Builds the `PATCH` body with only the fields the operator changed. The
- * secret is included only when a new one was typed; otherwise the key is
+ * Builds the `PATCH` body with only the fields the operator changed (plus
+ * `useSsl` whenever `endpoint` changed, see below). The secret is included only when a new one was typed; otherwise the key is
  * absent so the backend keeps the stored ciphertext.
  */
 export function buildPatchInput(
@@ -106,7 +106,10 @@ export function buildPatchInput(
   const bucket = form.defaultBucket.trim()
   if (name !== original.name) patch.name = name
   if (endpoint !== original.endpoint) patch.endpoint = endpoint
-  if (form.useSsl !== original.useSsl) patch.useSsl = form.useSsl
+  // The backend re-derives `useSsl` whenever `endpoint` is patched and defaults
+  // the hint to true, so a scheme-less endpoint change without `useSsl` would
+  // silently turn SSL on. Always send the checkbox alongside a new endpoint.
+  if (patch.endpoint !== undefined || form.useSsl !== original.useSsl) patch.useSsl = form.useSsl
   if (region && region !== original.region) patch.region = region
   if (accessKey !== original.accessKey) patch.accessKey = accessKey
   if (bucket && bucket !== (original.defaultBucket ?? '')) patch.defaultBucket = bucket

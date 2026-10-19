@@ -21,6 +21,11 @@ interface StorageState {
   isLoading: boolean
   /** Backend message of the last failed list, or null. */
   loadError: string | null
+  /**
+   * True once a list request has succeeded at least once. `lastFetchedAt` is
+   * seeded with `Date.now()` at init, so it cannot tell "not loaded yet" apart.
+   */
+  loaded: boolean
 }
 
 interface StorageActions {
@@ -37,6 +42,7 @@ export const useStorageStore = create<StorageState & StorageActions>()(
       lastFetchedAt: Date.now(),
       isLoading: false,
       loadError: null,
+      loaded: false,
 
       fetchAll: async () => {
         set((state) => { state.isLoading = true })
@@ -46,6 +52,7 @@ export const useStorageStore = create<StorageState & StorageActions>()(
             state.connections = data
             state.isLoading = false
             state.loadError = null
+            state.loaded = true
             state.lastFetchedAt = Date.now()
           })
         } catch (err) {
