@@ -1,4 +1,6 @@
-import { useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
+import { BucketBrowserModal } from '@/components/ui/BucketBrowserModal'
+import { Button } from '@/components/ui/Button'
 import { inputCls, labelCls } from '@/components/ui/SrtDirectionFields'
 import { CLIP_REF_LABELS, type ClipRefState, type ClipRefType } from '@/lib/clipRef'
 import { DEFAULT_STORAGE_CONNECTION_ID } from '@/lib/api'
@@ -68,7 +70,8 @@ function ConnectionPicker({ value, onChange }: { value: ClipRefState; onChange: 
  * Clip-reference form fields: a `url` / `s3` type selector plus the variant's
  * inputs. Shared by the New Source and Edit dialogs and the Clips panel New clip
  * dialog so all build the same `ClipReference` the backend resolves (studio#148,
- * studio#217). `error` is the inline validation message surfaced under the fields.
+ * studio#217). In `s3` mode a Browse button opens the read-only bucket browser
+ * (studio#218), which fills Object Key and Bucket. `error` is the inline validation message surfaced under the fields.
  */
 export function ClipReferenceFields({
   value,
@@ -79,6 +82,9 @@ export function ClipReferenceFields({
   onChange: (next: ClipRefState) => void
   error: string | null
 }) {
+  // Read-only bucket browser behind the Browse button (studio#218).
+  const [browsing, setBrowsing] = useState(false)
+  const closeBrowser = useCallback(() => setBrowsing(false), [])
   return (
     <>
       <div>
@@ -126,14 +132,25 @@ export function ClipReferenceFields({
           </div>
           <div>
             <label className={labelCls}>Object Key</label>
-            <input
-              type="text"
-              value={value.key}
-              placeholder="highlights/clip.mp4"
-              onChange={(e) => onChange({ ...value, key: e.target.value })}
-              className={inputCls}
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={value.key}
+                placeholder="highlights/clip.mp4"
+                onChange={(e) => onChange({ ...value, key: e.target.value })}
+                className={inputCls}
+              />
+              <Button type="button" variant="default" onClick={() => setBrowsing(true)}>Browse</Button>
+            </div>
           </div>
+          {browsing && (
+            <BucketBrowserModal
+              connectionId={value.connectionId}
+              formBucket={value.bucket}
+              onPick={(bucket, key) => { onChange({ ...value, bucket, key }); setBrowsing(false) }}
+              onClose={closeBrowser}
+            />
+          )}
         </>
       )}
       {error && <p className="text-xs text-red-400 mt-1">{error}</p>}

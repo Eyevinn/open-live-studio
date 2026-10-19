@@ -799,6 +799,40 @@ export interface StorageConnectionReferences {
   recordings: number
 }
 
+/** One object in a `GET /:id/objects` page. `name` is the last key segment. */
+export interface StorageObject {
+  key: string
+  name: string
+  size: number
+  /** ISO timestamp from the object store; may be '' if the store omitted it. */
+  lastModified: string
+}
+
+/** A sub-folder (common prefix, ending in `/`) in a `GET /:id/objects` page. */
+export interface StorageFolder {
+  prefix: string
+}
+
+/**
+ * One delimiter-scoped level of a bucket (open-live spec §2.8). `cursor` is
+ * opaque and absent on the last page.
+ */
+export interface StorageListPage {
+  bucket: string
+  prefix: string
+  folders: StorageFolder[]
+  objects: StorageObject[]
+  cursor?: string
+}
+
+/** Query of `GET /:id/objects`. `bucket` is required when the connection has no `defaultBucket`. */
+export interface StorageListQuery {
+  prefix?: string
+  cursor?: string
+  bucket?: string
+  maxKeys?: number
+}
+
 // All calls surface their errors inline in the Storage tab, so
 // they are `quiet` (no global toast) and the message is shown exactly once.
 export const storageConnectionsApi = {
@@ -832,4 +866,19 @@ export const storageConnectionsApi = {
       body: JSON.stringify({ from: 'open-live', ...(bucket ? { bucket } : {}) }),
       quiet: true,
     }),
+
+  // Read-only listing for the bucket browser (studio#218). Quiet: the browser
+  // modal shows the 403/404/502 message inline with a Retry.
+  listObjects: (id: string, query: StorageListQuery) => {
+    const params = new URLSearchParams()
+    if (query.prefix) params.set('prefix', query.prefix)
+    if (query.cursor) params.set('cursor', query.cursor)
+    if (query.bucket) params.set('bucket', query.bucket)
+    if (query.maxKeys !== undefined) params.set('maxKeys', String(query.maxKeys))
+    const qs = params.toString()
+    return request<StorageListPage>(
+      `/api/v1/storage-connections/${encodeURIComponent(id)}/objects${qs ? `?${qs}` : ''}`,
+      { quiet: true },
+    )
+  },
 }
