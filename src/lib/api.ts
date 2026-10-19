@@ -8,6 +8,12 @@ const SILENT_PATHS = ['/api/v1/status', '/api/v1/reconnect']
 interface RequestOptions extends RequestInit {
   // Status codes to treat as success (no toast, no throw). Useful for idempotent deletes.
   silentStatuses?: number[]
+  /**
+   * Skip the global api-error toast and only throw. For dialogs that show the
+   * backend message inline themselves, so it is not displayed twice (studio#216
+   * items 5 and 6).
+   */
+  quiet?: boolean
 }
 
 /**
@@ -20,7 +26,12 @@ interface RequestOptions extends RequestInit {
  *    previously swallowed the backend's real `error` message (studio#153).
  */
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number) {
+  constructor(
+    message: string,
+    public readonly status: number,
+    /** Parsed JSON error body, when the backend sent one (e.g. 409 `references`). */
+    public readonly body?: unknown,
+  ) {
     super(message)
     this.name = 'ApiError'
   }
@@ -32,15 +43,15 @@ async function request<T>(path: string, init?: RequestOptions): Promise<T> {
   const authHeaders: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {}
   const contentHeaders: Record<string, string> = init?.body !== undefined ? { 'Content-Type': 'application/json' } : {}
 
-  const { silentStatuses, ...fetchInit } = init ?? {}
+  const { silentStatuses, quiet, ...fetchInit } = init ?? {}
   const res = await fetch(`${BASE}${path}`, {
     headers: { ...contentHeaders, ...authHeaders },
     ...fetchInit,
   })
   if (!res.ok) {
     if (silentStatuses?.includes(res.status)) return undefined as T
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    const message = (err as { error?: string }).error ?? res.statusText
+    const err: unknown = await res.json().catch(() => ({ error: res.statusText }))
+    const message = (err as { error?: string } | null)?.error ?? res.statusText
     // Real DB/Strom outages are surfaced by the dedicated `/api/v1/status`
     // polling in `useConnectionCheck`/`ConnectionStatus` (which is why that
     // path — and `/api/v1/reconnect`, which manages the same toast — is
@@ -48,7 +59,7 @@ async function request<T>(path: string, init?: RequestOptions): Promise<T> {
     // (guest calling disabled, object storage unavailable, ...), not a
     // connection issue, so it gets the same non-persistent api-error toast as
     // any other failure, carrying the backend's real message.
-    if (!SILENT_PATHS.includes(path)) {
+    if (!quiet && !SILENT_PATHS.includes(path)) {
       const { useToastStore } = await import('../store/toast.store')
       const { upsertToastByTag } = useToastStore.getState()
       const { isInitialCheckDone } = await import('../hooks/useConnectionCheck')
@@ -56,7 +67,7 @@ async function request<T>(path: string, init?: RequestOptions): Promise<T> {
         upsertToastByTag('api-error', message, 'error', { persistent: false })
       }
     }
-    throw new ApiError(message, res.status)
+    throw new ApiError(message, res.status, err)
   }
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
@@ -725,4 +736,100 @@ export const outputsApi = {
 
   remove: (id: string) =>
     request<void>(`/api/v1/outputs/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+}
+
+// --------------- Storage connection types (open-live #520, OL-21) ---------------
+
+/** Advisory role of a storage connection; Studio filters pickers by it. */
+export type StorageConnectionRole = 'clip' | 'recording' | 'both'
+
+/** Id of the synthetic, read-only env-derived connection. */
+export const DEFAULT_STORAGE_CONNECTION_ID = 'default'
+
+/**
+ * A storage connection as returned by `GET /api/v1/storage-connections`. The
+ * secret key is write-only and NEVER returned; only `secretKeySet` is echoed.
+ * The synthetic `default` entry carries `isDefault: true` and null timestamps.
+ */
+export interface ApiStorageConnection {
+  id: string
+  name: string
+  endpoint: string
+  region: string
+  useSsl: boolean
+  defaultBucket?: string
+  role: StorageConnectionRole
+  accessKey: string
+  secretKeySet: boolean
+  isDefault?: boolean
+  createdAt: string | null
+  updatedAt: string | null
+}
+
+/** `POST` body. `secretKey` is write-only: sent once, encrypted server-side. */
+export interface StorageConnectionCreateInput {
+  name: string
+  endpoint: string
+  accessKey: string
+  secretKey: string
+  region?: string
+  useSsl?: boolean
+  defaultBucket?: string
+  role?: StorageConnectionRole
+}
+
+/** `PATCH` body. Omitting `secretKey` keeps the stored secret. */
+export type StorageConnectionPatchInput = Partial<StorageConnectionCreateInput>
+
+/** Structured probe result of `POST /:id/test` (always HTTP 200). */
+export interface StorageConnectionTestResult {
+  checkedFrom: 'open-live'
+  reachable: boolean
+  auth: 'ok' | 'failed' | 'forbidden'
+  bucket: 'found' | 'not-found' | 'unchecked'
+  canList: boolean
+  message: string
+  note?: string
+}
+
+/** 409 body of `DELETE` while the connection is still referenced. */
+export interface StorageConnectionReferences {
+  sources: number
+  outputs: number
+  recordings: number
+}
+
+// All calls surface their errors inline in the Storage tab, so
+// they are `quiet` (no global toast) and the message is shown exactly once.
+export const storageConnectionsApi = {
+  // Quiet: the Storage tab and the clip picker show a failed load inline.
+  list: () =>
+    request<ApiStorageConnection[]>('/api/v1/storage-connections', { quiet: true }),
+
+  get: (id: string) =>
+    request<ApiStorageConnection>(`/api/v1/storage-connections/${encodeURIComponent(id)}`),
+
+  create: (body: StorageConnectionCreateInput) =>
+    request<ApiStorageConnection>('/api/v1/storage-connections', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      quiet: true,
+    }),
+
+  update: (id: string, body: StorageConnectionPatchInput) =>
+    request<ApiStorageConnection>(`/api/v1/storage-connections/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+      quiet: true,
+    }),
+
+  remove: (id: string) =>
+    request<void>(`/api/v1/storage-connections/${encodeURIComponent(id)}`, { method: 'DELETE', quiet: true }),
+
+  test: (id: string, bucket?: string) =>
+    request<StorageConnectionTestResult>(`/api/v1/storage-connections/${encodeURIComponent(id)}/test`, {
+      method: 'POST',
+      body: JSON.stringify({ from: 'open-live', ...(bucket ? { bucket } : {}) }),
+      quiet: true,
+    }),
 }

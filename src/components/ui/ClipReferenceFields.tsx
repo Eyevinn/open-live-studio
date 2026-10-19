@@ -1,11 +1,74 @@
+import { useEffect } from 'react'
 import { inputCls, labelCls } from '@/components/ui/SrtDirectionFields'
 import { CLIP_REF_LABELS, type ClipRefState, type ClipRefType } from '@/lib/clipRef'
+import { DEFAULT_STORAGE_CONNECTION_ID } from '@/lib/api'
+import { clipPickerConnections } from '@/lib/storageConnection'
+import { useStorageStore } from '@/store/storage.store'
+
+/**
+ * Storage-connection picker for an `s3` reference (studio#217). Offers the
+ * instance default plus stored connections with role `clip` or `both`. '' is
+ * the default and serializes to no `connectionId`. A reference that already
+ * points at a connection not in that list (deleted, or role `recording`) keeps
+ * it as an extra option so editing the source does not silently drop it. The
+ * "no longer exists" warning waits for the first successful list (`loaded`) so
+ * it does not flash while the connections are still being fetched.
+ */
+function ConnectionPicker({ value, onChange }: { value: ClipRefState; onChange: (next: ClipRefState) => void }) {
+  const connections = useStorageStore((s) => s.connections)
+  const loadError = useStorageStore((s) => s.loadError)
+  const loaded = useStorageStore((s) => s.loaded)
+  const fetchAll = useStorageStore((s) => s.fetchAll)
+
+  useEffect(() => { void fetchAll() }, [fetchAll])
+
+  const defaultEntry = connections.find((c) => c.id === DEFAULT_STORAGE_CONNECTION_ID)
+  const options = clipPickerConnections(connections)
+  const current = value.connectionId
+  const currentListed = !current || options.some((c) => c.id === current)
+  const currentStored = connections.find((c) => c.id === current)
+
+  function choose(id: string) {
+    const picked = options.find((c) => c.id === id)
+    onChange({
+      ...value,
+      connectionId: id,
+      // Pre-fill Bucket from the connection's default bucket; still editable.
+      ...(picked?.defaultBucket ? { bucket: picked.defaultBucket } : {}),
+    })
+  }
+
+  return (
+    <div>
+      <label className={labelCls}>Storage Connection</label>
+      <select value={current} onChange={(e) => choose(e.target.value)} className={inputCls}>
+        <option value="">{defaultEntry ? defaultEntry.name : 'Default (instance storage)'}</option>
+        {options.map((c) => (
+          <option key={c.id} value={c.id}>{c.name}{c.defaultBucket ? ` (${c.defaultBucket})` : ''}</option>
+        ))}
+        {!currentListed && (
+          <option value={current}>
+            {currentStored
+              ? `${currentStored.name} (role: ${currentStored.role})`
+              : loaded ? `Unknown connection (${current})` : `${current} (loading…)`}
+          </option>
+        )}
+      </select>
+      {loadError && (
+        <p className="text-xs text-[--color-text-muted] mt-1">Could not load storage connections: {loadError}</p>
+      )}
+      {loaded && !currentListed && !currentStored && !loadError && (
+        <p className="text-xs text-amber-400 mt-1">This connection no longer exists; cueing the clip will fail until another is chosen.</p>
+      )}
+    </div>
+  )
+}
 
 /**
  * Clip-reference form fields: a `url` / `s3` type selector plus the variant's
- * inputs. Shared by the New Source and Edit dialogs so both build the same
- * `ClipReference` the backend resolves (studio#148). `error` is the inline
- * validation message surfaced under the fields.
+ * inputs. Shared by the New Source and Edit dialogs and the Clips panel New clip
+ * dialog so all build the same `ClipReference` the backend resolves (studio#148,
+ * studio#217). `error` is the inline validation message surfaced under the fields.
  */
 export function ClipReferenceFields({
   value,
@@ -50,6 +113,7 @@ export function ClipReferenceFields({
         </div>
       ) : (
         <>
+          <ConnectionPicker value={value} onChange={onChange} />
           <div>
             <label className={labelCls}>Bucket</label>
             <input

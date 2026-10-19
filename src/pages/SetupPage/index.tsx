@@ -4,13 +4,15 @@ import { SourcesPanel } from './SourcesPanel'
 import { GraphicsPanel } from './GraphicsPanel'
 import { OutputsPanel } from './OutputsPanel'
 import { GatewaysPanel } from './GatewaysPanel'
+import { StoragePanel } from './StoragePanel'
 import { cn } from '@/lib/cn'
 
-type Tab = 'sources' | 'gateways' | 'graphics' | 'outputs'
+type Tab = 'sources' | 'gateways' | 'storage' | 'graphics' | 'outputs'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'sources', label: 'Sources' },
   { id: 'gateways', label: 'Gateways' },
+  { id: 'storage', label: 'Storage' },
   { id: 'graphics', label: 'Graphics' },
   { id: 'outputs', label: 'Outputs' },
 ]
@@ -47,6 +49,7 @@ export function SetupPage() {
       <div className="flex-1 overflow-auto p-5">
         {activeTab === 'sources' && <SourcesPanel />}
         {activeTab === 'gateways' && <GatewaysPanel />}
+        {activeTab === 'storage' && <StoragePanel />}
         {activeTab === 'graphics' && <GraphicsPanel />}
         {activeTab === 'outputs' && <OutputsPanel />}
       </div>
