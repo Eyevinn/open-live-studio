@@ -20,9 +20,14 @@ export interface ClipRefState {
   url: string
   bucket: string
   key: string
+  /**
+   * Storage connection of an `s3` reference (open-live #520). Empty means the
+   * instance default and is omitted from the serialized reference.
+   */
+  connectionId: string
 }
 
-export const emptyClipRef: ClipRefState = { type: 'url', url: '', bucket: '', key: '' }
+export const emptyClipRef: ClipRefState = { type: 'url', url: '', bucket: '', key: '', connectionId: '' }
 
 /**
  * Validates a clip reference against the same rules the backend applies, so the
@@ -49,22 +54,39 @@ export function validateClipRef(ref: ClipRefState): string | null {
   return null
 }
 
-/** Serializes a validated clip reference to the JSON string stored in `address`. */
+/**
+ * Serializes a validated clip reference to the JSON string stored in `address`.
+ * `connectionId` is written only for a non-default s3 connection, so a reference
+ * on the default is byte-identical to the pre-#217 format.
+ */
 export function serializeClipRef(ref: ClipRefState): string {
-  return ref.type === 'url'
-    ? JSON.stringify({ type: 'url', url: ref.url.trim() })
-    : JSON.stringify({ type: 's3', bucket: ref.bucket.trim(), key: ref.key.trim() })
+  if (ref.type === 'url') return JSON.stringify({ type: 'url', url: ref.url.trim() })
+  const connectionId = ref.connectionId.trim()
+  return JSON.stringify({
+    type: 's3',
+    bucket: ref.bucket.trim(),
+    key: ref.key.trim(),
+    ...(connectionId && connectionId !== 'default' ? { connectionId } : {}),
+  })
 }
 
 /** Best-effort parse of a stored clip-reference JSON string back into form state. */
 export function parseClipRef(stored: string): ClipRefState {
   try {
-    const parsed = JSON.parse(stored) as Partial<ClipRefState & { url: string; bucket: string; key: string }>
-    if (parsed.type === 's3') {
-      return { type: 's3', url: '', bucket: parsed.bucket ?? '', key: parsed.key ?? '' }
+    const parsed = JSON.parse(stored) as Partial<ClipRefState> | null
+    if (parsed?.type === 's3') {
+      return {
+        type: 's3',
+        url: '',
+        bucket: parsed.bucket ?? '',
+        key: parsed.key ?? '',
+        // An explicit "default" is the same as absent; the picker models it as ''.
+        connectionId:
+          typeof parsed.connectionId === 'string' && parsed.connectionId !== 'default' ? parsed.connectionId : '',
+      }
     }
-    if (parsed.type === 'url') {
-      return { type: 'url', url: parsed.url ?? '', bucket: '', key: '' }
+    if (parsed?.type === 'url') {
+      return { type: 'url', url: parsed.url ?? '', bucket: '', key: '', connectionId: '' }
     }
   } catch {
     // Unparseable / legacy address: fall through to an empty URL reference.
