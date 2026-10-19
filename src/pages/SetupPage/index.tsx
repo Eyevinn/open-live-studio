@@ -51,7 +51,7 @@ export function SetupPage() {
         {activeTab === 'gateways' && <GatewaysPanel />}
         {activeTab === 'storage' && <StoragePanel />}
         {activeTab === 'graphics' && <GraphicsPanel />}
-        {activeTab === 'outputs' && <OutputsPanel />}
+        {activeTab === 'outputs' && <OutputsPanel onOpenStorage={() => setActiveTab('storage')} />}
       </div>
     </div>
   )

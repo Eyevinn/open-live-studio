@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
-import { outputsApi, type ApiOutput, type OutputType, type RtmpDestinationInput } from '@/lib/api'
+import { outputsApi, type ApiOutput, type OutputCreateInput, type OutputPatchInput, type OutputType, type RtmpDestinationInput } from '@/lib/api'
 
 export type { ApiOutput as Output, OutputType, RtmpDestinationInput }
 
@@ -13,8 +13,10 @@ interface OutputsState {
 
 interface OutputsActions {
   fetchAll: () => Promise<void>
-  addOutput: (body: { name: string; outputType: OutputType; url?: string; rtmp?: RtmpDestinationInput }) => Promise<ApiOutput>
-  updateOutput: (id: string, body: { name?: string; url?: string; rtmp?: RtmpDestinationInput }) => Promise<void>
+  /** Rethrows the `ApiError` so the dialog can show the backend message inline. */
+  addOutput: (body: OutputCreateInput) => Promise<ApiOutput>
+  /** Rethrows the `ApiError` so the dialog can show the backend message inline. */
+  updateOutput: (id: string, body: OutputPatchInput) => Promise<void>
   removeOutput: (id: string) => Promise<void>
 }
 

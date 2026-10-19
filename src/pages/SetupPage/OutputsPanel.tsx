@@ -11,14 +11,25 @@ import { StatusDot } from '@/components/ui/StatusDot'
 import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
 import { DirectionToggle, ListenerFields, inputCls, labelCls, listenerPortFor, listenerReady, useListenerPortMode } from '@/components/ui/SrtDirectionFields'
 import { RtmpFields, RTMP_PLATFORM_LABELS, streamKeyError, customUrlMissing } from '@/components/ui/RtmpDestinationFields'
+import { useStorageStore } from '@/store/storage.store'
+import {
+  NO_STORAGE_AVAILABLE,
+  outputSaveErrorMessage,
+  recordingCreateInput,
+  recordingPatchInput,
+  recordingStorageLabel,
+  recordingStorageOptions,
+  storageSelection,
+} from '@/lib/recordingOutput'
 
-const CREATABLE_OUTPUT_TYPES: OutputType[] = ['mpegtssrt', 'efpsrt', 'rtmp']
+const CREATABLE_OUTPUT_TYPES: OutputType[] = ['mpegtssrt', 'efpsrt', 'rtmp', 'recording']
 
 const OUTPUT_TYPE_LABELS: Record<OutputType, string> = {
   mpegtssrt: 'MPEG-TS/SRT',
   efpsrt: 'EFP/SRT',
   whep: 'WHEP',
   rtmp: 'RTMP',
+  recording: 'Recording',
 }
 
 const LISTENER_LABEL = 'Listener'
@@ -62,19 +73,114 @@ interface EditState {
   streamKey: string
   /** Operator asked to clear the stored key. */
   clearKey: boolean
+  // Recording-only fields (present when outputType === 'recording').
+  /** `connectionId` as stored; absent or "default" = the instance default. */
+  connectionId?: string
+  /** Storage selector value: '' = default, else a stored connection id. */
+  storage: string
 }
 
-export function OutputsPanel() {
+interface RecordingStorageFieldProps {
+  value: string
+  onChange: (value: string) => void
+  /** Selection stored on the output being edited; kept as an option even if no longer offered. */
+  current?: string
+  onOpenStorage?: () => void
+}
+
+/**
+ * Storage selector of a Recording output (studio#219): the default entry plus
+ * stored connections with role `recording` or `both`. With nothing selectable it
+ * shows "No storage available" and a link to the Storage tab; the dialog then
+ * disables Save (see `recordingStorageReady`).
+ */
+function RecordingStorageField({ value, onChange, current, onOpenStorage }: RecordingStorageFieldProps) {
+  const connections = useStorageStore((s) => s.connections)
+  const loaded = useStorageStore((s) => s.loaded)
+  const loadError = useStorageStore((s) => s.loadError)
+  const fetchStorage = useStorageStore((s) => s.fetchAll)
+  const { options, available } = recordingStorageOptions(connections, current)
+
+  if (!loaded) {
+    return (
+      <div>
+        <label className={labelCls}>Storage</label>
+        {loadError ? (
+          <p className="text-xs text-red-400">
+            Could not load storage connections: {loadError}{' '}
+            <button type="button" className="underline hover:text-orange-500" onClick={() => void fetchStorage()}>Retry</button>
+          </p>
+        ) : (
+          <p className="text-xs text-[--color-text-muted]">Loading storage connections…</p>
+        )}
+      </div>
+    )
+  }
+
+  if (!available && current === undefined) {
+    return (
+      <div>
+        <label className={labelCls}>Storage</label>
+        <p className="text-sm text-amber-400">{NO_STORAGE_AVAILABLE}</p>
+        <p className="text-xs text-[--color-text-muted] mt-1">
+          This server has no default storage and no recording storage connection with a default bucket.{' '}
+          {onOpenStorage
+            ? <button type="button" className="underline text-[--color-accent] hover:text-orange-500" onClick={onOpenStorage}>Add one in the Storage tab</button>
+            : 'Add one in the Storage tab'}
+          .
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <label className={labelCls}>Storage</label>
+      <select value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
+        {options.map((o) => (
+          <option key={o.value || '__default__'} value={o.value} disabled={o.disabled}>{o.label}</option>
+        ))}
+      </select>
+      <p className="text-xs text-[--color-text-muted] mt-1">
+        Where the recording is uploaded when the production is deactivated. Offers the default storage and connections with the role Recordings or Clips and recordings.
+      </p>
+    </div>
+  )
+}
+
+/** True when the selector holds a selectable value (connections loaded, option enabled). */
+function recordingStorageReady(
+  connections: Parameters<typeof recordingStorageOptions>[0],
+  loaded: boolean,
+  value: string,
+  current?: string,
+): boolean {
+  if (!loaded) return false
+  return recordingStorageOptions(connections, current).options.some((o) => o.value === value && !o.disabled)
+}
+
+interface OutputsPanelProps {
+  /** Switches Setup to the Storage tab (the "No storage available" link). */
+  onOpenStorage?: () => void
+}
+
+export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
   const { outputs, isLoading, lastFetchedAt, addOutput, updateOutput, removeOutput, fetchAll } = useOutputsStore()
   const productions = useProductionsStore((s) => s.productions)
   const { info } = useServerInfo()
   const portMode = useListenerPortMode()
+  const storageConnections = useStorageStore((s) => s.connections)
+  const storageLoaded = useStorageStore((s) => s.loaded)
+  const fetchStorage = useStorageStore((s) => s.fetchAll)
 
   useEffect(() => {
     void fetchAll()
     const id = setInterval(() => void fetchAll(), 15000)
     return () => clearInterval(id)
   }, [fetchAll])
+
+  // Connection names for Recording rows and the storage selector.
+  useEffect(() => { void fetchStorage() }, [fetchStorage])
 
   const activeOutputIds = new Set(
     productions
@@ -88,6 +194,11 @@ export function OutputsPanel() {
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [addUrlError, setAddUrlError] = useState<string | null>(null)
   const [editUrlError, setEditUrlError] = useState<string | null>(null)
+  // Backend message of a failed create/update, shown once inside the dialog
+  // (the API calls are quiet, so there is no toast as well).
+  const [addError, setAddError] = useState<string | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
 
   const [newName, setNewName] = useState('')
   const [newType, setNewType] = useState<OutputType>('mpegtssrt')
@@ -98,6 +209,7 @@ export function OutputsPanel() {
   const [newPlatform, setNewPlatform] = useState<RtmpPlatform>('youtube')
   const [newCustomUrl, setNewCustomUrl] = useState('')
   const [newStreamKey, setNewStreamKey] = useState('')
+  const [newStorage, setNewStorage] = useState('')
 
   function resetAdd() {
     setNewName('')
@@ -109,7 +221,9 @@ export function OutputsPanel() {
     setNewPlatform('youtube')
     setNewCustomUrl('')
     setNewStreamKey('')
+    setNewStorage('')
     setAddUrlError(null)
+    setAddError(null)
   }
 
   function withCallerMode(url: string): string {
@@ -118,23 +232,48 @@ export function OutputsPanel() {
 
   const rtmpAddReady =
     !!newStreamKey.trim() && !streamKeyError(newStreamKey) && !customUrlMissing(newPlatform, newCustomUrl)
-  const addReady = !!newName.trim() && (
+  // The selector starts on the default; when the server has none, fall back to
+  // the first selectable connection so Save sends a real target.
+  const addStorageOptions = recordingStorageOptions(storageConnections).options
+  const newStorageValue = addStorageOptions.some((o) => o.value === newStorage && !o.disabled)
+    ? newStorage
+    : (addStorageOptions.find((o) => !o.disabled)?.value ?? newStorage)
+  const addReady = !!newName.trim() && !saving && (
     newType === 'rtmp'
       ? rtmpAddReady
-      : newDirection === 'listener' ? listenerReady(portMode, newManualPort) : !!newUrl.trim()
+      : newType === 'recording'
+        ? recordingStorageReady(storageConnections, storageLoaded, newStorageValue)
+        : newDirection === 'listener' ? listenerReady(portMode, newManualPort) : !!newUrl.trim()
   )
+
+  async function submitAdd(body: Parameters<typeof addOutput>[0]) {
+    setAddError(null)
+    setSaving(true)
+    try {
+      await addOutput(body)
+      resetAdd()
+      setAddOpen(false)
+    } catch (err) {
+      // Keep the dialog open with the entered values; show the backend message once.
+      setAddError(outputSaveErrorMessage(err))
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function handleAdd() {
     if (!addReady) return
+    if (newType === 'recording') {
+      await submitAdd(recordingCreateInput(newName, newStorageValue))
+      return
+    }
     if (newType === 'rtmp') {
       const rtmp: RtmpDestinationInput = {
         platform: newPlatform,
         streamKey: newStreamKey,
         ...(newPlatform === 'custom' ? { ingestUrl: newCustomUrl.trim() } : {}),
       }
-      await addOutput({ name: newName.trim(), outputType: 'rtmp', rtmp })
-      resetAdd()
-      setAddOpen(false)
+      await submitAdd({ name: newName.trim(), outputType: 'rtmp', rtmp })
       return
     }
     let url: string
@@ -148,9 +287,7 @@ export function OutputsPanel() {
       const duplicate = outputs.find((o) => o.url?.trim() === url)
       if (duplicate) { setAddUrlError(`Address already used by "${duplicate.name}"`); return }
     }
-    await addOutput({ name: newName.trim(), outputType: newType, url })
-    resetAdd()
-    setAddOpen(false)
+    await submitAdd({ name: newName.trim(), outputType: newType, url })
   }
 
   function openEdit(o: Output) {
@@ -171,12 +308,25 @@ export function OutputsPanel() {
       keyStored: !!o.rtmp?.streamKeySet,
       streamKey: '',
       clearKey: false,
+      connectionId: o.connectionId,
+      storage: storageSelection(o.connectionId),
     })
     setEditUrlError(null)
+    setEditError(null)
   }
 
-  const editReady = !!editTarget && !!editTarget.name.trim() && (
-    editTarget.outputType === 'rtmp'
+  function closeEdit() {
+    setEditTarget(null)
+    setEditUrlError(null)
+    setEditError(null)
+  }
+
+  const editReady = !!editTarget && !!editTarget.name.trim() && !saving && (
+    editTarget.outputType === 'recording'
+      ? recordingStorageReady(storageConnections, storageLoaded, editTarget.storage, storageSelection(editTarget.connectionId)) ||
+        // Unchanged storage (even one no longer offered) can be kept on a rename.
+        editTarget.storage === storageSelection(editTarget.connectionId)
+      : editTarget.outputType === 'rtmp'
       ? (editTarget.platform !== 'custom' || !!editTarget.ingestUrl.trim()) &&
         !(editTarget.streamKey.length > 0 && streamKeyError(editTarget.streamKey))
       : editTarget.direction === 'listener'
@@ -184,8 +334,30 @@ export function OutputsPanel() {
         : !!editTarget.url.trim()
   )
 
+  async function submitEdit(id: string, body: Parameters<typeof updateOutput>[1]) {
+    setEditError(null)
+    setSaving(true)
+    try {
+      if (Object.keys(body).length > 0) await updateOutput(id, body)
+      closeEdit()
+    } catch (err) {
+      // Keep the dialog open with the entered values; show the backend message once.
+      setEditError(outputSaveErrorMessage(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function handleEdit() {
     if (!editTarget || !editReady) return
+    if (editTarget.outputType === 'recording') {
+      const original = outputs.find((o) => o.id === editTarget.id)
+      await submitEdit(
+        editTarget.id,
+        recordingPatchInput(editTarget.name, { name: original?.name ?? '', connectionId: editTarget.connectionId }, editTarget.storage),
+      )
+      return
+    }
     if (editTarget.outputType === 'rtmp') {
       // Build the write-only rtmp patch. streamKey: cleared → '', a new key →
       // send it, otherwise omitted so the stored ciphertext is kept untouched.
@@ -193,9 +365,7 @@ export function OutputsPanel() {
       if (editTarget.platform === 'custom') rtmp.ingestUrl = editTarget.ingestUrl.trim()
       if (editTarget.clearKey) rtmp.streamKey = ''
       else if (editTarget.streamKey.trim()) rtmp.streamKey = editTarget.streamKey
-      await updateOutput(editTarget.id, { name: editTarget.name.trim(), rtmp })
-      setEditUrlError(null)
-      setEditTarget(null)
+      await submitEdit(editTarget.id, { name: editTarget.name.trim(), rtmp })
       return
     }
     let url: string | undefined
@@ -215,9 +385,7 @@ export function OutputsPanel() {
       if (duplicate) { setEditUrlError(`Address already used by "${duplicate.name}"`); return }
       if (url === editTarget.stored) url = undefined
     }
-    await updateOutput(editTarget.id, { name: editTarget.name.trim(), ...(url !== undefined ? { url } : {}) })
-    setEditUrlError(null)
-    setEditTarget(null)
+    await submitEdit(editTarget.id, { name: editTarget.name.trim(), ...(url !== undefined ? { url } : {}) })
   }
 
   async function handleDelete(id: string) {
@@ -269,6 +437,11 @@ export function OutputsPanel() {
                   {o.outputType === 'rtmp' && o.status && <StatusBadge status={o.status} />}
                   {viewer && <InlineCopyButton label="Viewer address" value={viewer} />}
                 </div>
+                {o.outputType === 'recording' && (
+                  <span className="text-xs text-[--color-text-muted] font-mono truncate block">
+                    Storage: {storageLoaded ? recordingStorageLabel(o.connectionId, storageConnections) : (storageSelection(o.connectionId) || 'Default')}
+                  </span>
+                )}
                 {o.rtmp && (
                   <span className="text-xs text-[--color-text-muted] font-mono truncate block">
                     {RTMP_PLATFORM_LABELS[o.rtmp.platform]} · {o.rtmp.ingestUrl} · {o.rtmp.streamKeySet ? 'key set' : 'no key'}
@@ -347,7 +520,7 @@ export function OutputsPanel() {
               type="text"
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="Program SRT"
+              placeholder={newType === 'recording' ? 'Program recording' : 'Program SRT'}
               className={inputCls}
             />
           </div>
@@ -358,7 +531,7 @@ export function OutputsPanel() {
                 <button
                   key={t}
                   type="button"
-                  onClick={() => setNewType(t)}
+                  onClick={() => { setNewType(t); setAddError(null) }}
                   className={`py-2 rounded text-sm border transition-colors ${
                     newType === t
                       ? 'bg-[var(--color-accent)] border-[var(--color-accent)] text-white'
@@ -370,7 +543,13 @@ export function OutputsPanel() {
               ))}
             </div>
           </div>
-          {newType === 'rtmp' ? (
+          {newType === 'recording' ? (
+            <RecordingStorageField
+              value={newStorageValue}
+              onChange={(v) => { setNewStorage(v); setAddError(null) }}
+              onOpenStorage={onOpenStorage ? () => { resetAdd(); setAddOpen(false); onOpenStorage() } : undefined}
+            />
+          ) : newType === 'rtmp' ? (
             <RtmpFields
               platform={newPlatform}
               onPlatform={setNewPlatform}
@@ -410,12 +589,13 @@ export function OutputsPanel() {
               )}
             </>
           )}
+          {addError && <p className="text-xs text-red-400" role="alert">{addError}</p>}
         </div>
       </Modal>
 
       {/* Edit modal */}
       {editTarget && (
-        <Modal open title="Edit Output" onClose={() => { setEditTarget(null); setEditUrlError(null) }}>
+        <Modal open title="Edit Output" onClose={closeEdit}>
           <div className="flex flex-col gap-3">
             <div>
               <label className={labelCls}>Name</label>
@@ -426,7 +606,14 @@ export function OutputsPanel() {
                 className={inputCls}
               />
             </div>
-            {editTarget.outputType === 'rtmp' ? (
+            {editTarget.outputType === 'recording' ? (
+              <RecordingStorageField
+                value={editTarget.storage}
+                current={storageSelection(editTarget.connectionId)}
+                onChange={(storage) => { setEditTarget({ ...editTarget, storage }); setEditError(null) }}
+                onOpenStorage={onOpenStorage ? () => { closeEdit(); onOpenStorage() } : undefined}
+              />
+            ) : editTarget.outputType === 'rtmp' ? (
               <RtmpFields
                 platform={editTarget.platform}
                 onPlatform={(platform) => setEditTarget({ ...editTarget, platform })}
@@ -479,8 +666,9 @@ export function OutputsPanel() {
                 )}
               </>
             )}
+            {editError && <p className="text-xs text-red-400" role="alert">{editError}</p>}
             <div className="flex justify-end gap-2 pt-1">
-              <Button variant="ghost" onClick={() => { setEditTarget(null); setEditUrlError(null) }}>Cancel</Button>
+              <Button variant="ghost" onClick={closeEdit}>Cancel</Button>
               <Button variant="active" onClick={() => void handleEdit()} disabled={!editReady}>
                 Save
               </Button>

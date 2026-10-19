@@ -155,7 +155,12 @@ export interface ProductionGraphicAssignment {
   dskInput: string
 }
 
-export type OutputType = 'mpegtssrt' | 'efpsrt' | 'whep' | 'rtmp'
+/**
+ * `recording` archives the programme to object storage while the production is
+ * active (open-live #41, #534). Its storage target is `connectionId` (absent or
+ * `"default"` = the instance's env storage).
+ */
+export type OutputType = 'mpegtssrt' | 'efpsrt' | 'whep' | 'rtmp' | 'recording'
 
 /**
  * RTMP multi-destination platform presets (open-live epic #319, spec
@@ -214,6 +219,11 @@ export interface ApiOutput {
   rtmp?: RtmpDestination
   /** Derived health, present on list/get responses (open-live #255). */
   status?: OutputStatus
+  /**
+   * Storage connection of a `recording` output (open-live #520). Absent or
+   * `"default"` means the instance default storage.
+   */
+  connectionId?: string
   createdAt: string
   updatedAt: string
 }
@@ -718,20 +728,41 @@ export const graphicsApi = {
     request<void>(`/api/v1/graphics/${encodeURIComponent(id)}`, { method: 'DELETE' }),
 }
 
+/** `POST /api/v1/outputs` body. `connectionId` is valid on a `recording` output only. */
+export interface OutputCreateInput {
+  name: string
+  outputType: OutputType
+  url?: string
+  rtmp?: RtmpDestinationInput
+  connectionId?: string
+}
+
+/** `PATCH /api/v1/outputs/:id` body. `connectionId` re-points a `recording` output. */
+export interface OutputPatchInput {
+  name?: string
+  url?: string
+  rtmp?: RtmpDestinationInput
+  connectionId?: string
+}
+
 export const outputsApi = {
   list: () =>
     request<ApiOutput[]>('/api/v1/outputs'),
 
-  create: (body: { name: string; outputType: OutputType; url?: string; rtmp?: RtmpDestinationInput }) =>
+  // Quiet: the New/Edit Output dialogs show the backend message inline, so it
+  // is not shown a second time as a toast (studio#216 item 18).
+  create: (body: OutputCreateInput) =>
     request<ApiOutput>('/api/v1/outputs', {
       method: 'POST',
       body: JSON.stringify(body),
+      quiet: true,
     }),
 
-  update: (id: string, body: { name?: string; url?: string; rtmp?: RtmpDestinationInput }) =>
+  update: (id: string, body: OutputPatchInput) =>
     request<ApiOutput>(`/api/v1/outputs/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
+      quiet: true,
     }),
 
   remove: (id: string) =>
@@ -799,6 +830,40 @@ export interface StorageConnectionReferences {
   recordings: number
 }
 
+/** One object in a `GET /:id/objects` page. `name` is the last key segment. */
+export interface StorageObject {
+  key: string
+  name: string
+  size: number
+  /** ISO timestamp from the object store; may be '' if the store omitted it. */
+  lastModified: string
+}
+
+/** A sub-folder (common prefix, ending in `/`) in a `GET /:id/objects` page. */
+export interface StorageFolder {
+  prefix: string
+}
+
+/**
+ * One delimiter-scoped level of a bucket (open-live spec §2.8). `cursor` is
+ * opaque and absent on the last page.
+ */
+export interface StorageListPage {
+  bucket: string
+  prefix: string
+  folders: StorageFolder[]
+  objects: StorageObject[]
+  cursor?: string
+}
+
+/** Query of `GET /:id/objects`. `bucket` is required when the connection has no `defaultBucket`. */
+export interface StorageListQuery {
+  prefix?: string
+  cursor?: string
+  bucket?: string
+  maxKeys?: number
+}
+
 // All calls surface their errors inline in the Storage tab, so
 // they are `quiet` (no global toast) and the message is shown exactly once.
 export const storageConnectionsApi = {
@@ -832,4 +897,19 @@ export const storageConnectionsApi = {
       body: JSON.stringify({ from: 'open-live', ...(bucket ? { bucket } : {}) }),
       quiet: true,
     }),
+
+  // Read-only listing for the bucket browser (studio#218). Quiet: the browser
+  // modal shows the 403/404/502 message inline with a Retry.
+  listObjects: (id: string, query: StorageListQuery) => {
+    const params = new URLSearchParams()
+    if (query.prefix) params.set('prefix', query.prefix)
+    if (query.cursor) params.set('cursor', query.cursor)
+    if (query.bucket) params.set('bucket', query.bucket)
+    if (query.maxKeys !== undefined) params.set('maxKeys', String(query.maxKeys))
+    const qs = params.toString()
+    return request<StorageListPage>(
+      `/api/v1/storage-connections/${encodeURIComponent(id)}/objects${qs ? `?${qs}` : ''}`,
+      { quiet: true },
+    )
+  },
 }
