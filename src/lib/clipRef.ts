@@ -29,6 +29,16 @@ export interface ClipRefState {
 
 export const emptyClipRef: ClipRefState = { type: 'url', url: '', bucket: '', key: '', connectionId: '' }
 
+/** Validates an S3 bucket name (also used by the bucket browser prompt). Returns an error or null. */
+export function validateBucketName(bucket: string): string | null {
+  const b = bucket.trim()
+  if (!b) return 'Bucket is required'
+  if (!S3_BUCKET_RE.test(b) || /^\d{1,3}(\.\d{1,3}){3}$/.test(b)) {
+    return 'Invalid bucket — 3–63 lowercase chars (a–z, 0–9, dot, hyphen), alphanumeric at both ends'
+  }
+  return null
+}
+
 /**
  * Validates a clip reference against the same rules the backend applies, so the
  * operator gets inline feedback before the create/update round-trips. Returns an
@@ -45,10 +55,8 @@ export function validateClipRef(ref: ClipRefState): string | null {
     }
     return null
   }
-  if (!ref.bucket.trim()) return 'Bucket is required'
-  if (!S3_BUCKET_RE.test(ref.bucket.trim()) || /^\d{1,3}(\.\d{1,3}){3}$/.test(ref.bucket.trim())) {
-    return 'Invalid bucket — 3–63 lowercase chars (a–z, 0–9, dot, hyphen), alphanumeric at both ends'
-  }
+  const bucketErr = validateBucketName(ref.bucket)
+  if (bucketErr) return bucketErr
   if (!ref.key.trim()) return 'Object key is required'
   if (ref.key.startsWith('/')) return 'Object key must not start with "/"'
   return null
