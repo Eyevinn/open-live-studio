@@ -257,6 +257,8 @@ export interface ApiProduction {
   inputResolutions?: Array<{ width: number; height: number } | null>
   /** Non-blocking problems detected at activation (e.g. recording with no audio). Cleared on the next activation. */
   activationWarnings?: ActivationWarning[]
+  /** Outcome of the latest deactivate that had a recording to upload (open-live #534). */
+  lastRecordingUpload?: RecordingUploadSummary
 }
 
 export interface ProductionConfig {
@@ -288,6 +290,7 @@ type RawProduction = {
   idleExpiresAt?: number
   inputResolutions?: Array<{ width: number; height: number } | null>
   activationWarnings?: ActivationWarning[]
+  lastRecordingUpload?: RecordingUploadSummary
 }
 
 function normalizeProduction(d: RawProduction): ApiProduction {
@@ -312,6 +315,7 @@ function normalizeProduction(d: RawProduction): ApiProduction {
     idleExpiresAt: d.idleExpiresAt,
     inputResolutions: d.inputResolutions,
     activationWarnings: d.activationWarnings,
+    lastRecordingUpload: d.lastRecordingUpload,
   }
 }
 
@@ -913,4 +917,77 @@ export const storageConnectionsApi = {
       { quiet: true },
     )
   },
+}
+
+// ─── Recordings (open-live #42, #534; studio#220, OL-21b.4) ──────────────────
+// Read-only. Shapes mirror open-live `src/routes/recordings.ts` and
+// `src/db/types.ts` (`RecordingDoc`, `RecordingUploadSummary`) on main — do not
+// add fields the backend does not return.
+
+/** Why a recording has no `playbackUrl` / `downloadUrl` (open-live #534). */
+export type PlaybackUnavailableReason =
+  | 'connection-missing'
+  | 'connection-no-bucket'
+  | 'storage-not-configured'
+  | 'bucket-mismatch'
+  | 'signing-failed'
+
+/**
+ * One recording as returned by `GET /api/v1/recordings[/:id]` and
+ * `GET /api/v1/productions/:id/recordings`. `playbackUrl` and `downloadUrl` are
+ * presigned on every read and expire after `RECORDING_PRESIGN_TTL_S`, so Studio
+ * never reuses a listed URL for playback; when neither could be signed,
+ * `playbackUnavailable` says why instead.
+ */
+export interface ApiRecording {
+  id: string
+  productionId: string
+  outputId?: string
+  /** Storage connection the file was written to; absent = the instance default. */
+  connectionId?: string
+  bucket: string
+  key: string
+  sizeBytes?: number
+  /** Media duration from the MP4 header; absent when unreadable. */
+  durationMs?: number
+  startedAt: string
+  endedAt?: string
+  createdAt: string
+  updatedAt: string
+  playbackUrl?: string
+  downloadUrl?: string
+  playbackUnavailable?: PlaybackUnavailableReason
+}
+
+/** Why a deactivate's recording upload uploaded nothing or stopped early (open-live #534). */
+export type RecordingUploadReason =
+  | 'no-storage-target'
+  | 'connection-not-found'
+  | 'connection-no-bucket'
+  | 'auth-error'
+  | 'upload-error'
+
+/** `ProductionDoc.lastRecordingUpload`: outcome of the latest deactivate that had a recording. */
+export interface RecordingUploadSummary {
+  finishedAt: string
+  outputId?: string
+  connectionId?: string
+  bucket?: string
+  uploaded: number
+  /** Files that failed; they stay on Strom for the next sweep. */
+  failed: Array<{ file: string; error: string }>
+  reason?: RecordingUploadReason
+  message?: string
+}
+
+// Quiet: the Recordings tab and the player show every failure inline (with a
+// Retry / Reload link), so the global toast would show it a second time.
+export const recordingsApi = {
+  list: () => request<ApiRecording[]>('/api/v1/recordings', { quiet: true }),
+
+  listForProduction: (productionId: string) =>
+    request<ApiRecording[]>(`/api/v1/productions/${encodeURIComponent(productionId)}/recordings`, { quiet: true }),
+
+  /** Fetches one recording with freshly signed URLs. */
+  get: (id: string) => request<ApiRecording>(`/api/v1/recordings/${encodeURIComponent(id)}`, { quiet: true }),
 }

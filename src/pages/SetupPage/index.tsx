@@ -1,13 +1,15 @@
 import { useState } from 'react'
+import { useSearchParams } from 'react-router'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { SourcesPanel } from './SourcesPanel'
 import { GraphicsPanel } from './GraphicsPanel'
 import { OutputsPanel } from './OutputsPanel'
 import { GatewaysPanel } from './GatewaysPanel'
 import { StoragePanel } from './StoragePanel'
+import { RecordingsPanel } from './RecordingsPanel'
 import { cn } from '@/lib/cn'
 
-type Tab = 'sources' | 'gateways' | 'storage' | 'graphics' | 'outputs'
+type Tab = 'sources' | 'gateways' | 'storage' | 'graphics' | 'outputs' | 'recordings'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'sources', label: 'Sources' },
@@ -15,10 +17,20 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'storage', label: 'Storage' },
   { id: 'graphics', label: 'Graphics' },
   { id: 'outputs', label: 'Outputs' },
+  { id: 'recordings', label: 'Recordings' },
 ]
 
+function isTab(value: string | null): value is Tab {
+  return TABS.some((t) => t.id === value)
+}
+
 export function SetupPage() {
-  const [activeTab, setActiveTab] = useState<Tab>('sources')
+  // `?tab=recordings&production=<id>` is the Recordings shortcut on a
+  // production row (studio#220).
+  const [searchParams] = useSearchParams()
+  const tabParam = searchParams.get('tab')
+  const [activeTab, setActiveTab] = useState<Tab>(isTab(tabParam) ? tabParam : 'sources')
+  const recordingsProductionId = searchParams.get('production')
 
   return (
     <div className="flex flex-col h-full">
@@ -52,6 +64,7 @@ export function SetupPage() {
         {activeTab === 'storage' && <StoragePanel />}
         {activeTab === 'graphics' && <GraphicsPanel />}
         {activeTab === 'outputs' && <OutputsPanel onOpenStorage={() => setActiveTab('storage')} />}
+        {activeTab === 'recordings' && <RecordingsPanel initialProductionId={recordingsProductionId} />}
       </div>
     </div>
   )

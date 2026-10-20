@@ -1294,6 +1294,14 @@ export function ProductionsPanel() {
                     Studio
                   </Link>
                 )}
+                {/* Read-only shortcut to this production's recordings (studio#220). */}
+                <Link
+                  to={`/setup?tab=recordings&production=${encodeURIComponent(prod.id)}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="inline-flex items-center px-2 py-1 rounded text-xs font-medium text-[--color-text-muted] hover:text-orange-500 hover:bg-[--color-surface-raised] transition-colors"
+                >
+                  Recordings
+                </Link>
                 {/* Phone tier (<768px): hide state-mutating controls
                     (activate/deactivate, options/config, delete). The read-only
                     Studio link and status stay glanceable (#105). */}
