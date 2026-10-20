@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
-import { productionsApi, type ApiProduction, type ProductionSourceAssignment, type ProductionGraphicAssignment, type ProductionOutputAssignment } from '@/lib/api'
+import { productionsApi, type ApiProduction, type ProductionSourceAssignment, type ProductionGraphicAssignment, type ProductionOutputAssignment, type RecordingUploadSummary } from '@/lib/api'
 import type { ActivationWarning } from '@/lib/activation-warnings'
 
 export type ProductionStatus = 'active' | 'inactive' | 'activating'
@@ -33,6 +33,7 @@ export interface Production {
   idleExpiresAt?: number
   inputResolutions?: Array<{ width: number; height: number } | null>
   activationWarnings?: ActivationWarning[]
+  lastRecordingUpload?: RecordingUploadSummary
 }
 
 interface ProductionsState {
@@ -88,6 +89,7 @@ function fromApi(p: ApiProduction): Production {
     idleExpiresAt: p.idleExpiresAt,
     inputResolutions: p.inputResolutions,
     activationWarnings: p.activationWarnings,
+    lastRecordingUpload: p.lastRecordingUpload,
   }
 }
 
