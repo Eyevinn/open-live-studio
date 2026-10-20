@@ -24,6 +24,7 @@ vi.mock('@/lib/api', () => ({
 // Imported after the mock is registered.
 import { productionsApi } from '@/lib/api'
 import { useProductionsStore, type Production } from './productions.store'
+import { audioStreamWarningsByInput, type ActivationWarning } from '@/lib/activation-warnings'
 
 function makeProduction(overrides: Partial<Production> = {}): Production {
   return {
@@ -208,5 +209,47 @@ describe('useProductionsStore.fetchAll', () => {
     await useProductionsStore.getState().fetchAll()
 
     expect(useProductionsStore.getState().isLoading).toBe(false)
+  })
+})
+
+describe('useProductionsStore activationWarnings (open-live#516)', () => {
+  const noAudio: ActivationWarning = { type: 'recording-no-audio', message: 'Recording has no audio.' }
+  const audioWarning = {
+    type: 'audio-stream-not-applied',
+    sourceId: 'src-cam-1',
+    mixerInput: 'video_in_3',
+    requestedIndex: 1,
+    appliedIndex: 0,
+    reason: 'stream-type-unsupported',
+    message: 'Cam 1 (EFP): audio stream 2 was not applied, using stream 1.',
+    unknownExtra: 42,
+  } as ActivationWarning
+
+  it('threads both warning variants through unchanged, extra fields included', async () => {
+    vi.mocked(productionsApi.list).mockResolvedValue([
+      makeApiProduction({ id: 'a', status: 'active', activationWarnings: [noAudio, audioWarning] }),
+      makeApiProduction({ id: 'b', status: 'active' }),
+    ])
+
+    await useProductionsStore.getState().fetchAll()
+
+    const [a, b] = useProductionsStore.getState().productions
+    expect(a?.activationWarnings).toEqual([noAudio, audioWarning])
+    expect(a?.activationWarnings?.map((w) => w.message)).toEqual([noAudio.message, audioWarning.message])
+    expect(b?.activationWarnings).toBeUndefined()
+    expect(audioStreamWarningsByInput(b).size).toBe(0)
+  })
+
+  it('clears the input indicator when the production is deactivated', async () => {
+    vi.mocked(productionsApi.list).mockResolvedValue([
+      makeApiProduction({ id: 'a', status: 'active', activationWarnings: [audioWarning] }),
+    ])
+    await useProductionsStore.getState().fetchAll()
+    const prod = () => useProductionsStore.getState().productions.find((p) => p.id === 'a')
+    expect([...audioStreamWarningsByInput(prod()).keys()]).toEqual(['video_in_3'])
+
+    useProductionsStore.getState().markInactive('a')
+
+    expect(audioStreamWarningsByInput(prod()).size).toBe(0)
   })
 })
