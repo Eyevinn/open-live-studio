@@ -24,6 +24,7 @@ import {
   playbackErrorMessage,
   playbackUnavailableMessage,
   probePlaybackUrl,
+  recordingDeleteErrorMessage,
   recordingFileName,
   recordingsErrorMessage,
   sortRecordings,
@@ -303,5 +304,52 @@ describe('recordingsApi', () => {
     expect((err as ApiError).status).toBe(503)
     expect((err as ApiError).message).toBe('Database unavailable')
     expect(upsertToastByTag).not.toHaveBeenCalled()
+  })
+
+  it('delete sends DELETE for the encoded id and resolves on 204', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }))
+    vi.stubGlobal('fetch', fetchMock)
+    await expect(recordingsApi.delete('recording-a/b')).resolves.toBeUndefined()
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(url).toBe('http://test/api/v1/recordings/recording-a%2Fb')
+    expect(init.method).toBe('DELETE')
+  })
+
+  it('a failed delete carries the reason body and raises no toast', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ error: 'Storage refused', reason: 'storage-denied', statusCode: 502 }), { status: 502 }),
+    ))
+    const err = await recordingsApi.delete('recording-1').catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).status).toBe(502)
+    expect((err as ApiError).body).toMatchObject({ reason: 'storage-denied' })
+    expect(upsertToastByTag).not.toHaveBeenCalled()
+  })
+})
+
+describe('recordingDeleteErrorMessage', () => {
+  it.each([
+    ['connection-missing', 409, 'storage connection no longer exists'],
+    ['connection-no-bucket', 409, 'storage connection has no bucket'],
+    ['storage-not-configured', 409, 'default storage is not configured'],
+    ['bucket-mismatch', 409, 'bucket other than the instance default'],
+    ['storage-denied', 502, 'storage key is not allowed to delete this file'],
+    ['storage-failed', 502, 'storage could not delete the file'],
+  ])('maps reason %s (%i)', (reason, status, text) => {
+    expect(recordingDeleteErrorMessage(new ApiError('x', status, { error: 'x', reason }))).toContain(text)
+  })
+
+  it('404 and 503 get a next step', () => {
+    expect(recordingDeleteErrorMessage(new ApiError('Recording not found', 404))).toContain('Refresh the list')
+    expect(recordingDeleteErrorMessage(new ApiError('Database unavailable', 503))).toContain('Try Delete again')
+  })
+
+  it('an unknown reason falls back to the backend message and names the reason', () => {
+    expect(recordingDeleteErrorMessage(new ApiError('Odd failure', 409, { reason: 'new-reason' })))
+      .toBe('Delete failed: Odd failure (new-reason)')
+  })
+
+  it('a network failure says open-live could not be reached', () => {
+    expect(recordingDeleteErrorMessage(new TypeError('Failed to fetch'))).toBe('Could not reach open-live: Failed to fetch')
   })
 })
