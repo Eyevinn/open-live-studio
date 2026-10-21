@@ -45,6 +45,21 @@ interface AudioActions {
   /** Server-authoritative AFV setter. Keyed by mixerInput so it works even when
    *  elements haven't loaded yet — the value is queued and applied by setElements. */
   applyAfvByMixerInput: (mixerInput: string, enabled: boolean) => void
+  /** Optimistic live guest strip label (open-live#522). Sets the invite `name`
+   *  on the matching strip immediately on a guest join so the operator sees it
+   *  without a reload. This is a responsiveness-only hint: the authoritative
+   *  label — including the correct "Guest N" revert on leave/kick/revoke, which
+   *  the server numbers by pad-index rank — always arrives via a `/audio`
+   *  re-fetch through `applyElementLabels`, so this never guesses a revert label. */
+  applyGuestLabelByMixerInput: (mixerInput: string, name: string) => void
+  /** Label-only refresh from a `/audio` re-fetch (open-live#522). Updates ONLY
+   *  the `label` of matching strips (matched by `elementId`, falling back to
+   *  `mixerInput`), leaving afv/levels/muted/pfl/afl and every other channel
+   *  state untouched. The `/audio` payload carries no AFV field, so routing it
+   *  through `setElements` would wrongly reset AFV on every strip not in the
+   *  pending queue; this does not. No-ops if the production has since changed
+   *  (discards a stale in-flight fetch after a production switch). */
+  applyElementLabels: (elements: ApiAudioElement[], productionId: string) => void
   /** Server-authoritative PFL setter — syncs across all connected operator clients. */
   applyPfl: (elementId: string, enabled: boolean) => void
   /** Server-authoritative AFL setter — syncs across all connected operator clients. */
@@ -158,6 +173,10 @@ export const useAudioStore = create<AudioState & AudioActions>()(
           }
           s.elements = elements
           s.productionId = productionId
+          // The REST `/audio` payload carries the authoritative strip label
+          // (the invite name for a joined named guest, the correctly-numbered
+          // "Guest N" otherwise, after open-live#532), so it is applied as-is —
+          // the WS handler re-fetches it on every guest transition (open-live#522).
           elements.forEach((el) => {
             if (s.levels[el.elementId] === undefined) s.levels[el.elementId] = 1.0
             if (s.muted[el.elementId] === undefined) s.muted[el.elementId] = false
@@ -194,6 +213,38 @@ export const useAudioStore = create<AudioState & AudioActions>()(
           _set((s) => { s.pendingAfvByMixerInput[mixerInput] = enabled })
         }
       },
+
+      applyGuestLabelByMixerInput: (mixerInput, name) =>
+        _set((s) => {
+          // Optimistic-only: name the matching strip immediately on a join so
+          // the operator does not wait for the `/audio` re-fetch to land. When
+          // the strip is not loaded yet there is nothing to show early against,
+          // and the re-fetch will carry the name, so this is a no-op then.
+          const el = s.elements.find((e) => e.mixerInput === mixerInput)
+          if (el && name) el.label = name
+        }),
+
+      applyElementLabels: (elements, productionId) =>
+        _set((s) => {
+          // Label-only refresh (open-live#522). The `/audio` payload is the
+          // source of truth for strip labels, but it carries NO AFV/level/mute
+          // state, so it must NOT be routed through `setElements` — that resets
+          // AFV to false on every strip not in the pending queue, wiping live
+          // AFV that only ever arrives via AFV_STATE on connect / operator
+          // toggle. Match each existing strip by elementId (falling back to
+          // mixerInput) and update ONLY its label. Discard a stale in-flight
+          // fetch whose production no longer matches the store (production
+          // switched during the debounce window or while the fetch was open).
+          if (s.productionId !== productionId) return
+          elements.forEach((incoming) => {
+            const el =
+              s.elements.find((e) => e.elementId === incoming.elementId) ??
+              (incoming.mixerInput !== null
+                ? s.elements.find((e) => e.mixerInput === incoming.mixerInput)
+                : undefined)
+            if (el) el.label = incoming.label
+          })
+        }),
 
       applyMeter: (elementId, peak, rms) =>
         _set((s) => {
