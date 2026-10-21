@@ -51,7 +51,8 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
   const fetchConnections = useStorageStore((s) => s.fetchAll)
 
   const [playing, setPlaying] = useState<RecordingRow | null>(null)
-  const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null)
+  /** Per-row error line, keyed by recording id. */
+  const [rowErrors, setRowErrors] = useState<ReadonlyMap<string, string>>(() => new Map())
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   /** Row whose Delete confirmation is open. */
   const [confirmDelete, setConfirmDelete] = useState<RecordingRow | null>(null)
@@ -91,8 +92,19 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
     [productions],
   )
 
+  /** Sets (or, with `null`, clears) one row's error; other rows keep theirs. */
+  function setRowError(id: string, message: string | null) {
+    setRowErrors((prev) => {
+      if (message === null && !prev.has(id)) return prev
+      const next = new Map(prev)
+      if (message === null) next.delete(id)
+      else next.set(id, message)
+      return next
+    })
+  }
+
   async function handleDownload(row: RecordingRow) {
-    setRowError(null)
+    setRowError(row.recording.id, null)
     // Open the fallback tab synchronously (inside the click) so it is not
     // popup-blocked; it is pointed at the fresh link once that arrives.
     const fallbackTab = row.recording.downloadUrl ? null : window.open('', '_blank')
@@ -102,7 +114,7 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
       const target = downloadTarget(fresh)
       if (!target) {
         fallbackTab?.close()
-        setRowError({ id: row.recording.id, message: playbackUnavailableMessage(fresh) })
+        setRowError(row.recording.id, playbackUnavailableMessage(fresh))
         return
       }
       if (target.newTab) {
@@ -120,7 +132,7 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
       }
     } catch (err) {
       fallbackTab?.close()
-      setRowError({ id: row.recording.id, message: recordingsErrorMessage(err) })
+      setRowError(row.recording.id, recordingsErrorMessage(err))
     } finally {
       setDownloadingId(null)
     }
@@ -129,12 +141,12 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
   async function handleDelete(row: RecordingRow) {
     const id = row.recording.id
     setConfirmDelete(null)
-    setRowError(null)
+    setRowError(id, null)
     setDeletingIds((prev) => new Set(prev).add(id))
     try {
       await deleteRecording(id)
     } catch (err) {
-      setRowError({ id, message: recordingDeleteErrorMessage(err) })
+      setRowError(id, recordingDeleteErrorMessage(err))
     } finally {
       setDeletingIds((prev) => {
         const next = new Set(prev)
@@ -225,6 +237,7 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
                 const r = row.recording
                 const playable = canPlay(r)
                 const deleting = deletingIds.has(r.id)
+                const rowError = rowErrors.get(r.id)
                 return (
                   <tr key={r.id} className="border-t border-[--color-border] align-top">
                     <td className="py-1.5 pr-3 font-mono text-[--color-text-primary] break-all">
@@ -232,8 +245,8 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
                       {!playable && (
                         <p className="mt-0.5 font-sans text-[--color-text-muted]">{playbackUnavailableMessage(r)}</p>
                       )}
-                      {rowError?.id === r.id && (
-                        <p role="alert" className="mt-0.5 font-sans text-red-400">{rowError.message}</p>
+                      {rowError && (
+                        <p role="alert" className="mt-0.5 font-sans text-red-400">{rowError}</p>
                       )}
                     </td>
                     <td className={`py-1.5 pr-3 ${row.productionExists ? 'text-[--color-text-primary]' : 'text-[--color-text-muted] italic'}`}>
@@ -246,7 +259,7 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
                     </td>
                     <td className="py-1.5 pr-3 text-[--color-text-muted]">{row.storage}</td>
                     <td className="py-1.5 whitespace-nowrap text-right">
-                      <Button size="sm" variant="ghost" disabled={!playable || deleting} onClick={() => { setRowError(null); setPlaying(row) }}>
+                      <Button size="sm" variant="ghost" disabled={!playable || deleting} onClick={() => { setRowError(r.id, null); setPlaying(row) }}>
                         Play
                       </Button>
                       <Button
@@ -263,7 +276,7 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
                         className="hover:text-red-400"
                         disabled={deleting || downloadingId === r.id}
                         aria-busy={deleting || undefined}
-                        onClick={() => { setRowError(null); setConfirmDelete(row) }}
+                        onClick={() => { setRowError(r.id, null); setConfirmDelete(row) }}
                       >
                         {deleting ? 'Deleting…' : 'Delete'}
                       </Button>

@@ -206,6 +206,32 @@ describe('RecordingsPanel Delete (studio#229)', () => {
     expect(button(rowOf('first.mp4'), 'Delete').disabled).toBe(false)
   })
 
+  it("starting another row's delete keeps the first row's error", async () => {
+    deleteReplies.push({ status: 502, body: { error: 'x', reason: 'storage-failed', statusCode: 502 } })
+    deleteReplies.push({ status: 502, body: { error: 'x', reason: 'storage-denied', statusCode: 502 } })
+    await renderPanel()
+    openConfirm('first.mp4')
+    fireEvent.click(button(dialog(), 'Delete'))
+    const firstAlert = await within(rowOf('first.mp4')).findByRole('alert')
+    expect(firstAlert.textContent).toBe('The storage could not delete the file. The recording was kept. Try again.')
+
+    openConfirm('second.mp4')
+    expect(within(rowOf('first.mp4')).getByRole('alert').textContent).toBe(firstAlert.textContent)
+    fireEvent.click(button(dialog(), 'Delete'))
+    const secondAlert = await within(rowOf('second.mp4')).findByRole('alert')
+    expect(secondAlert.textContent).toBe('The storage key is not allowed to delete this file. The recording was kept.')
+    expect(within(rowOf('first.mp4')).getByRole('alert').textContent).toBe(
+      'The storage could not delete the file. The recording was kept. Try again.',
+    )
+
+    // Retrying the first row clears only its own error.
+    deleteReplies.push({ status: 204 })
+    openConfirm('first.mp4')
+    fireEvent.click(button(dialog(), 'Delete'))
+    await waitFor(() => expect(screen.queryByText('first.mp4')).toBeNull())
+    expect(within(rowOf('second.mp4')).getByRole('alert').textContent).toBe(secondAlert.textContent)
+  })
+
   it.each([
     [409, { error: 'x', reason: 'connection-missing' }, "Cannot delete: the recording's storage connection no longer exists. Nothing was deleted."],
     [409, { error: 'x', reason: 'bucket-mismatch' }, 'Cannot delete: the recording is in a bucket other than the instance default bucket. Nothing was deleted.'],
