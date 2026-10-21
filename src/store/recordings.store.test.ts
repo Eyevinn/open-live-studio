@@ -17,6 +17,7 @@ vi.mock('@/lib/api', () => {
       list: vi.fn(),
       listForProduction: vi.fn(),
       get: vi.fn(),
+      delete: vi.fn(),
     },
   }
 })
@@ -164,5 +165,25 @@ describe('useRecordingsStore.fetchFresh', () => {
   it('rethrows the backend error (e.g. 404) for the player to show', async () => {
     api.get.mockRejectedValue(new ApiError('Recording not found', 404))
     await expect(useRecordingsStore.getState().fetchFresh('recording-x')).rejects.toThrow('Recording not found')
+  })
+})
+
+describe('useRecordingsStore.deleteRecording', () => {
+  it('deletes and removes only that recording from the list', async () => {
+    useRecordingsStore.setState({ recordings: [makeRecording({ id: 'a' }), makeRecording({ id: 'b' })] })
+    api.delete.mockResolvedValue(undefined)
+
+    await useRecordingsStore.getState().deleteRecording('a')
+
+    expect(api.delete).toHaveBeenCalledWith('a')
+    expect(useRecordingsStore.getState().recordings.map((r) => r.id)).toEqual(['b'])
+  })
+
+  it('rethrows and keeps the list unchanged on failure', async () => {
+    useRecordingsStore.setState({ recordings: [makeRecording({ id: 'a' })] })
+    api.delete.mockRejectedValue(new ApiError('Storage refused', 502, { reason: 'storage-denied' }))
+
+    await expect(useRecordingsStore.getState().deleteRecording('a')).rejects.toThrow('Storage refused')
+    expect(useRecordingsStore.getState().recordings.map((r) => r.id)).toEqual(['a'])
   })
 })

@@ -919,8 +919,8 @@ export const storageConnectionsApi = {
   },
 }
 
-// ─── Recordings (open-live #42, #534; studio#220, OL-21b.4) ──────────────────
-// Read-only. Shapes mirror open-live `src/routes/recordings.ts` and
+// ─── Recordings (open-live #42, #534, #550; studio#220, #229) ─────────────────
+// List, read and delete. Shapes mirror open-live `src/routes/recordings.ts` and
 // `src/db/types.ts` (`RecordingDoc`, `RecordingUploadSummary`) on main — do not
 // add fields the backend does not return.
 
@@ -959,6 +959,19 @@ export interface ApiRecording {
   playbackUnavailable?: PlaybackUnavailableReason
 }
 
+/**
+ * `reason` of a failed `DELETE /api/v1/recordings/:id` (open-live #550). 409:
+ * the storage target cannot be resolved (same names as `playbackUnavailable`);
+ * 502: the object store refused (`storage-denied`) or failed the delete.
+ */
+export type RecordingDeleteReason =
+  | 'connection-missing'
+  | 'connection-no-bucket'
+  | 'storage-not-configured'
+  | 'bucket-mismatch'
+  | 'storage-denied'
+  | 'storage-failed'
+
 /** Why a deactivate's recording upload uploaded nothing or stopped early (open-live #534). */
 export type RecordingUploadReason =
   | 'no-storage-target'
@@ -990,4 +1003,12 @@ export const recordingsApi = {
 
   /** Fetches one recording with freshly signed URLs. */
   get: (id: string) => request<ApiRecording>(`/api/v1/recordings/${encodeURIComponent(id)}`, { quiet: true }),
+
+  /**
+   * Deletes the stored object and the list entry (open-live #550). 204 on
+   * success; on 404/409/502/503 it throws an `ApiError` whose `body.reason`
+   * (409, 502) says why. The recording stays listed on every error.
+   */
+  delete: (id: string) =>
+    request<void>(`/api/v1/recordings/${encodeURIComponent(id)}`, { method: 'DELETE', quiet: true }),
 }

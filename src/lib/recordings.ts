@@ -1,10 +1,12 @@
 // ─── Recordings tab (studio#220, OL-21b.4) ───────────────────────────────────
 // Pure helpers behind RecordingsPanel and the player modal, kept out of the
 // components so sorting, the production join, labels and error mapping are
-// unit-testable. The tab is read-only: nothing here writes to the backend.
+// unit-testable. The only write is Delete (studio#229), whose error mapping is
+// `recordingDeleteErrorMessage`.
 import {
   ApiError,
   type ApiRecording,
+  type RecordingDeleteReason,
   type ApiStorageConnection,
   type PlaybackUnavailableReason,
   type RecordingUploadReason,
@@ -130,6 +132,48 @@ export function recordingsErrorMessage(err: unknown): string {
   }
   if (err instanceof Error && err.message) return `Could not reach open-live: ${err.message}`
   return 'Could not load recordings'
+}
+
+// ─── Delete (studio#229, open-live #550) ─────────────────────────────────────
+
+/** Warning in the Delete confirmation dialog. */
+export const DELETE_WARNING = 'This removes the file from storage. It cannot be undone.'
+
+const DELETE_REASON_TEXT: Record<RecordingDeleteReason, string> = {
+  'connection-missing': 'Cannot delete: the recording\'s storage connection no longer exists. Nothing was deleted.',
+  'connection-no-bucket': 'Cannot delete: the recording\'s storage connection has no bucket. Nothing was deleted.',
+  'storage-not-configured': 'Cannot delete: the instance default storage is not configured. Nothing was deleted.',
+  'bucket-mismatch': 'Cannot delete: the recording is in a bucket other than the instance default bucket. Nothing was deleted.',
+  'storage-denied': 'The storage key is not allowed to delete this file. The recording was kept.',
+  'storage-failed': 'The storage could not delete the file. The recording was kept. Try again.',
+}
+
+function deleteReason(body: unknown): string | undefined {
+  if (body && typeof body === 'object' && 'reason' in body) {
+    const reason = (body as { reason: unknown }).reason
+    return typeof reason === 'string' ? reason : undefined
+  }
+  return undefined
+}
+
+/**
+ * Row message for a failed `DELETE /api/v1/recordings/:id`. A known `reason`
+ * (409, 502) gets a fixed line; an unknown one falls back to the backend
+ * `error`. 404 and 503 get a hint on what to do next.
+ */
+export function recordingDeleteErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    const reason = deleteReason(err.body)
+    if (reason && reason in DELETE_REASON_TEXT) return DELETE_REASON_TEXT[reason as RecordingDeleteReason]
+    if (err.status === 404) return 'Recording not found. It may already have been deleted. Refresh the list.'
+    if (err.status === 503) {
+      return 'The database is unavailable, so the recording could not be removed from the list. Try Delete again.'
+    }
+    const base = err.message || `Request failed (HTTP ${err.status})`
+    return `Delete failed: ${base}${reason ? ` (${reason})` : ''}`
+  }
+  if (err instanceof Error && err.message) return `Could not reach open-live: ${err.message}`
+  return 'Delete failed'
 }
 
 const UPLOAD_REASON_TEXT: Record<RecordingUploadReason, string> = {

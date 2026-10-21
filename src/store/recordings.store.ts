@@ -5,12 +5,13 @@ import { ApiError, recordingsApi, type ApiRecording } from '@/lib/api'
 import { recordingsErrorMessage, sortRecordings } from '@/lib/recordings'
 
 /**
- * Recordings (open-live #42, #534; studio#220). Read-only: lists
+ * Recordings (open-live #42, #534, #550; studio#220, #229). Lists
  * `GET /api/v1/recordings`, or `GET /api/v1/productions/:id/recordings` when a
  * production filter is set, and keeps them newest first by `startedAt`.
  *
  * The URLs in the list expire (`RECORDING_PRESIGN_TTL_S`), so Play and Download
  * always go through `fetchFresh`, which re-reads the single recording.
+ * `deleteRecording` deletes one and drops it from the list on success.
  */
 export interface RecordingsLoadError {
   message: string
@@ -34,6 +35,8 @@ interface RecordingsActions {
   fetchList: () => Promise<void>
   /** Re-reads one recording for freshly signed URLs and updates it in the list. Rethrows on failure. */
   fetchFresh: (id: string) => Promise<ApiRecording>
+  /** Deletes one recording (object and entry) and removes it from the list. Rethrows on failure; the list is unchanged then. */
+  deleteRecording: (id: string) => Promise<void>
 }
 
 // Monotonic request id so a slower response for a previous filter never
@@ -96,6 +99,13 @@ export const useRecordingsStore = create<RecordingsState & RecordingsActions>()(
           if (idx >= 0) state.recordings[idx] = fresh
         })
         return fresh
+      },
+
+      deleteRecording: async (id) => {
+        await recordingsApi.delete(id)
+        set((state) => {
+          state.recordings = state.recordings.filter((r) => r.id !== id)
+        })
       },
     })),
     { name: 'recordings', enabled: import.meta.env.DEV },
