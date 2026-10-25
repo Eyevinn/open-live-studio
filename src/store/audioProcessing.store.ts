@@ -21,7 +21,9 @@ import {
  * vouched for — connect replay, a REST hydrate, an `applied: true` broadcast,
  * an `ACK executed` for our own command, or another operator's broadcast while
  * we have nothing in flight on that stage. A `NACK` reverts the rejected keys
- * from `known` back to `confirmed` and records an error for that stage.
+ * from `known` back to `confirmed` and records an error for that stage. A
+ * command that leaves without its own ACK/NACK (TTL expiry, reconnect) also
+ * reconciles its keys in `known` back to `confirmed`.
  *
  * Both maps hold PARTIAL params per stage; a missing key means the Strom default
  * (`defaultStageParams`), exactly like the server's persisted store.
@@ -66,7 +68,7 @@ interface AudioProcessingActions {
   ack: (cmdId: string) => boolean
   /** `NACK` for our command: revert and record the error. Returns false when the cmdId is not ours. */
   nack: (cmdId: string, error: string) => boolean
-  /** Forget in-flight commands; their ACK/NACK cannot arrive on a new socket. */
+  /** Forget in-flight commands (their ACK/NACK cannot arrive on a new socket) and reconcile `known` to `confirmed`. */
   clearPending: () => void
   /** Record a client-side error (e.g. a value that failed validation and was not sent). */
   setError: (elementId: string, stage: AudioProcStage, error: StageError | null) => void
@@ -138,10 +140,46 @@ export function omitFields(params: AudioProcParams, drop: Set<string>): AudioPro
   return out
 }
 
-function prunePending(pending: Record<string, PendingCmd>, now: number): void {
-  for (const [id, p] of Object.entries(pending)) {
-    if (now - p.sentAt > PENDING_TTL_MS) delete pending[id]
+/**
+ * Forget the in-flight commands in `ids` without an ACK/NACK of their own (TTL
+ * expiry, or a reconnect), and reconcile `known` back to `confirmed` for their
+ * keys that no remaining command on the same element:stage still covers.
+ *
+ * While a key is in flight `applyState` keeps the local value in `known` and
+ * only `confirmed` follows other operators' `applied` broadcasts. If the
+ * command's own ACK never arrives (the server's shared per-element:stage
+ * debounce superseded it, or the socket dropped), nothing else would ever pull
+ * `known` back to what the server holds.
+ */
+function dropPending(s: AudioProcessingState, ids: string[]): void {
+  const dropped: PendingCmd[] = []
+  for (const id of ids) {
+    const p = s.pending[id]
+    if (!p) continue
+    dropped.push(p)
+    delete s.pending[id]
   }
+  for (const p of dropped) {
+    const stillInFlight = new Set(
+      Object.values(s.pending)
+        .filter((q) => q.elementId === p.elementId && q.stage === p.stage)
+        .flatMap((q) => paramFieldIds(q.params)),
+    )
+    const keys = omitFields(p.params, stillInFlight)
+    if (Object.keys(keys).length === 0) continue
+    const rollback = revertParams(p.stage, keys, s.confirmed[p.elementId]?.[p.stage])
+    const known = (s.known[p.elementId] ??= {})
+    known[p.stage] = mergeStageParams(known[p.stage], rollback)
+  }
+}
+
+function prunePending(s: AudioProcessingState, now: number): void {
+  dropPending(
+    s,
+    Object.entries(s.pending)
+      .filter(([, p]) => now - p.sentAt > PENDING_TTL_MS)
+      .map(([id]) => id),
+  )
 }
 
 function hasPendingFor(pending: Record<string, PendingCmd>, elementId: string, stage: AudioProcStage): boolean {
@@ -168,7 +206,7 @@ export const useAudioProcessingStore = create<AudioProcessingState & AudioProces
 
       applyState: ({ elementId, stage, params, applied }) =>
         set((s) => {
-          prunePending(s.pending, Date.now())
+          prunePending(s, Date.now())
           // Keys this client still has in flight keep the local (newer) value: an
           // echo of an older frame from the same drag must not pull the control
           // back. The key's own ACK/NACK settles it.
@@ -207,8 +245,10 @@ export const useAudioProcessingStore = create<AudioProcessingState & AudioProces
       registerPending: (cmdId, elementId, stage, params) =>
         set((s) => {
           const now = Date.now()
-          prunePending(s.pending, now)
+          // Register first, so pruning an expired command on the same keys does
+          // not reconcile away the value this command is sending.
           s.pending[cmdId] = { elementId, stage, params, seq: ++seqCounter, sentAt: now }
+          prunePending(s, now)
         }),
 
       ack: (cmdId) => {
@@ -245,7 +285,7 @@ export const useAudioProcessingStore = create<AudioProcessingState & AudioProces
       },
 
       clearPending: () =>
-        set((s) => { s.pending = {} }),
+        set((s) => { dropPending(s, Object.keys(s.pending)) }),
 
       setError: (elementId, stage, error) =>
         set((s) => {

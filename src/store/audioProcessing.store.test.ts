@@ -83,5 +83,47 @@ describe('audio processing store', () => {
       expect(st().pending).toEqual({})
       expect(st().known.ch1?.gain).toEqual({ gain: 3 })
     })
+
+    it('reconciles known to confirmed when a command superseded by another operator expires (review #232)', () => {
+      st().localEdit('ch1', 'comp', { threshold: -30 })
+      st().registerPending('A1', 'ch1', 'comp', { threshold: -30 })
+      st().applyState({ elementId: 'ch1', stage: 'comp', params: { threshold: -30 }, applied: false }) // own echo
+      st().applyState({ elementId: 'ch1', stage: 'comp', params: { threshold: -45 }, applied: false }) // B supersedes
+      st().applyState({ elementId: 'ch1', stage: 'comp', params: { threshold: -45 }, applied: true })
+      // A1 is still in flight: the local value stays on screen for now.
+      expect(st().known.ch1?.comp).toEqual({ threshold: -30 })
+      vi.advanceTimersByTime(PENDING_TTL_MS + 1000)
+      st().applyState({ elementId: 'ch1', stage: 'comp', params: { ratio: 6 }, applied: true })
+      expect(st().pending).toEqual({})
+      expect(st().confirmed.ch1?.comp).toEqual({ threshold: -45, ratio: 6 })
+      expect(st().known.ch1?.comp).toEqual({ threshold: -45, ratio: 6 })
+      expect(st().known.ch1?.comp).toEqual(st().confirmed.ch1?.comp)
+    })
+
+    it('does not reconcile a key that a newer command still has in flight', () => {
+      st().applyState({ elementId: 'ch1', stage: 'comp', params: { threshold: -20, ratio: 2 }, applied: true })
+      st().localEdit('ch1', 'comp', { threshold: -30, ratio: 4 })
+      st().registerPending('A1', 'ch1', 'comp', { threshold: -30, ratio: 4 })
+      vi.advanceTimersByTime(PENDING_TTL_MS + 1)
+      st().localEdit('ch1', 'comp', { threshold: -35 })
+      st().registerPending('A2', 'ch1', 'comp', { threshold: -35 })
+      // A1 expired: ratio has nothing newer in flight and goes back to confirmed;
+      // threshold is covered by A2 and keeps the local value.
+      expect(Object.keys(st().pending)).toEqual(['A2'])
+      expect(st().known.ch1?.comp).toEqual({ threshold: -35, ratio: 2 })
+    })
+  })
+
+  it('clearPending (reconnect) reconciles in-flight keys to confirmed', () => {
+    st().applyState({ elementId: 'ch1', stage: 'comp', params: { threshold: -45 }, applied: true })
+    st().localEdit('ch1', 'comp', { threshold: -30 })
+    st().registerPending('A1', 'ch1', 'comp', { threshold: -30 })
+    // A never-stored stage reverts to the Strom default.
+    st().localEdit('ch1', 'gain', { gain: 6 })
+    st().registerPending('A2', 'ch1', 'gain', { gain: 6 })
+    st().clearPending()
+    expect(st().pending).toEqual({})
+    expect(st().known.ch1?.comp).toEqual({ threshold: -45 })
+    expect(st().known.ch1?.gain).toEqual({ gain: 0 })
   })
 })
