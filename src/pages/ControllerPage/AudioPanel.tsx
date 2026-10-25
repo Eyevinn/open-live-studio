@@ -1,8 +1,12 @@
-import { Fragment, useRef, useCallback, useState, useEffect, createContext, useContext } from 'react'
+import { Fragment, useRef, useCallback, useState, useEffect, useMemo, createContext, useContext } from 'react'
 import { useAudioStore } from '@/store/audio.store'
 import { useProductionStore } from '@/store/production.store'
 import { cn } from '@/lib/cn'
 import type { OutboundMessage } from '@/hooks/useControllerWs'
+import { ProcSetCoalescer } from '@/lib/audio-proc-sender'
+import { isChannelElement } from '@/lib/audio-processing'
+import { useAudioProcessingStore } from '@/store/audioProcessing.store'
+import { ProcessingPanel, useElementProcessingActive } from './ProcessingPanel'
 
 // ── EBU R128 Meter ────────────────────────────────────────────────────────────
 // Displays momentary LUFS bar + integrated LUFS readout + latching True Peak indicator.
@@ -269,7 +273,24 @@ const EMPTY_RECORD: Record<number, boolean> = {}
 
 // ── Channel strip ─────────────────────────────────────────────────────────────
 
-function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false, showAfl = false, showEbu = false, mixerInput = null, isPgm = false, isPvw: _isPvw = false, busColor = C_MAIN, grpBuses = [] }: {
+// Processing button on a strip: opens the slide-over; lit when any stage is active.
+function ProcButton({ elementId, label, open, onOpen }: { elementId: string; label: string; open: boolean; onOpen: () => void }) {
+  const active = useElementProcessingActive(elementId)
+  return (
+    <button
+      onClick={onOpen}
+      title={`${label} processing${active ? ' — active' : ''}`}
+      aria-label={`${label} processing`}
+      aria-expanded={open}
+      className="shrink-0 py-1 text-[9px] font-bold uppercase tracking-widest border-0 transition-colors cursor-pointer active:opacity-75"
+      style={{ width: 26, background: open ? '#0f766e' : '#18181b', color: active ? '#2dd4bf' : '#52525b' }}
+    >
+      FX
+    </button>
+  )
+}
+
+function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false, showAfl = false, showEbu = false, mixerInput = null, isPgm = false, isPvw: _isPvw = false, busColor = C_MAIN, grpBuses = [], onOpenProcessing, processingOpen = false }: {
   elementId: string
   label: string
   send: SendFn
@@ -284,6 +305,9 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
   busColor?: typeof C_MAIN
   /** Group buses to show assign buttons for (e.g. [1, 2]) */
   grpBuses?: number[]
+  /** Opens the processing slide-over for this strip (studio#231). Omitted → no FX button. */
+  onOpenProcessing?: () => void
+  processingOpen?: boolean
 }) {
   const level = useAudioStore((s) => s.levels[elementId] ?? 1.0)
   const muted = useAudioStore((s) => s.muted[elementId] ?? false)
@@ -596,6 +620,9 @@ function ChannelStrip({ elementId, label, send, showAfv = false, showPfl = false
             >
               AFV
             </button>
+          )}
+          {onOpenProcessing && (
+            <ProcButton elementId={elementId} label={label} open={processingOpen} onOpen={onOpenProcessing} />
           )}
         </div>
       </div>
@@ -1213,6 +1240,19 @@ export function AudioPanel({ send, numAuxBuses = 2, numGroups = 2, showEbuMain =
   // Extract selected AUX bus number from the active tab id, e.g. 'aux-2' → 2
   const activeAuxBus = activeTab.startsWith('aux-') ? parseInt(activeTab.slice(4), 10) : null
 
+  // Processing slide-over (studio#231). One coalescer per panel throttles
+  // AUDIO_PROC_SET per element:stage; anything still queued is sent on unmount.
+  const [procTarget, setProcTarget] = useState<{ elementId: string; label: string } | null>(null)
+  const coalescer = useMemo(() => new ProcSetCoalescer({
+    send,
+    onSent: (cmdId, elementId, stage, params) =>
+      useAudioProcessingStore.getState().registerPending(cmdId, elementId, stage, params),
+  }), [send])
+  useEffect(() => () => coalescer.dispose(), [coalescer])
+  const closeProcessing = useCallback(() => setProcTarget(null), [])
+  const toggleProcessing = (elementId: string, label: string) =>
+    setProcTarget((t) => (t?.elementId === elementId ? null : { elementId, label }))
+
   return (
     <FaderDimsCtx.Provider value={{ faderH: fH, faderContainerH: fCH }}>
     <div
@@ -1260,7 +1300,11 @@ export function AudioPanel({ send, numAuxBuses = 2, numGroups = 2, showEbuMain =
               {!collapsed.out && (
                 <div className="flex items-stretch shrink-0">
                   {mainElement ? (
-                    <ChannelStrip elementId="main" label="MAIN" send={send} showAfv={false} showEbu={showEbuMain} busColor={C_MAIN} />
+                    <ChannelStrip
+                      elementId="main" label="MAIN" send={send} showAfv={false} showEbu={showEbuMain} busColor={C_MAIN}
+                      onOpenProcessing={() => toggleProcessing('main', 'MAIN')}
+                      processingOpen={procTarget?.elementId === 'main'}
+                    />
                   ) : (
                     <NoContent label="NO OUT" />
                   )}
@@ -1304,6 +1348,8 @@ export function AudioPanel({ send, numAuxBuses = 2, numGroups = 2, showEbuMain =
                           isPvw={!!pvwInput && el.mixerInput === pvwInput}
                           busColor={C_IN}
                           grpBuses={grpBuses}
+                          onOpenProcessing={isChannelElement(el.elementId) ? () => toggleProcessing(el.elementId, el.label) : undefined}
+                          processingOpen={procTarget?.elementId === el.elementId}
                         />
                       ))
                     )}
@@ -1347,6 +1393,15 @@ export function AudioPanel({ send, numAuxBuses = 2, numGroups = 2, showEbuMain =
         </>
       )}
     </div>
+    {procTarget && (
+      <ProcessingPanel
+        key={procTarget.elementId}
+        elementId={procTarget.elementId}
+        label={procTarget.label}
+        coalescer={coalescer}
+        onClose={closeProcessing}
+      />
+    )}
     </FaderDimsCtx.Provider>
   )
 }

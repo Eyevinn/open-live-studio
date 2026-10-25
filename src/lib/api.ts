@@ -555,6 +555,13 @@ export const audioApi = {
       `/api/v1/productions/${encodeURIComponent(productionId)}/audio/${encodeURIComponent(elementId)}`,
     ),
 
+  /** Processing state for a channel ('chN') or 'main' — every valid stage, defaults overlaid (OL-25). */
+  getProcessing: (productionId: string, elementId: string) =>
+    request<{ element_id: string; processing: Record<string, unknown> }>(
+      `/api/v1/productions/${encodeURIComponent(productionId)}/audio/${encodeURIComponent(elementId)}/processing`,
+      { quiet: true },
+    ),
+
   updateElement: (productionId: string, elementId: string, body: { property: string; value: unknown }) =>
     request<{ element_id: string; properties: Record<string, unknown> }>(
       `/api/v1/productions/${encodeURIComponent(productionId)}/audio/${encodeURIComponent(elementId)}`,
