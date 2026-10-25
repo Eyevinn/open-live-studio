@@ -4,6 +4,8 @@ import { useProductionsStore } from '@/store/productions.store'
 import { useAudioStore } from '@/store/audio.store'
 import { useGuestsStore } from '@/store/guests.store'
 import { useToastStore } from '@/store/toast.store'
+import { useAudioProcessingStore } from '@/store/audioProcessing.store'
+import { parseProcStateFrame, type ProcSetMessage } from '@/lib/audio-processing'
 import { audioApi, type GuestState, type ReturnMode } from '@/lib/api'
 import { parseGuestHealth, guestHealthProblem } from '@/lib/guest-health'
 import { guestSlotNumber } from '@/lib/guest-slots'
@@ -90,6 +92,10 @@ export type OutboundMessage =
   | { type: 'DSK_TOGGLE'; layer: number; visible?: boolean }
   | { type: 'MACRO_EXEC'; macroId: string }
   | { type: 'AUDIO_SET'; elementId: string; property: 'volume' | 'mute'; value: number | boolean; ramp_ms?: number }
+  // Channel-strip / main-bus processing (OL-25, open-live#527; studio#231). Built
+  // only through `buildProcSetMessage` (src/lib/audio-processing.ts), which
+  // range-checks every value — the server rejects, never clamps.
+  | ProcSetMessage
   | { type: 'AFV_SET'; mixerInput: string; enabled: boolean }
   | { type: 'AFV_RAMP_SET'; rampUpMs: number; rampDownMs: number }
   | { type: 'PFL_SET'; elementId: string; enabled: boolean; volume?: number }
@@ -254,6 +260,8 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
     // production for the lifetime of this effect, so the session-level
     // keep-alive stands down and we never double the subscriber count (#139).
     acquireControllerConnection(productionId)
+    // Processing state is per production; the connect replay re-seeds it.
+    useAudioProcessingStore.getState().reset(productionId)
 
     let cancelled = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -285,6 +293,8 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
         reconnectCount = 0
         // A successful (re)connect clears any stale connection warning.
         actionsRef.current.removeToastsByTag(WS_TOAST_TAG)
+        // ACK/NACK for frames sent on a previous socket will never arrive.
+        useAudioProcessingStore.getState().clearPending()
       }
 
       ws.onmessage = (event) => {
@@ -573,6 +583,28 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
               a.setDeactivated(isIdle ? 'idle' : 'external')
               break
             }
+            case 'AUDIO_PROC_STATE': {
+              // Optimistic broadcast on AUDIO_PROC_SET, again with applied:true once
+              // Strom took it, and replayed on connect per non-default stage.
+              const frame = parseProcStateFrame(msg)
+              if (frame) useAudioProcessingStore.getState().applyState(frame)
+              break
+            }
+            case 'ACK':
+              // Only AUDIO_PROC_SET carries a cmdId from Studio today; `ack`
+              // ignores any cmdId it did not register.
+              if (msg['phase'] === 'executed' && typeof msg['cmdId'] === 'string') {
+                useAudioProcessingStore.getState().ack(msg['cmdId'] as string)
+              }
+              break
+            case 'NACK':
+              if (typeof msg['cmdId'] === 'string') {
+                useAudioProcessingStore.getState().nack(
+                  msg['cmdId'] as string,
+                  typeof msg['error'] === 'string' ? (msg['error'] as string) : 'Rejected by server',
+                )
+              }
+              break
             case 'ERROR':
               if (typeof msg['error'] === 'string') {
                 a.addToast(msg['error'])
