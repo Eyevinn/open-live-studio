@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
-import { ApiError, recordingsApi, type ApiRecording } from '@/lib/api'
+import { ApiError, recordingsApi, type ApiRecording, type RecordingKind, type RecordingListFilters } from '@/lib/api'
 import { recordingsErrorMessage, sortRecordings } from '@/lib/recordings'
 
 /**
@@ -12,6 +12,9 @@ import { recordingsErrorMessage, sortRecordings } from '@/lib/recordings'
  * The URLs in the list expire (`RECORDING_PRESIGN_TTL_S`), so Play and Download
  * always go through `fetchFresh`, which re-reads the single recording.
  * `deleteRecording` deletes one and drops it from the list on success.
+ *
+ * Input recordings (OL-32, studio#233): `kindFilter` and `inputFilter` narrow
+ * the list server-side with the `kind` / `mixerInput` query filters.
  */
 export interface RecordingsLoadError {
   message: string
@@ -27,11 +30,19 @@ interface RecordingsState {
   loadError: RecordingsLoadError | null
   /** True once a list for the current filter has succeeded. */
   loaded: boolean
+  /** `kind` filter (program or input recordings), or null for both. */
+  kindFilter: RecordingKind | null
+  /** `mixerInput` filter (one input's own recordings), or null. Cleared when the production filter changes. */
+  inputFilter: string | null
 }
 
 interface RecordingsActions {
   /** Sets the production filter (null = all) and reloads the list. */
   setProductionFilter: (productionId: string | null) => Promise<void>
+  /** Sets the `kind` filter (null = both) and reloads the list. */
+  setKindFilter: (kind: RecordingKind | null) => Promise<void>
+  /** Sets the `mixerInput` filter (null = all inputs) and reloads the list. */
+  setInputFilter: (mixerInput: string | null) => Promise<void>
   fetchList: () => Promise<void>
   /** Re-reads one recording for freshly signed URLs and updates it in the list. Rethrows on failure. */
   fetchFresh: (id: string) => Promise<ApiRecording>
@@ -51,11 +62,42 @@ export const useRecordingsStore = create<RecordingsState & RecordingsActions>()(
       isLoading: false,
       loadError: null,
       loaded: false,
+      kindFilter: null,
+      inputFilter: null,
 
       setProductionFilter: async (productionId) => {
         if (get().productionFilter !== productionId) {
           set((state) => {
             state.productionFilter = productionId
+            // Pad keys are per production.
+            state.inputFilter = null
+            state.recordings = []
+            state.loaded = false
+            state.loadError = null
+          })
+        }
+        await get().fetchList()
+      },
+
+      setKindFilter: async (kind) => {
+        if (get().kindFilter !== kind) {
+          set((state) => {
+            state.kindFilter = kind
+            // `mixerInput` implies `kind=input`.
+            if (kind === 'program') state.inputFilter = null
+            state.recordings = []
+            state.loaded = false
+            state.loadError = null
+          })
+        }
+        await get().fetchList()
+      },
+
+      setInputFilter: async (mixerInput) => {
+        if (get().inputFilter !== mixerInput) {
+          set((state) => {
+            state.inputFilter = mixerInput
+            if (mixerInput !== null && state.kindFilter === 'program') state.kindFilter = null
             state.recordings = []
             state.loaded = false
             state.loadError = null
@@ -66,12 +108,18 @@ export const useRecordingsStore = create<RecordingsState & RecordingsActions>()(
 
       fetchList: async () => {
         const seq = ++listRequestSeq
-        const filter = get().productionFilter
+        const { productionFilter: filter, kindFilter, inputFilter } = get()
+        const filters: RecordingListFilters = {
+          ...(kindFilter ? { kind: kindFilter } : {}),
+          ...(inputFilter ? { mixerInput: inputFilter } : {}),
+        }
+        const query = Object.keys(filters).length > 0 ? filters : undefined
         set((state) => { state.isLoading = true })
         try {
+          // Without filters, call exactly as before OL-32.
           const data = filter === null
-            ? await recordingsApi.list()
-            : await recordingsApi.listForProduction(filter)
+            ? await (query ? recordingsApi.list(query) : recordingsApi.list())
+            : await (query ? recordingsApi.listForProduction(filter, query) : recordingsApi.listForProduction(filter))
           if (seq !== listRequestSeq) return
           set((state) => {
             state.recordings = sortRecordings(Array.isArray(data) ? data : [])

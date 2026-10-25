@@ -18,6 +18,8 @@ import {
   downloadTarget,
   finishedDeactivations,
   formatDuration,
+  groupRecordingRows,
+  hasInputRecordings,
   isMixedContent,
   isPresignExpired,
   isUploading,
@@ -26,6 +28,9 @@ import {
   probePlaybackUrl,
   recordingDeleteErrorMessage,
   recordingFileName,
+  recordingInputOptions,
+  recordingKind,
+  recordingSourceLabel,
   recordingsErrorMessage,
   sortRecordings,
   uploadBanner,
@@ -351,5 +356,79 @@ describe('recordingDeleteErrorMessage', () => {
 
   it('a network failure says open-live could not be reached', () => {
     expect(recordingDeleteErrorMessage(new TypeError('Failed to fetch'))).toBe('Could not reach open-live: Failed to fetch')
+  })
+})
+
+describe('recordingsApi list filters (OL-32)', () => {
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('sends kind / mixerInput / activationId / sourceId as query parameters', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response('[]', { status: 200 })))
+    vi.stubGlobal('fetch', fetchMock)
+    await recordingsApi.list({ kind: 'input' })
+    await recordingsApi.listForProduction('prod-1', { mixerInput: 'video_in_2', activationId: 'flow-1', sourceId: 'Whip' })
+    await recordingsApi.listForProduction('prod-1', {})
+    expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
+      'http://test/api/v1/recordings?kind=input',
+      'http://test/api/v1/productions/prod-1/recordings?activationId=flow-1&mixerInput=video_in_2&sourceId=Whip',
+      'http://test/api/v1/productions/prod-1/recordings',
+    ])
+  })
+})
+
+describe('input recording labels (OL-32)', () => {
+  it('reads an absent kind as program', () => {
+    expect(recordingKind({})).toBe('program')
+    expect(recordingKind({ kind: 'input' })).toBe('input')
+    expect(recordingKind({ kind: 'future' })).toBe('future')
+  })
+
+  it('labels program, inputs by sourceName, and WHIP guests with their label', () => {
+    expect(recordingSourceLabel({})).toBe('Program')
+    expect(recordingSourceLabel({ kind: 'input', mixerInput: 'video_in_1', sourceName: 'Cam 2' })).toBe('Cam 2')
+    expect(recordingSourceLabel({ kind: 'input', mixerInput: 'video_in_15', sourceName: 'Guest 1 · In 16', guestLabel: 'Anna' }))
+      .toBe('Guest 1 · In 16 (Anna)')
+    expect(recordingSourceLabel({ kind: 'input', mixerInput: 'video_in_2' })).toBe('Input 3')
+  })
+
+  it('detects input recordings in a list', () => {
+    expect(hasInputRecordings([{}, { kind: 'program' }])).toBe(false)
+    expect(hasInputRecordings([{}, { kind: 'input' }])).toBe(true)
+  })
+
+  it('offers each recorded input once, in pad order, with its latest label', () => {
+    const opts = recordingInputOptions([
+      rec({ kind: 'input', mixerInput: 'video_in_10', sourceName: 'Cam 11', startedAt: '2026-10-01T10:00:00Z' }),
+      rec({ kind: 'input', mixerInput: 'video_in_2', sourceName: 'Old name', startedAt: '2026-10-01T10:00:00Z' }),
+      rec({ kind: 'input', mixerInput: 'video_in_2', sourceName: 'Cam 3', startedAt: '2026-10-02T10:00:00Z' }),
+      rec({}),
+    ])
+    expect(opts).toEqual([
+      { mixerInput: 'video_in_2', label: 'Cam 3 · Input 3' },
+      { mixerInput: 'video_in_10', label: 'Cam 11 · Input 11' },
+    ])
+  })
+})
+
+describe('groupRecordingRows (OL-32)', () => {
+  const prods = [{ id: 'prod-1', name: 'Show' }]
+  const at = (m: number) => `2026-10-25T18:${String(m).padStart(2, '0')}:00.000Z`
+
+  it('groups by activation, newest first, program before inputs in pad order then part', () => {
+    const list = [
+      rec({ id: 'a-in2', key: 'k1', activationId: 'flow-a', kind: 'input', mixerInput: 'video_in_10', sourceName: 'Cam 11', startedAt: at(1), partIndex: 0 }),
+      rec({ id: 'a-pgm1', key: 'k2', activationId: 'flow-a', kind: 'program', startedAt: at(6), partIndex: 1 }),
+      rec({ id: 'a-pgm0', key: 'k3', activationId: 'flow-a', kind: 'program', startedAt: at(1), partIndex: 0 }),
+      rec({ id: 'a-in0', key: 'k4', activationId: 'flow-a', kind: 'input', mixerInput: 'video_in_2', sourceName: 'Cam 3', startedAt: at(1), partIndex: 0 }),
+      rec({ id: 'b-pgm', key: 'k5', activationId: 'flow-b', startedAt: at(30) }),
+      rec({ id: 'old', key: 'k6', startedAt: at(59) }),
+    ]
+    const groups = groupRecordingRows(buildRecordingRows(list, prods, []))
+    expect(groups.map((g) => g.activationId ?? null)).toEqual(['flow-b', 'flow-a', null])
+    const a = groups[1]!
+    expect(a.rows.map((r) => r.recording.id)).toEqual(['a-pgm0', 'a-pgm1', 'a-in0', 'a-in2'])
+    expect(a.rows.map((r) => r.sourceLabel)).toEqual(['Program', 'Program', 'Cam 3', 'Cam 11'])
+    expect(a.startedAt).toBe(at(1))
+    expect(a.productionName).toBe('Show')
   })
 })

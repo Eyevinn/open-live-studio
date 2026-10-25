@@ -149,6 +149,45 @@ export interface ProductionSourceAssignment {
    * (`program-minus` default); v1 only ever sets `lowLatency: false`.
    */
   returnFeed?: { synced: 'program' | 'program-minus'; lowLatency?: boolean }
+  /**
+   * Record this input to its own files beside the program recording (OL-32,
+   * open-live `docs/specs/iso-input-recording.md` §2.1). Absent = `off`; the
+   * backend stores `off` as absent. Read at activation, so a change applies
+   * from the next activation. Toggle it with `productionsApi.setSourceRecord`:
+   * `POST .../sources` has replace semantics, so an assignment sent without
+   * `record` turns recording off for that input.
+   */
+  record?: InputRecordMode
+}
+
+/** `ProductionSourceAssignment.record` values Studio sends (`passthrough` is reserved and refused in v1). */
+export type InputRecordMode = 'off' | 'transcode'
+
+/** Response of `PUT /api/v1/productions/:id/sources/:mixerInput/record` (OL-32 §2.3, `SourceRecordResult`). */
+export interface SourceRecordResult {
+  mixerInput: string
+  sourceId: string
+  record: InputRecordMode
+  /** Always `next-activation` in v1: a running production keeps recording what it was activated with. */
+  appliesFrom: 'next-activation'
+  /** Whether the running activation records this input. `false` when the production is not live. */
+  currentlyRecording: boolean
+  /** `false` with `record: 'transcode'` means the next activation records nothing for this input (`input-recording-no-output`). */
+  recordingOutputAssigned: boolean
+  _rev: string
+}
+
+/** `reason` of a refused `record` setting (OL-32 `InputRecordingError`). */
+export type InputRecordingErrorReason = 'record-mode-unsupported' | 'record-source-unsupported' | 'record-cap-reached'
+
+/** One input the running activation records to its own files (`ProductionDoc.inputRecordings`, OL-32 §2.6). */
+export interface InputRecordingState {
+  /** Stored assignment key, never the compacted Strom pad. */
+  mixerInput: string
+  sourceId: string
+  /** The multiviewer label at activation. */
+  sourceName: string
+  streamType: 'whip' | 'srt' | 'efp'
 }
 
 export interface ProductionGraphicAssignment {
@@ -259,6 +298,10 @@ export interface ApiProduction {
   activationWarnings?: ActivationWarning[]
   /** Outcome of the latest deactivate that had a recording to upload (open-live #534). */
   lastRecordingUpload?: RecordingUploadSummary
+  /** Inputs the running activation records to their own files (OL-32). Set on activate, cleared on deactivate. */
+  inputRecordings?: InputRecordingState[]
+  /** Which Strom block records in the running activation (OL-32a). */
+  recorderType?: 'liverecorder' | 'recorder'
 }
 
 export interface ProductionConfig {
@@ -291,6 +334,8 @@ type RawProduction = {
   inputResolutions?: Array<{ width: number; height: number } | null>
   activationWarnings?: ActivationWarning[]
   lastRecordingUpload?: RecordingUploadSummary
+  inputRecordings?: InputRecordingState[]
+  recorderType?: 'liverecorder' | 'recorder'
 }
 
 function normalizeProduction(d: RawProduction): ApiProduction {
@@ -316,6 +361,8 @@ function normalizeProduction(d: RawProduction): ApiProduction {
     inputResolutions: d.inputResolutions,
     activationWarnings: d.activationWarnings,
     lastRecordingUpload: d.lastRecordingUpload,
+    inputRecordings: d.inputRecordings,
+    recorderType: d.recorderType,
   }
 }
 
@@ -356,6 +403,18 @@ export const productionsApi = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+
+  /**
+   * Sets or clears `record` on one assignment without touching the rest of it
+   * (OL-32 §2.3). Quiet: the Record toggle shows refusals (400
+   * `record-mode-unsupported` / `record-source-unsupported`, 409
+   * `record-cap-reached`) inline.
+   */
+  setSourceRecord: (id: string, mixerInput: string, record: InputRecordMode) =>
+    request<SourceRecordResult>(
+      `/api/v1/productions/${encodeURIComponent(id)}/sources/${encodeURIComponent(mixerInput)}/record`,
+      { method: 'PUT', body: JSON.stringify({ record }), quiet: true },
+    ),
 
   unassignSource: (id: string, mixerInput: string) =>
     request<void>(`/api/v1/productions/${encodeURIComponent(id)}/sources/${encodeURIComponent(mixerInput)}`, { method: 'DELETE', silentStatuses: [404] }),
@@ -964,6 +1023,51 @@ export interface ApiRecording {
   playbackUrl?: string
   downloadUrl?: string
   playbackUnavailable?: PlaybackUnavailableReason
+  /** The activation (Strom flow id) that recorded this part. Absent on older recordings. */
+  activationId?: string
+  /** Part number from the file name's `_%05d` suffix, from 0. */
+  partIndex?: number
+  /**
+   * `RecordingKind`: program recording or one input's own recording (OL-32). Read absent as
+   * `program`; other values may be added later and must be tolerated.
+   */
+  kind?: string
+  /** Input recordings only: stored assignment key (e.g. `video_in_2`). */
+  mixerInput?: string
+  /** Input recordings only: the recorded source (`Whip` for a WHIP input). */
+  sourceId?: string
+  /** Input recordings only: the multiviewer label at activation (a snapshot). */
+  sourceName?: string
+  /** Input recordings only: the source's type at activation. */
+  streamType?: 'whip' | 'srt' | 'efp'
+  /** WHIP inputs only: guest sessions on this input that overlap the part. */
+  guests?: Array<{ inviteId: string; label?: string; joinedAt: string; leftAt?: string }>
+  /** The first of `guests` with a label. */
+  guestLabel?: string
+  recorderType?: 'liverecorder' | 'recorder'
+  startedAtSource?: 'strom' | 'event' | 'chained' | 'filename'
+}
+
+export type RecordingKind = 'program' | 'input'
+
+/** Exact-match filters of the recordings list endpoints (OL-32 §2.4), combined with AND. */
+export interface RecordingListFilters {
+  activationId?: string
+  kind?: RecordingKind
+  /** `^video_in_\d{1,2}$`; implies `kind=input`. */
+  mixerInput?: string
+  sourceId?: string
+}
+
+function recordingQuery(filters: RecordingListFilters | undefined): string {
+  if (!filters) return ''
+  const params = new URLSearchParams()
+  if (filters.activationId) params.set('activationId', filters.activationId)
+  if (filters.kind) params.set('kind', filters.kind)
+  if (filters.mixerInput) params.set('mixerInput', filters.mixerInput)
+  if (filters.sourceId) params.set('sourceId', filters.sourceId)
+  const qs = params.toString()
+  return qs ? `?${qs}` : ''
 }
 
 /**
@@ -1003,10 +1107,14 @@ export interface RecordingUploadSummary {
 // Quiet: the Recordings tab and the player show every failure inline (with a
 // Retry / Reload link), so the global toast would show it a second time.
 export const recordingsApi = {
-  list: () => request<ApiRecording[]>('/api/v1/recordings', { quiet: true }),
+  list: (filters?: RecordingListFilters) =>
+    request<ApiRecording[]>(`/api/v1/recordings${recordingQuery(filters)}`, { quiet: true }),
 
-  listForProduction: (productionId: string) =>
-    request<ApiRecording[]>(`/api/v1/productions/${encodeURIComponent(productionId)}/recordings`, { quiet: true }),
+  listForProduction: (productionId: string, filters?: RecordingListFilters) =>
+    request<ApiRecording[]>(
+      `/api/v1/productions/${encodeURIComponent(productionId)}/recordings${recordingQuery(filters)}`,
+      { quiet: true },
+    ),
 
   /** Fetches one recording with freshly signed URLs. */
   get: (id: string) => request<ApiRecording>(`/api/v1/recordings/${encodeURIComponent(id)}`, { quiet: true }),

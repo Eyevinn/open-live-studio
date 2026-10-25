@@ -46,7 +46,7 @@ const api = vi.mocked(recordingsApi)
 
 beforeEach(() => {
   vi.clearAllMocks()
-  useRecordingsStore.setState({ recordings: [], productionFilter: null, isLoading: false, loadError: null, loaded: false })
+  useRecordingsStore.setState({ recordings: [], productionFilter: null, isLoading: false, loadError: null, loaded: false, kindFilter: null, inputFilter: null })
 })
 
 describe('useRecordingsStore.fetchList', () => {
@@ -185,5 +185,36 @@ describe('useRecordingsStore.deleteRecording', () => {
 
     await expect(useRecordingsStore.getState().deleteRecording('a')).rejects.toThrow('Storage refused')
     expect(useRecordingsStore.getState().recordings.map((r) => r.id)).toEqual(['a'])
+  })
+})
+
+describe('kind and input filters (OL-32, studio#233)', () => {
+  it('passes kind and mixerInput as query filters', async () => {
+    api.list.mockResolvedValue([])
+    api.listForProduction.mockResolvedValue([])
+    await useRecordingsStore.getState().setKindFilter('input')
+    expect(api.list).toHaveBeenLastCalledWith({ kind: 'input' })
+    await useRecordingsStore.getState().setProductionFilter('prod-1')
+    await useRecordingsStore.getState().setInputFilter('video_in_2')
+    expect(api.listForProduction).toHaveBeenLastCalledWith('prod-1', { kind: 'input', mixerInput: 'video_in_2' })
+  })
+
+  it('calls the list without filters exactly as before when none are set', async () => {
+    api.listForProduction.mockResolvedValue([])
+    await useRecordingsStore.getState().setProductionFilter('prod-1')
+    expect(api.listForProduction).toHaveBeenLastCalledWith('prod-1')
+  })
+
+  it('clears the input filter when the production changes, and on kind=program', async () => {
+    api.list.mockResolvedValue([])
+    api.listForProduction.mockResolvedValue([])
+    await useRecordingsStore.getState().setProductionFilter('prod-1')
+    await useRecordingsStore.getState().setInputFilter('video_in_2')
+    await useRecordingsStore.getState().setProductionFilter('prod-2')
+    expect(useRecordingsStore.getState().inputFilter).toBeNull()
+    await useRecordingsStore.getState().setInputFilter('video_in_1')
+    await useRecordingsStore.getState().setKindFilter('program')
+    expect(useRecordingsStore.getState().inputFilter).toBeNull()
+    expect(api.listForProduction).toHaveBeenLastCalledWith('prod-2', { kind: 'program' })
   })
 })

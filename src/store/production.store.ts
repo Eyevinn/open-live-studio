@@ -4,6 +4,7 @@ import { devtools } from 'zustand/middleware'
 import { useAudioStore } from './audio.store.js'
 import { usePipelineStore } from './pipeline.store.js'
 import { useGuestsStore } from './guests.store.js'
+import type { RecordingStateFrame } from '@/lib/input-recording'
 
 export type TransitionType =
   | 'fade' | 'dip_to_black'
@@ -153,6 +154,12 @@ interface ProductionState {
    * so the countdown stays accurate across re-renders and clock ticks.
    */
   idleWarning: { deadlineMs: number } | null
+  /**
+   * What the running activation records (`RECORDING_STATE`, OL-32 §2.8), keyed
+   * by stored mixerInput. Null until the first frame for this production; the
+   * production's `inputRecordings` stands in until then.
+   */
+  recordingState: RecordingStateFrame | null
 }
 
 interface ProductionActions {
@@ -188,6 +195,8 @@ interface ProductionActions {
   setDeactivated: (reason: 'idle' | 'external') => void
   /** Set (or clear with null) the pending idle-timeout warning shown in the mixer view. */
   setIdleWarning: (warning: { deadlineMs: number } | null) => void
+  /** Apply a `RECORDING_STATE` WS frame. */
+  applyRecordingState: (frame: RecordingStateFrame) => void
 }
 
 export const useProductionStore = create<ProductionState & ProductionActions>()(
@@ -218,6 +227,7 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
       deactivatedExternally: false,
       deactivationReason: null,
       idleWarning: null,
+      recordingState: null,
 
       // Actions
       cut: () =>
@@ -292,6 +302,7 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
           state.clipStates = {}
           state.idleWarning = null
           state.deactivationReason = null
+          state.recordingState = null
         })
         // Clear audio strips synchronously so the new production never renders with
         // a previous production's elements. React 18 batches these two store updates
@@ -377,6 +388,9 @@ export const useProductionStore = create<ProductionState & ProductionActions>()(
 
       setIdleWarning: (warning) =>
         set((state) => { state.idleWarning = warning }),
+
+      applyRecordingState: (frame) =>
+        set((state) => { state.recordingState = frame }),
     })),
     { name: 'production', enabled: import.meta.env.DEV },
   ),

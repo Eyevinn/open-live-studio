@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
 import { getProgramMode } from '@/store/programClock.store'
 import { Link, useNavigate } from 'react-router'
 import { useProductionsStore, type Production } from '@/store/productions.store'
@@ -19,6 +19,8 @@ import { Tooltip } from '@/components/ui/Tooltip'
 import { selectCls, inputCls, InfoTip, ConfigFieldGroup } from '@/components/ui/ProductionConfigFields'
 import { useIsPhone } from '@/hooks/usePhoneLayout'
 import { ONE_RECORDING_PER_PRODUCTION, RECORDING_SLOT_HELP, isRecordingOutput, recordingSlotConflict } from '@/lib/recordingOutput'
+import { RECORD_NO_OUTPUT_WARNING, hasRecordingOutputAssigned, isRecordableSource, recordingOutputMissing } from '@/lib/input-recording'
+import { RecordToggle } from './RecordToggle'
 
 // ---------------------------------------------------------------------------
 // Stream type labels — used for grouping source dropdowns
@@ -98,50 +100,55 @@ interface SlotRowProps {
   canRemove: boolean
   onChange: (sourceId: string) => void
   onRemove: () => void
+  /** Shown under the row, e.g. the Record toggle (studio#233). */
+  children?: ReactNode
 }
 
-function SlotRow({ index: _index, currentSourceId, excludeIds = [], canRemove, onChange, onRemove }: SlotRowProps) {
+function SlotRow({ index: _index, currentSourceId, excludeIds = [], canRemove, onChange, onRemove, children }: SlotRowProps) {
   const sources = useSourcesStore((s) => s.sources)
   return (
-    <div className="flex items-center gap-2">
-      <select value={currentSourceId} onChange={(e) => onChange(e.target.value)} className={`${selectCls} flex-1`}>
-        <option value="">— unassigned —</option>
-        {Object.entries(
-          sources.filter((s) => s.id === currentSourceId || !excludeIds.includes(s.id)).sort((a, b) => a.name.localeCompare(b.name)).reduce<Record<string, typeof sources>>((acc, s) => {
-            ;(acc[s.streamType] ??= []).push(s)
-            return acc
-          }, {}),
-        )
-          .sort(([a], [b]) => {
-            const ORDER = ['srt', 'efp', 'html', 'whip']
-            const ai = ORDER.indexOf(a), bi = ORDER.indexOf(b)
-            if (ai !== -1 && bi !== -1) return ai - bi
-            if (ai !== -1) return -1
-            if (bi !== -1) return 1
-            return a.localeCompare(b)
-          })
-          .map(([type, group]) => (
-            <optgroup key={type} label={STREAM_TYPE_LABELS[type as keyof typeof STREAM_TYPE_LABELS] ?? type.toUpperCase()}>
-              {group.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </optgroup>
-          ))}
-        <optgroup label="WebRTC">
-          <option value="Whip">WHIP Input</option>
-        </optgroup>
-        <optgroup label="Virtual Sources">
-          <option value="__test1__">Pinwheel</option>
-          <option value="__test2__">Colors</option>
-        </optgroup>
-      </select>
-      <button
-        type="button"
-        onClick={onRemove}
-        disabled={!canRemove}
-        className="text-[--color-text-muted] hover:text-red-400 disabled:opacity-20 disabled:cursor-not-allowed text-sm px-1 transition-colors"
-        title="Remove input"
-      >
-        ✕
-      </button>
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <select value={currentSourceId} onChange={(e) => onChange(e.target.value)} className={`${selectCls} flex-1`}>
+          <option value="">— unassigned —</option>
+          {Object.entries(
+            sources.filter((s) => s.id === currentSourceId || !excludeIds.includes(s.id)).sort((a, b) => a.name.localeCompare(b.name)).reduce<Record<string, typeof sources>>((acc, s) => {
+              ;(acc[s.streamType] ??= []).push(s)
+              return acc
+            }, {}),
+          )
+            .sort(([a], [b]) => {
+              const ORDER = ['srt', 'efp', 'html', 'whip']
+              const ai = ORDER.indexOf(a), bi = ORDER.indexOf(b)
+              if (ai !== -1 && bi !== -1) return ai - bi
+              if (ai !== -1) return -1
+              if (bi !== -1) return 1
+              return a.localeCompare(b)
+            })
+            .map(([type, group]) => (
+              <optgroup key={type} label={STREAM_TYPE_LABELS[type as keyof typeof STREAM_TYPE_LABELS] ?? type.toUpperCase()}>
+                {group.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </optgroup>
+            ))}
+          <optgroup label="WebRTC">
+            <option value="Whip">WHIP Input</option>
+          </optgroup>
+          <optgroup label="Virtual Sources">
+            <option value="__test1__">Pinwheel</option>
+            <option value="__test2__">Colors</option>
+          </optgroup>
+        </select>
+        <button
+          type="button"
+          onClick={onRemove}
+          disabled={!canRemove}
+          className="text-[--color-text-muted] hover:text-red-400 disabled:opacity-20 disabled:cursor-not-allowed text-sm px-1 transition-colors"
+          title="Remove input"
+        >
+          ✕
+        </button>
+      </div>
+      {children}
     </div>
   )
 }
@@ -186,9 +193,11 @@ interface GuestSlotsFieldProps {
   usedSourceIds: string[]
   onCountChange: (count: number) => void
   onSourceChange: (slotIndex: number, sourceId: string) => void
+  /** Rendered under each slot, e.g. the Record toggle (studio#233). */
+  renderSlotExtra?: (slotIndex: number) => ReactNode
 }
 
-function GuestSlotsField({ slots, maxAvailable, usedSourceIds, onCountChange, onSourceChange }: GuestSlotsFieldProps) {
+function GuestSlotsField({ slots, maxAvailable, usedSourceIds, onCountChange, onSourceChange, renderSlotExtra }: GuestSlotsFieldProps) {
   const sources = useSourcesStore((s) => s.sources)
   return (
     <div className="flex flex-col gap-2">
@@ -216,20 +225,23 @@ function GuestSlotsField({ slots, maxAvailable, usedSourceIds, onCountChange, on
         const known = sourceId === GUEST_SLOT_WHIP || options.some((s) => s.id === sourceId)
         const current = sources.find((s) => s.id === sourceId)
         return (
-          <div key={i} className="flex items-center gap-2">
-            <span className="text-xs text-[--color-text-muted] w-12 shrink-0">Slot {i + 1}</span>
-            <select value={sourceId} onChange={(e) => onSourceChange(i, e.target.value)} className={`${selectCls} flex-1`} aria-label={`Guest slot ${i + 1} source`}>
-              <option value={GUEST_SLOT_WHIP}>WHIP (guest camera)</option>
-              {RETURN_ONLY_STREAM_TYPES.map((type) => {
-                const group = options.filter((s) => s.streamType === type)
-                return group.length > 0 && (
-                  <optgroup key={type} label={`${STREAM_TYPE_LABELS[type]} (return only)`}>
-                    {group.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                  </optgroup>
-                )
-              })}
-              {!known && <option value={sourceId}>{current?.name ?? `${sourceId} (not in catalogue)`}</option>}
-            </select>
+          <div key={i} className="flex flex-col gap-1">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[--color-text-muted] w-12 shrink-0">Slot {i + 1}</span>
+              <select value={sourceId} onChange={(e) => onSourceChange(i, e.target.value)} className={`${selectCls} flex-1`} aria-label={`Guest slot ${i + 1} source`}>
+                <option value={GUEST_SLOT_WHIP}>WHIP (guest camera)</option>
+                {RETURN_ONLY_STREAM_TYPES.map((type) => {
+                  const group = options.filter((s) => s.streamType === type)
+                  return group.length > 0 && (
+                    <optgroup key={type} label={`${STREAM_TYPE_LABELS[type]} (return only)`}>
+                      {group.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </optgroup>
+                  )
+                })}
+                {!known && <option value={sourceId}>{current?.name ?? `${sourceId} (not in catalogue)`}</option>}
+              </select>
+            </div>
+            {renderSlotExtra?.(i)}
           </div>
         )
       })}
@@ -414,6 +426,33 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
   const sourceIds = new Set(sources.map((s) => s.id))
   const isValidSource = (sourceId: string) => sourceIds.has(sourceId) || sourceId in VIRTUAL_SOURCE_NAMES
 
+  // ISO input recording (OL-32, studio#233): one Record toggle per assigned
+  // input. It writes through `PUT .../sources/:mixerInput/record`, so it works
+  // while live too (applies from the next activation).
+  const hasRecOutput = hasRecordingOutputAssigned(outputList, catalogueOutputs)
+  const recordedNow = new Set((production.inputRecordings ?? []).map((r) => r.mixerInput))
+  function recordToggle(pad: string, sourceId: string, label?: string) {
+    if (!sourceId) return null
+    const stored = production.sources.find((s) => s.mixerInput === pad)
+    // Disabled until the assignment for this source is stored.
+    const record = stored && stored.sourceId === sourceId ? (stored.record ?? 'off') : null
+    const name = label ?? sources.find((s) => s.id === sourceId)?.name ?? VIRTUAL_SOURCE_NAMES[sourceId] ?? sourceId
+    return (
+      <RecordToggle
+        key={`${pad}:${sourceId}`}
+        productionId={production.id}
+        mixerInput={pad}
+        sourceLabel={name}
+        record={record}
+        recordable={isRecordableSource(sourceId, sources)}
+        isLive={isActive}
+        currentlyRecording={recordedNow.has(pad)}
+        hasRecordingOutput={hasRecOutput}
+      />
+    )
+  }
+  const guestSlotPad = (i: number) => guestSlotAssignments(production.sources)[i]?.mixerInput ?? guestSlotMixerInput(i)
+
   // Sort valid sources by their pad index and compact to contiguous 0-based indices.
   // Non-contiguous gaps arise when remove+shift backend writes partially fail.
   // Guest slots (returnFeed assignments) are excluded — they live in their own
@@ -439,7 +478,8 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
     validSources.forEach((s, i) => {
       const compactedPad = mixerInput(i)
       if (s.mixerInput !== compactedPad) {
-        void assignSource(production.id, { mixerInput: compactedPad, sourceId: s.sourceId })
+        // POST .../sources replaces the assignment: carry `record` (OL-32) along.
+        void assignSource(production.id, { mixerInput: compactedPad, sourceId: s.sourceId, ...(s.record === 'transcode' ? { record: s.record } : {}) })
         void unassignSource(production.id, s.mixerInput)
       }
     })
@@ -505,6 +545,10 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
     }
     delete newAssignments[mixerInput(slotCount - 1)]
 
+    // `record` (OL-32) of each pad before the shift, so a source keeps its
+    // setting when it moves down one pad (POST .../sources replaces it).
+    const recordBefore = new Map(production.sources.map((s) => [s.mixerInput, s.record]))
+
     setAssignments(newAssignments)
     setSlotCount((c) => c - 1)
 
@@ -514,8 +558,10 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
       const pad = mixerInput(i)
       const newSrc = newAssignments[pad]
       const oldSrc = assignments[pad]
-      if (newSrc && newSrc !== oldSrc) await assignSource(production.id, { mixerInput: pad, sourceId: newSrc })
-      else if (!newSrc && oldSrc) await unassignSource(production.id, pad)
+      const movedRecord = recordBefore.get(mixerInput(i + 1)) === 'transcode' && assignments[mixerInput(i + 1)] === newSrc
+      if (newSrc && newSrc !== oldSrc) {
+        await assignSource(production.id, { mixerInput: pad, sourceId: newSrc, ...(movedRecord ? { record: 'transcode' as const } : {}) })
+      } else if (!newSrc && oldSrc) await unassignSource(production.id, pad)
     }
   }
 
@@ -615,14 +661,21 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
                 <div className="flex flex-col gap-1.5">
                   {production.sources.filter((s) => !isGuestSlotAssignment(s)).length === 0
                     ? <span className="text-xs text-[--color-text-muted] italic">No sources assigned</span>
-                    : production.sources.filter((s) => !isGuestSlotAssignment(s)).map((s) => <SourceAssignmentBadge key={s.mixerInput} assignment={s} />)
+                    : production.sources.filter((s) => !isGuestSlotAssignment(s)).map((s) => (
+                        <div key={s.mixerInput} className="flex flex-col gap-0.5">
+                          <SourceAssignmentBadge assignment={s} />
+                          {recordToggle(s.mixerInput, s.sourceId)}
+                        </div>
+                      ))
                   }
                 </div>
               ) : (
                 <>
                   <div className="flex flex-col gap-2">
                     {Array.from({ length: slotCount }, (_, i) => (
-                      <SlotRow key={i} index={i} currentSourceId={assignments[mixerInput(i)] ?? ''} excludeIds={guestSlotSources} canRemove={slotCount > MIN_INPUTS} onChange={(sourceId) => void handleChange(i, sourceId)} onRemove={() => void handleRemove(i)} />
+                      <SlotRow key={i} index={i} currentSourceId={assignments[mixerInput(i)] ?? ''} excludeIds={guestSlotSources} canRemove={slotCount > MIN_INPUTS} onChange={(sourceId) => void handleChange(i, sourceId)} onRemove={() => void handleRemove(i)}>
+                        {recordToggle(mixerInput(i), assignments[mixerInput(i)] ?? '')}
+                      </SlotRow>
                     ))}
                   </div>
                   {slotCount < MAX_INPUTS - guestSlotCount && (
@@ -668,7 +721,12 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
                   ? <span className="text-xs text-[--color-text-muted] italic">None</span>
                   : (
                     <div className="flex flex-col gap-1.5">
-                      {guestSlotSources.map((sourceId, i) => <GuestSlotBadge key={i} slotIndex={i} sourceId={sourceId} />)}
+                      {guestSlotSources.map((sourceId, i) => (
+                        <div key={i} className="flex flex-col gap-0.5">
+                          <GuestSlotBadge slotIndex={i} sourceId={sourceId} />
+                          {recordToggle(guestSlotPad(i), sourceId, `Guest slot ${i + 1}`)}
+                        </div>
+                      ))}
                     </div>
                   )}
               </div>
@@ -679,6 +737,7 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
                 usedSourceIds={Object.values(assignments).filter(Boolean)}
                 onCountChange={(n) => void handleGuestSlotChange(n)}
                 onSourceChange={(i, sourceId) => void handleGuestSlotSourceChange(i, sourceId)}
+                renderSlotExtra={(i) => recordToggle(guestSlotPad(i), guestSlotSources[i] ?? '', `Guest slot ${i + 1}`)}
               />
             )}
 
@@ -1272,6 +1331,9 @@ export function ProductionsPanel() {
                     return <InlineCopyButton key={w.outputId} label={`WHEP OUT: ${out?.name ?? 'Output'}`} value={w.url} />
                   })}
                 </div>
+                {!isActive && recordingOutputMissing(prod.sources, (prod.outputAssignments ?? []).map((a) => a.outputId), outputs) && (
+                  <p role="alert" className="text-xs text-amber-400 mt-0.5">{RECORD_NO_OUTPUT_WARNING}</p>
+                )}
                 {statusError?.prodId === prod.id && (
                   <p className="text-xs text-red-400 mt-0.5">{statusError.message}</p>
                 )}

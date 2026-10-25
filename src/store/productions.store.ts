@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
-import { productionsApi, type ApiProduction, type ProductionSourceAssignment, type ProductionGraphicAssignment, type ProductionOutputAssignment, type RecordingUploadSummary } from '@/lib/api'
+import { productionsApi, type ApiProduction, type InputRecordMode, type InputRecordingState, type SourceRecordResult, type ProductionSourceAssignment, type ProductionGraphicAssignment, type ProductionOutputAssignment, type RecordingUploadSummary } from '@/lib/api'
 import type { ActivationWarning } from '@/lib/activation-warnings'
 
 export type ProductionStatus = 'active' | 'inactive' | 'activating'
@@ -34,6 +34,8 @@ export interface Production {
   inputResolutions?: Array<{ width: number; height: number } | null>
   activationWarnings?: ActivationWarning[]
   lastRecordingUpload?: RecordingUploadSummary
+  /** Inputs the running activation records to their own files (OL-32). */
+  inputRecordings?: InputRecordingState[]
 }
 
 interface ProductionsState {
@@ -60,6 +62,12 @@ interface ProductionsActions {
   updateAirTime: (id: string, airTime: string | null) => Promise<void>
   assignSource: (id: string, assignment: ProductionSourceAssignment) => Promise<void>
   unassignSource: (id: string, mixerInput: string) => Promise<void>
+  /**
+   * Sets or clears `record` on one assignment (OL-32,
+   * `PUT .../sources/:mixerInput/record`) and mirrors it on the stored
+   * assignment. Rethrows on failure; the assignment is unchanged then.
+   */
+  setSourceRecord: (id: string, mixerInput: string, record: InputRecordMode) => Promise<SourceRecordResult>
   assignGraphic: (id: string, assignment: ProductionGraphicAssignment) => Promise<void>
   unassignGraphic: (id: string, dskInput: string) => Promise<void>
   assignOutput: (id: string, outputId: string) => Promise<void>
@@ -90,6 +98,7 @@ function fromApi(p: ApiProduction): Production {
     inputResolutions: p.inputResolutions,
     activationWarnings: p.activationWarnings,
     lastRecordingUpload: p.lastRecordingUpload,
+    inputRecordings: p.inputRecordings,
   }
 }
 
@@ -141,6 +150,9 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
               prod.stromFlowId = updated.stromFlowId
               prod.whepEndpoint = updated.whepEndpoint
               prod.pgmWhepEndpoint = updated.pgmWhepEndpoint
+              // Set on activate, cleared on deactivate (OL-32).
+              prod.inputRecordings = updated.inputRecordings
+              if (updated.status === 'active') prod.activationWarnings = updated.activationWarnings
               if (updated.status === 'inactive') {
                 prod.whipEndpoints = undefined
                 prod.srtOutputUri = undefined
@@ -171,6 +183,8 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
                     prod.whipEndpoints = polled.whipEndpoints
                     prod.whepOutputUrls = polled.whepOutputUrls
                     prod.srtOutputUri = polled.srtOutputUri
+                    prod.inputRecordings = polled.inputRecordings
+                    if (polled.status === 'active') prod.activationWarnings = polled.activationWarnings
                   }
                 })
                 if (polled.status === 'activating') {
@@ -202,6 +216,7 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
             prod.whipEndpoints = undefined
             prod.srtOutputUri = undefined
             prod.whepOutputUrls = undefined
+            prod.inputRecordings = undefined
           }
         })
       },
@@ -250,6 +265,18 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
           const prod = state.productions.find((p) => p.id === id)
           if (prod) prod.sources = prod.sources.filter((s) => s.mixerInput !== mixerInput)
         })
+      },
+
+      setSourceRecord: async (id, mixerInput, record) => {
+        const result = await productionsApi.setSourceRecord(id, mixerInput, record)
+        set((state) => {
+          const assignment = state.productions.find((p) => p.id === id)?.sources.find((s) => s.mixerInput === mixerInput)
+          if (!assignment) return
+          // The backend stores `off` as absent (OL-32 §2.1).
+          if (result.record === 'transcode') assignment.record = 'transcode'
+          else delete assignment.record
+        })
+        return result
       },
 
       assignGraphic: async (id, assignment) => {
