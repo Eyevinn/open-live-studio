@@ -57,7 +57,17 @@ function ParamControl({ id, range, label, value, rejected, onChange }: {
   // lagging server echo (same pattern as LooksPanel's Slider, studio#181/#184).
   const [local, setLocal] = useState(value)
   const draggingRef = useRef(false)
+  // Latest store value, read when a drag ends: if `value` changed mid-drag (e.g.
+  // a NACK reverted an earlier frame of the same drag) the effect below skipped
+  // it, and nothing else would bring the slider back in line with the store.
+  const valueRef = useRef(value)
+  valueRef.current = value
   useEffect(() => { if (!draggingRef.current) setLocal(value) }, [value])
+  const endDrag = () => {
+    if (!draggingRef.current) return
+    draggingRef.current = false
+    setLocal(valueRef.current)
+  }
 
   const [draft, setDraft] = useState<string | null>(null)
   const draftNum = draft === null ? null : Number(draft)
@@ -81,8 +91,9 @@ function ParamControl({ id, range, label, value, rejected, onChange }: {
           value={valueToSlider(local, range)}
           aria-label={`${label} slider`}
           onPointerDown={() => { draggingRef.current = true }}
-          onPointerUp={() => { draggingRef.current = false }}
-          onBlur={() => { draggingRef.current = false }}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+          onBlur={endDrag}
           onChange={(e) => {
             const v = sliderToValue(Number(e.target.value), range)
             setLocal(v)

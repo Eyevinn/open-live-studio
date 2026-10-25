@@ -95,6 +95,26 @@ describe('ProcessingPanel', () => {
     expect(threshold.getAttribute('aria-invalid')).toBe('true')
   })
 
+  it('a rejection that lands mid-drag re-syncs the slider on release', () => {
+    useAudioProcessingStore.getState().applyState({ elementId: 'ch1', stage: 'comp', params: { threshold: -30 }, applied: true })
+    renderPanel('ch1', 'CAM 1')
+    const comp = within(screen.getByRole('region', { name: 'Compressor' }))
+    const slider = comp.getByLabelText('Threshold slider') as HTMLInputElement
+    const threshold = comp.getByLabelText('Threshold') as HTMLInputElement
+    fireEvent.pointerDown(slider)
+    fireEvent.change(slider, { target: { value: '900' } })
+    const cmdId = sent.at(-1)!.cmdId!
+    const dragged = threshold.value
+    expect(dragged).not.toBe('-30.0')
+
+    act(() => { useAudioProcessingStore.getState().nack(cmdId, 'no') })
+    // Still dragging: the control keeps the drag position.
+    expect(threshold.value).toBe(dragged)
+    fireEvent.pointerUp(slider)
+    expect(threshold.value).toBe('-30.0')
+    expect(useAudioProcessingStore.getState().known.ch1?.comp?.threshold).toBe(-30)
+  })
+
   it('renders a second operator\'s change live', () => {
     renderPanel('ch1', 'CAM 1')
     act(() => {
