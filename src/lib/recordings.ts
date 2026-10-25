@@ -64,6 +64,74 @@ export function formatStartedAt(iso: string): string {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleString()
 }
 
+// ─── Program vs input recordings (studio#233, OL-32) ─────────────────────────
+
+/** Label of the program recording in the Source column. */
+export const PROGRAM_LABEL = 'Program'
+
+/** Group heading for parts recorded before `activationId` existed. */
+export const NO_ACTIVATION_LABEL = 'Earlier recordings (no activation id)'
+
+/**
+ * `kind` of a recording: absent and `program` read as `program` (the backend
+ * backfills older docs, OL-32 §3.4); any value added later is kept as sent.
+ */
+export function recordingKind(r: Pick<ApiRecording, 'kind'>): string {
+  return r.kind === undefined ? 'program' : r.kind
+}
+
+export function isInputRecording(r: Pick<ApiRecording, 'kind'>): boolean {
+  return r.kind === 'input'
+}
+
+/** "Input N" (1-based) for a stored mixerInput such as `video_in_2`, else the raw value. */
+export function mixerInputLabel(mixerInput: string): string {
+  const m = /^video_in_(\d{1,2})$/.exec(mixerInput)
+  return m ? `Input ${parseInt(m[1]!, 10) + 1}` : mixerInput
+}
+
+/**
+ * Source column: "Program" for program parts; for an input, the multiviewer
+ * label at activation (`sourceName`), with the WHIP guest's name
+ * (`guestLabel`) when there is one.
+ */
+export function recordingSourceLabel(
+  r: Pick<ApiRecording, 'kind' | 'sourceName' | 'mixerInput' | 'guestLabel'>,
+): string {
+  const kind = recordingKind(r)
+  if (kind === 'program') return PROGRAM_LABEL
+  if (kind !== 'input') return kind
+  const base = r.sourceName?.trim() || (r.mixerInput ? mixerInputLabel(r.mixerInput) : 'Input')
+  const guest = r.guestLabel?.trim()
+  return guest && !base.includes(guest) ? `${base} (${guest})` : base
+}
+
+/** True when the list holds at least one input recording; the tab then groups by activation. */
+export function hasInputRecordings(list: ReadonlyArray<Pick<ApiRecording, 'kind'>>): boolean {
+  return list.some(isInputRecording)
+}
+
+/** Input-filter options: each recorded `mixerInput` with its latest label, in pad order. */
+export function recordingInputOptions(
+  list: ReadonlyArray<Pick<ApiRecording, 'kind' | 'mixerInput' | 'sourceName' | 'guestLabel' | 'startedAt'>>,
+): Array<{ mixerInput: string; label: string }> {
+  const latest = new Map<string, { label: string; at: number }>()
+  for (const r of list) {
+    if (!isInputRecording(r) || !r.mixerInput) continue
+    const at = startedAtMs(r)
+    const prev = latest.get(r.mixerInput)
+    if (!prev || at >= prev.at) latest.set(r.mixerInput, { label: r.sourceName?.trim() || mixerInputLabel(r.mixerInput), at })
+  }
+  return [...latest.entries()]
+    .sort(([a], [b]) => padNumber(a) - padNumber(b))
+    .map(([mixerInput, { label }]) => ({ mixerInput, label: `${label} · ${mixerInputLabel(mixerInput)}` }))
+}
+
+function padNumber(mixerInput: string | undefined): number {
+  const m = mixerInput ? /(\d+)$/.exec(mixerInput) : null
+  return m ? parseInt(m[1]!, 10) : Number.MAX_SAFE_INTEGER
+}
+
 /** One row of the Recordings table, joined with production and storage names. */
 export interface RecordingRow {
   recording: ApiRecording
@@ -72,6 +140,66 @@ export interface RecordingRow {
   /** False when the production no longer exists ("Deleted production"). */
   productionExists: boolean
   storage: string
+  /** "Program", or the input's source name (and guest label). */
+  sourceLabel: string
+}
+
+/** One activation's files: program parts first, then each input's parts. */
+export interface RecordingGroup {
+  /** `<productionId>/<activationId>`, or `<productionId>/` for parts without an activation id. */
+  key: string
+  activationId?: string
+  productionName: string
+  productionExists: boolean
+  /** Earliest `startedAt` in the group (ISO), the activation's start. */
+  startedAt: string
+  rows: RecordingRow[]
+}
+
+/**
+ * Groups rows by `activationId` (OL-32 §8), newest activation first. Within a
+ * group: program before inputs, inputs by pad number, then `partIndex`, then
+ * `startedAt`. Parts without an activation id share one group per production,
+ * listed after the activations.
+ */
+export function groupRecordingRows(rows: readonly RecordingRow[]): RecordingGroup[] {
+  const groups = new Map<string, RecordingGroup>()
+  for (const row of rows) {
+    const r = row.recording
+    const key = `${r.productionId}/${r.activationId ?? ''}`
+    let g = groups.get(key)
+    if (!g) {
+      g = {
+        key,
+        ...(r.activationId ? { activationId: r.activationId } : {}),
+        productionName: row.productionName,
+        productionExists: row.productionExists,
+        startedAt: r.startedAt,
+        rows: [],
+      }
+      groups.set(key, g)
+    }
+    if (startedAtMs(r) < startedAtMs({ startedAt: g.startedAt })) g.startedAt = r.startedAt
+    g.rows.push(row)
+  }
+  const kindRank = (r: ApiRecording) => (isInputRecording(r) ? 1 : 0)
+  for (const g of groups.values()) {
+    g.rows.sort((a, b) => {
+      const ra = a.recording, rb = b.recording
+      return (
+        kindRank(ra) - kindRank(rb) ||
+        padNumber(ra.mixerInput) - padNumber(rb.mixerInput) ||
+        (ra.partIndex ?? 0) - (rb.partIndex ?? 0) ||
+        startedAtMs(ra) - startedAtMs(rb) ||
+        ra.key.localeCompare(rb.key)
+      )
+    })
+  }
+  return [...groups.values()].sort((a, b) => {
+    if (!a.activationId !== !b.activationId) return a.activationId ? -1 : 1
+    const d = startedAtMs({ startedAt: b.startedAt }) - startedAtMs({ startedAt: a.startedAt })
+    return d !== 0 && !Number.isNaN(d) ? d : a.key.localeCompare(b.key)
+  })
 }
 
 /**
@@ -93,6 +221,7 @@ export function buildRecordingRows(
       productionName: name ?? `${DELETED_PRODUCTION} (${r.productionId})`,
       productionExists: name !== undefined,
       storage: recordingStorageLabel(r.connectionId, connections),
+      sourceLabel: recordingSourceLabel(r),
     }
   })
 }

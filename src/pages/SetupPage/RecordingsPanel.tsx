@@ -14,7 +14,12 @@ import {
   finishedDeactivations,
   formatDuration,
   formatStartedAt,
+  groupRecordingRows,
+  hasInputRecordings,
+  isInputRecording,
   isUploading,
+  NO_ACTIVATION_LABEL,
+  recordingInputOptions,
   playbackUnavailableMessage,
   recordingDeleteErrorMessage,
   recordingsErrorMessage,
@@ -38,11 +43,16 @@ interface Props {
  * confirmation (`DELETE /api/v1/recordings/:id`, open-live #550). A failed
  * delete keeps the row and shows the reason in the row's error line. No
  * rename, upload, bulk delete or undo.
+ *
+ * Input recordings (studio#233, OL-32): when the list holds any, rows are
+ * grouped by activation (program first, then each input, labelled by source
+ * name and guest label) and can be filtered by kind and by input. A list
+ * without input recordings renders exactly as before.
  */
 export function RecordingsPanel({ initialProductionId = null }: Props) {
   const {
-    recordings, productionFilter, isLoading, loadError, loaded,
-    setProductionFilter, fetchList, fetchFresh, deleteRecording,
+    recordings, productionFilter, isLoading, loadError, loaded, kindFilter, inputFilter,
+    setProductionFilter, setKindFilter, setInputFilter, fetchList, fetchFresh, deleteRecording,
   } = useRecordingsStore()
   const productions = useProductionsStore((s) => s.productions)
   const pendingStatus = useProductionsStore((s) => s.pendingStatus)
@@ -58,6 +68,24 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
   const [confirmDelete, setConfirmDelete] = useState<RecordingRow | null>(null)
   /** Recordings with a delete request in flight. */
   const [deletingIds, setDeletingIds] = useState<ReadonlySet<string>>(() => new Set())
+  /**
+   * Inputs seen in any list for the current production filter, so the Input
+   * filter keeps offering them while the list is narrowed to one of them.
+   */
+  const [knownInputs, setKnownInputs] = useState<{ scope: string | null; options: ReadonlyMap<string, string> }>(
+    () => ({ scope: null, options: new Map() }),
+  )
+  useEffect(() => {
+    setKnownInputs((prev) => {
+      const base = prev.scope === productionFilter ? prev.options : new Map<string, string>()
+      const found = recordingInputOptions(recordings)
+      if (prev.scope === productionFilter && found.every((o) => base.get(o.mixerInput) === o.label)) return prev
+      const next = new Map(base)
+      for (const o of found) next.set(o.mixerInput, o.label)
+      return { scope: productionFilter, options: next }
+    })
+  }, [recordings, productionFilter])
+  const inputOptions = knownInputs.scope === productionFilter ? knownInputs.options : new Map<string, string>()
 
   useEffect(() => {
     void fetchProductions()
@@ -157,6 +185,69 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
   }
 
   const showEmpty = loaded && !loadError && rows.length === 0
+  // Program-only lists keep the flat table (#233 AC 4).
+  const grouped = hasInputRecordings(recordings)
+  const groups = useMemo(() => (grouped ? groupRecordingRows(rows) : []), [grouped, rows])
+  const showInputFilters = inputOptions.size > 0 || kindFilter !== null || inputFilter !== null
+  const sortedInputOptions = [...inputOptions.entries()]
+
+  function renderRow(row: RecordingRow) {
+    const r = row.recording
+    const playable = canPlay(r)
+    const deleting = deletingIds.has(r.id)
+    const rowError = rowErrors.get(r.id)
+    return (
+      <tr key={r.id} className="border-t border-[--color-border] align-top">
+        <td className="py-1.5 pr-3 font-mono text-[--color-text-primary] break-all">
+          {row.fileName}
+          {!playable && (
+            <p className="mt-0.5 font-sans text-[--color-text-muted]">{playbackUnavailableMessage(r)}</p>
+          )}
+          {rowError && (
+            <p role="alert" className="mt-0.5 font-sans text-red-400">{rowError}</p>
+          )}
+        </td>
+        {grouped && (
+          <td className={`py-1.5 pr-3 ${isInputRecording(r) ? 'text-[--color-text-primary]' : 'text-[--color-text-muted]'}`}>
+            {row.sourceLabel}
+            {r.partIndex !== undefined && <span className="ml-1 font-mono text-[--color-text-muted]">#{r.partIndex + 1}</span>}
+          </td>
+        )}
+        <td className={`py-1.5 pr-3 ${row.productionExists ? 'text-[--color-text-primary]' : 'text-[--color-text-muted] italic'}`}>
+          {row.productionName}
+        </td>
+        <td className="py-1.5 pr-3 text-[--color-text-muted] whitespace-nowrap">{formatStartedAt(r.startedAt)}</td>
+        <td className="py-1.5 pr-3 font-mono text-[--color-text-muted]">{formatDuration(r.durationMs)}</td>
+        <td className="py-1.5 pr-3 font-mono text-[--color-text-muted] whitespace-nowrap">
+          {r.sizeBytes !== undefined ? formatSize(r.sizeBytes) : '—'}
+        </td>
+        <td className="py-1.5 pr-3 text-[--color-text-muted]">{row.storage}</td>
+        <td className="py-1.5 whitespace-nowrap text-right">
+          <Button size="sm" variant="ghost" disabled={!playable || deleting} onClick={() => { setRowError(r.id, null); setPlaying(row) }}>
+            Play
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={!playable || deleting || downloadingId === r.id}
+            onClick={() => void handleDownload(row)}
+          >
+            {downloadingId === r.id ? 'Preparing…' : 'Download'}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="hover:text-red-400"
+            disabled={deleting || downloadingId === r.id}
+            aria-busy={deleting || undefined}
+            onClick={() => { setRowError(r.id, null); setConfirmDelete(row) }}
+          >
+            {deleting ? 'Deleting…' : 'Delete'}
+          </Button>
+        </td>
+      </tr>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-3">
@@ -182,6 +273,38 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
             <option value={productionFilter}>Deleted production ({productionFilter})</option>
           )}
         </select>
+        {showInputFilters && (
+          <>
+            <label className="text-xs text-[--color-text-muted]" htmlFor="recordings-kind-filter">Files</label>
+            <select
+              id="recordings-kind-filter"
+              value={kindFilter ?? ''}
+              onChange={(e) => void setKindFilter(e.target.value === 'program' || e.target.value === 'input' ? e.target.value : null)}
+              className={`${inputCls} w-32 py-1`}
+            >
+              <option value="">Program and inputs</option>
+              <option value="program">Program</option>
+              <option value="input">Inputs</option>
+            </select>
+          </>
+        )}
+        {showInputFilters && productionFilter !== null && kindFilter !== 'program' && (
+          <>
+            <label className="text-xs text-[--color-text-muted]" htmlFor="recordings-input-filter">Input</label>
+            <select
+              id="recordings-input-filter"
+              value={inputFilter ?? ''}
+              onChange={(e) => void setInputFilter(e.target.value || null)}
+              className={`${inputCls} w-48 py-1`}
+            >
+              <option value="">All inputs</option>
+              {sortedInputOptions.map(([mi, label]) => (
+                <option key={mi} value={mi}>{label}</option>
+              ))}
+              {inputFilter && !inputOptions.has(inputFilter) && <option value={inputFilter}>{inputFilter}</option>}
+            </select>
+          </>
+        )}
         <Button size="sm" variant="ghost" onClick={() => void fetchList()} disabled={isLoading}>Refresh</Button>
       </div>
 
@@ -224,6 +347,7 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
             <thead>
               <tr className="text-[--color-text-muted] uppercase tracking-wider">
                 <th className="py-1.5 pr-3 font-medium">File</th>
+                {grouped && <th className="py-1.5 pr-3 font-medium">Source</th>}
                 <th className="py-1.5 pr-3 font-medium">Production</th>
                 <th className="py-1.5 pr-3 font-medium">Started</th>
                 <th className="py-1.5 pr-3 font-medium">Duration</th>
@@ -232,59 +356,21 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
                 <th className="py-1.5 font-medium" />
               </tr>
             </thead>
-            <tbody>
-              {rows.map((row) => {
-                const r = row.recording
-                const playable = canPlay(r)
-                const deleting = deletingIds.has(r.id)
-                const rowError = rowErrors.get(r.id)
-                return (
-                  <tr key={r.id} className="border-t border-[--color-border] align-top">
-                    <td className="py-1.5 pr-3 font-mono text-[--color-text-primary] break-all">
-                      {row.fileName}
-                      {!playable && (
-                        <p className="mt-0.5 font-sans text-[--color-text-muted]">{playbackUnavailableMessage(r)}</p>
-                      )}
-                      {rowError && (
-                        <p role="alert" className="mt-0.5 font-sans text-red-400">{rowError}</p>
-                      )}
-                    </td>
-                    <td className={`py-1.5 pr-3 ${row.productionExists ? 'text-[--color-text-primary]' : 'text-[--color-text-muted] italic'}`}>
-                      {row.productionName}
-                    </td>
-                    <td className="py-1.5 pr-3 text-[--color-text-muted] whitespace-nowrap">{formatStartedAt(r.startedAt)}</td>
-                    <td className="py-1.5 pr-3 font-mono text-[--color-text-muted]">{formatDuration(r.durationMs)}</td>
-                    <td className="py-1.5 pr-3 font-mono text-[--color-text-muted] whitespace-nowrap">
-                      {r.sizeBytes !== undefined ? formatSize(r.sizeBytes) : '—'}
-                    </td>
-                    <td className="py-1.5 pr-3 text-[--color-text-muted]">{row.storage}</td>
-                    <td className="py-1.5 whitespace-nowrap text-right">
-                      <Button size="sm" variant="ghost" disabled={!playable || deleting} onClick={() => { setRowError(r.id, null); setPlaying(row) }}>
-                        Play
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        disabled={!playable || deleting || downloadingId === r.id}
-                        onClick={() => void handleDownload(row)}
-                      >
-                        {downloadingId === r.id ? 'Preparing…' : 'Download'}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="hover:text-red-400"
-                        disabled={deleting || downloadingId === r.id}
-                        aria-busy={deleting || undefined}
-                        onClick={() => { setRowError(r.id, null); setConfirmDelete(row) }}
-                      >
-                        {deleting ? 'Deleting…' : 'Delete'}
-                      </Button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
+            {grouped
+              ? groups.map((g) => (
+                  <tbody key={g.key} aria-label={`Activation ${g.activationId ?? 'unknown'}`}>
+                    <tr className="border-t-2 border-[--color-border-strong]">
+                      <th colSpan={8} scope="rowgroup" className="pt-3 pb-1 font-medium normal-case tracking-normal text-[--color-text-primary]">
+                        {g.activationId ? `${g.productionName} — activation of ${formatStartedAt(g.startedAt)}` : `${g.productionName} — ${NO_ACTIVATION_LABEL}`}
+                        <span className="ml-2 font-normal text-[--color-text-muted]">
+                          {g.rows.length} {g.rows.length === 1 ? 'file' : 'files'}
+                        </span>
+                      </th>
+                    </tr>
+                    {g.rows.map(renderRow)}
+                  </tbody>
+                ))
+              : <tbody>{rows.map(renderRow)}</tbody>}
           </table>
         </div>
       )}
@@ -295,6 +381,12 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
             <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
               <dt className="text-[--color-text-muted]">Production</dt>
               <dd className="text-[--color-text-primary] break-all">{confirmDelete.productionName}</dd>
+              {isInputRecording(confirmDelete.recording) && (
+                <>
+                  <dt className="text-[--color-text-muted]">Source</dt>
+                  <dd className="text-[--color-text-primary] break-all">{confirmDelete.sourceLabel}</dd>
+                </>
+              )}
               <dt className="text-[--color-text-muted]">Started</dt>
               <dd className="text-[--color-text-primary]">{formatStartedAt(confirmDelete.recording.startedAt)}</dd>
               <dt className="text-[--color-text-muted]">Size</dt>
@@ -315,7 +407,9 @@ export function RecordingsPanel({ initialProductionId = null }: Props) {
       {playing && (
         <RecordingPlayerModal
           recording={playing.recording}
-          title={`${playing.productionName} — ${formatStartedAt(playing.recording.startedAt)}`}
+          title={isInputRecording(playing.recording)
+            ? `${playing.productionName} · ${playing.sourceLabel} — ${formatStartedAt(playing.recording.startedAt)}`
+            : `${playing.productionName} — ${formatStartedAt(playing.recording.startedAt)}`}
           onClose={() => setPlaying(null)}
         />
       )}

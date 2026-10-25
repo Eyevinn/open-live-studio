@@ -9,7 +9,9 @@ import { useRef, useCallback, useState, useEffect } from 'react'
 import { MutedMicIcon } from '@/components/ui/MutedMicIcon'
 import { GuestDroppedBadge } from '@/components/ui/GuestDroppedBadge'
 import { guestHealthProblem, type GuestHealthFailure } from '@/lib/guest-health'
-import { audioStreamWarningsByInput } from '@/lib/activation-warnings'
+import { audioStreamWarningsByInput, inputRecordingWarningsByInput } from '@/lib/activation-warnings'
+import { recordedInputSet } from '@/lib/input-recording'
+import { RecordingIndicator } from '@/components/ui/RecordingIndicator'
 
 const DURATION_PRESETS_MS = [500, 1000, 2000]
 const TRANSITION_TYPES: TransitionType[] = [
@@ -96,11 +98,11 @@ function NoBgBadge({ emphasized }: { emphasized?: boolean }) {
 /** Amber marker on an input tile whose selected audio stream was not applied at
  *  activation (`audio-stream-not-applied`, open-live#516 / ADR-010). The full
  *  backend message is the tile's tooltip. */
-function AudioStreamWarningBadge({ emphasized }: { emphasized?: boolean }) {
+function AudioStreamWarningBadge({ emphasized, label = 'Audio stream not applied' }: { emphasized?: boolean; label?: string }) {
   return (
     <span
       role="img"
-      aria-label="Audio stream not applied"
+      aria-label={label}
       className={cn(
         'absolute bottom-0.5 right-0.5 leading-none pointer-events-none select-none',
         emphasized ? 'text-amber-300' : 'text-amber-400',
@@ -201,6 +203,20 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
   const guests = useGuestsStore((s) => s.guests)
   const guestHealth = useGuestsStore((s) => s.health)
   const audioStreamWarnings = audioStreamWarningsByInput(production)
+  // ISO input recording (OL-32, studio#233): REC mark from RECORDING_STATE,
+  // and the input-recording-* activation warnings for inputs set to record
+  // that this activation does not record.
+  const recordingState = useProductionStore((s) => s.recordingState)
+  const recordedInputs = recordedInputSet(recordingState, production)
+  const recordingWarnings = inputRecordingWarningsByInput(production)
+  const tileWarning = (mixerInput: string) => {
+    const audio = audioStreamWarnings.get(mixerInput) ?? []
+    const rec = recordingWarnings.get(mixerInput) ?? []
+    return {
+      title: [...audio, ...rec].join('\n') || (recordedInputs.has(mixerInput) ? 'Recording this input' : undefined),
+      badgeLabel: audio.length > 0 ? (rec.length > 0 ? 'Activation warnings' : 'Audio stream not applied') : rec.length > 0 ? 'Input not recorded' : undefined,
+    }
+  }
 
   const VIRTUAL_SOURCE_NAMES: Record<string, string> = {
     '__test1__': 'PINWHEEL',
@@ -259,12 +275,13 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
               const isOnPgmRow = pgmInput === slot.mixerInput
               const muted = mutedMixerInputs?.has(slot.mixerInput)
               const failure = guestHealth[slot.mixerInput]
-              const audioWarning = audioStreamWarnings.get(slot.mixerInput)?.join('\n')
+              const warning = tileWarning(slot.mixerInput)
+              const recorded = recordedInputs.has(slot.mixerInput)
               return (
                 <button
                   key={slot.mixerInput}
                   disabled
-                  title={audioWarning}
+                  title={warning.title}
                   className={cn(
                     'relative btn-hardware flex-1 min-w-14 px-1.5 py-0 text-[10px] font-bold break-words border cursor-default select-none flex items-center justify-center tracking-wide',
                     isOnPgmRow
@@ -276,7 +293,8 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
                   {slot.name}
                   {muted && <MutedMicIcon emphasized={isOnPgmRow} className="absolute top-0.5 right-0.5" size={8} />}
                   {droppedMixerInputs?.has(slot.mixerInput) && <GuestDroppedBadge emphasized={isOnPgmRow} className="absolute top-0.5 left-0.5" size={8} />}
-                  {audioWarning && <AudioStreamWarningBadge emphasized={isOnPgmRow} />}
+                  {warning.badgeLabel && <AudioStreamWarningBadge emphasized={isOnPgmRow} label={warning.badgeLabel} />}
+                  {recorded && <RecordingIndicator emphasized={isOnPgmRow} />}
                   {failure && <GuestHealthStrip failure={failure} />}
                 </button>
               )
@@ -320,13 +338,14 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
               const isActive = pvwInput === slot.mixerInput
               const muted = mutedMixerInputs?.has(slot.mixerInput)
               const failure = guestHealth[slot.mixerInput]
-              const audioWarning = audioStreamWarnings.get(slot.mixerInput)?.join('\n')
+              const warning = tileWarning(slot.mixerInput)
+              const recorded = recordedInputs.has(slot.mixerInput)
               return (
                 <button
                   key={slot.mixerInput}
                   onClick={() => !isOnPgm && onSelectPvw(slot.mixerInput)}
                   disabled={isOnPgm}
-                  title={audioWarning}
+                  title={warning.title}
                   className={cn(
                     'relative btn-hardware flex-1 min-w-14 px-1.5 py-0 text-[10px] font-bold break-words border transition-all tracking-wide cursor-pointer flex items-center justify-center',
                     isActive
@@ -340,7 +359,8 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
                   {slot.name}
                   {muted && <MutedMicIcon emphasized={isActive || isOnPgm} className="absolute top-0.5 right-0.5" size={8} />}
                   {droppedMixerInputs?.has(slot.mixerInput) && <GuestDroppedBadge emphasized={isActive || isOnPgm} className="absolute top-0.5 left-0.5" size={8} />}
-                  {audioWarning && <AudioStreamWarningBadge emphasized={isActive || isOnPgm} />}
+                  {warning.badgeLabel && <AudioStreamWarningBadge emphasized={isActive || isOnPgm} label={warning.badgeLabel} />}
+                  {recorded && <RecordingIndicator emphasized={isActive || isOnPgm} />}
                   {failure && <GuestHealthStrip failure={failure} />}
                 </button>
               )

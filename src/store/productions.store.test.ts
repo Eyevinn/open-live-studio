@@ -14,6 +14,7 @@ vi.mock('@/lib/api', () => ({
     deactivate: vi.fn(),
     assignSource: vi.fn(),
     unassignSource: vi.fn(),
+    setSourceRecord: vi.fn(),
     assignGraphic: vi.fn(),
     unassignGraphic: vi.fn(),
     assignOutput: vi.fn(),
@@ -251,5 +252,43 @@ describe('useProductionsStore activationWarnings (open-live#516)', () => {
     useProductionsStore.getState().markInactive('a')
 
     expect(audioStreamWarningsByInput(prod()).size).toBe(0)
+  })
+})
+
+describe('setSourceRecord (OL-32, studio#233)', () => {
+  const api = vi.mocked(productionsApi)
+  const result = (record: 'off' | 'transcode') => ({
+    mixerInput: 'video_in_1', sourceId: 'cam', record, appliesFrom: 'next-activation' as const,
+    currentlyRecording: false, recordingOutputAssigned: true, _rev: '2-a',
+  })
+
+  beforeEach(() => {
+    useProductionsStore.setState({
+      productions: [makeProduction({ sources: [{ sourceId: 'cam', mixerInput: 'video_in_1' }, { sourceId: 'other', mixerInput: 'video_in_0' }] })],
+    })
+  })
+
+  it('stores record on the assignment and returns the result', async () => {
+    api.setSourceRecord.mockResolvedValueOnce(result('transcode'))
+    await expect(useProductionsStore.getState().setSourceRecord('p1', 'video_in_1', 'transcode')).resolves.toEqual(result('transcode'))
+    expect(api.setSourceRecord).toHaveBeenCalledWith('p1', 'video_in_1', 'transcode')
+    const sources = useProductionsStore.getState().productions[0]!.sources
+    expect(sources.find((s) => s.mixerInput === 'video_in_1')).toEqual({ sourceId: 'cam', mixerInput: 'video_in_1', record: 'transcode' })
+    expect(sources.find((s) => s.mixerInput === 'video_in_0')).toEqual({ sourceId: 'other', mixerInput: 'video_in_0' })
+  })
+
+  it('stores off as an absent field', async () => {
+    api.setSourceRecord.mockResolvedValueOnce(result('transcode')).mockResolvedValueOnce(result('off'))
+    await useProductionsStore.getState().setSourceRecord('p1', 'video_in_1', 'transcode')
+    await useProductionsStore.getState().setSourceRecord('p1', 'video_in_1', 'off')
+    const a = useProductionsStore.getState().productions[0]!.sources.find((s) => s.mixerInput === 'video_in_1')!
+    expect('record' in a).toBe(false)
+  })
+
+  it('leaves the assignment unchanged and rethrows on failure', async () => {
+    api.setSourceRecord.mockRejectedValueOnce(new Error('409'))
+    await expect(useProductionsStore.getState().setSourceRecord('p1', 'video_in_1', 'transcode')).rejects.toThrow('409')
+    const a = useProductionsStore.getState().productions[0]!.sources.find((s) => s.mixerInput === 'video_in_1')!
+    expect(a.record).toBeUndefined()
   })
 })

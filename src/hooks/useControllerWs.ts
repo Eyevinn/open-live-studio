@@ -9,6 +9,7 @@ import { parseProcStateFrame, type ProcSetMessage } from '@/lib/audio-processing
 import { audioApi, type GuestState, type ReturnMode } from '@/lib/api'
 import { parseGuestHealth, guestHealthProblem } from '@/lib/guest-health'
 import { guestSlotNumber } from '@/lib/guest-slots'
+import { parseRecordingStateFrame } from '@/lib/input-recording'
 import { getApiToken, wsAuthProtocols } from '@/lib/sat'
 
 import { BASE } from '@/lib/base'
@@ -568,6 +569,14 @@ export function useControllerWs(productionId: string | null): (msg: OutboundMess
               // or renewed activity); dismiss the mixer-view warning.
               a.setIdleWarning(null)
               break
+            case 'RECORDING_STATE': {
+              // What the running activation records (OL-32, open-live
+              // docs/controller-websocket.md). Keyed by the stored mixerInput;
+              // `program: false, inputs: []` arrives on deactivate.
+              const frame = parseRecordingStateFrame(msg)
+              if (frame) useProductionStore.getState().applyRecordingState(frame)
+              break
+            }
             case 'PRODUCTION_DEACTIVATED': {
               if (productionId) a.markInactive(productionId)
               a.resetSourceOffsets()
