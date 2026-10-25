@@ -46,7 +46,7 @@ export function isRecordableSource(
   return type !== undefined && RECORDABLE_STREAM_TYPES.includes(type)
 }
 
-function errorReason(body: unknown): string | undefined {
+export function errorReason(body: unknown): string | undefined {
   if (body && typeof body === 'object' && 'reason' in body) {
     const reason = (body as { reason: unknown }).reason
     return typeof reason === 'string' ? reason : undefined

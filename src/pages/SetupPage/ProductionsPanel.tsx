@@ -21,6 +21,7 @@ import { useIsPhone } from '@/hooks/usePhoneLayout'
 import { ONE_RECORDING_PER_PRODUCTION, RECORDING_SLOT_HELP, isRecordingOutput, recordingSlotConflict } from '@/lib/recordingOutput'
 import { RECORD_NO_OUTPUT_WARNING, hasRecordingOutputAssigned, isRecordableSource, recordingOutputMissing } from '@/lib/input-recording'
 import { RecordToggle } from './RecordToggle'
+import { assignmentsByPad, compactSources, shiftAssignments, sourceMoveErrorMessage, syncRemoveShift, type SourceMoveOps } from '@/lib/source-moves'
 
 // ---------------------------------------------------------------------------
 // Stream type labels — used for grouping source dropdowns
@@ -366,7 +367,7 @@ interface OptionsModalProps {
 }
 
 function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
-  const { assignSource, unassignSource, assignGraphic, unassignGraphic, updateValues, updateName, assignOutput, unassignOutput } = useProductionsStore()
+  const { assignSource, unassignSource, setSourceRecord, fetchAll, assignGraphic, unassignGraphic, updateValues, updateName, assignOutput, unassignOutput } = useProductionsStore()
   const sources = useSourcesStore((s) => s.sources)
   const graphics = useGraphicsStore((s) => s.graphics)
   const catalogueOutputs = useOutputsStore((s) => s.outputs)
@@ -472,17 +473,31 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
     Math.max(MIN_INPUTS, validSources.length)
   )
 
+  // Shown when a remove-shift or compaction could not be saved completely.
+  const [sourceMoveError, setSourceMoveError] = useState<string | null>(null)
+  const sourceMoveOps: SourceMoveOps = {
+    assign: (a) => assignSource(production.id, a),
+    unassign: (pad) => unassignSource(production.id, pad),
+    setRecord: (pad, record) => setSourceRecord(production.id, pad, record),
+  }
+  // After a failed move, show the pads as the backend now has them (the store
+  // mirrors every write that succeeded) instead of the optimistic shift.
+  async function showSavedSources(err: unknown) {
+    setSourceMoveError(sourceMoveErrorMessage(err))
+    await fetchAll()
+    const saved = useProductionsStore.getState().productions.find((p) => p.id === production.id)?.sources ?? production.sources
+    const kept = saved.filter((s) => isValidSource(s.sourceId) && !isGuestSlotAssignment(s))
+    const highest = Math.max(-1, ...kept.map((s) => parseInt(/(\d+)$/.exec(s.mixerInput)?.[1] ?? '0', 10)))
+    setAssignments(assignmentsByPad(kept))
+    setSlotCount(Math.max(MIN_INPUTS, highest + 1))
+  }
+
   // On open: fix any non-contiguous pad indices in the DB (ghost cleanup is handled server-side on source deletion).
+  // Sequential, and `record` (OL-32) is re-applied only after the old pad is
+  // cleared, so the record cap is never exceeded (see source-moves.ts).
   useEffect(() => {
-    // Re-assign any sources that moved to a new contiguous pad index
-    validSources.forEach((s, i) => {
-      const compactedPad = mixerInput(i)
-      if (s.mixerInput !== compactedPad) {
-        // POST .../sources replaces the assignment: carry `record` (OL-32) along.
-        void assignSource(production.id, { mixerInput: compactedPad, sourceId: s.sourceId, ...(s.record === 'transcode' ? { record: s.record } : {}) })
-        void unassignSource(production.id, s.mixerInput)
-      }
-    })
+    if (!validSources.some((s, i) => s.mixerInput !== mixerInput(i))) return
+    void compactSources(validSources, sourceMoveOps).then((err) => (err ? showSavedSources(err) : undefined))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const [gfxAssignments, setGfxAssignments] = useState<Record<string, string>>(() =>
     Object.fromEntries((production.graphicAssignments ?? []).map((g) => [g.dskInput, g.graphicId]))
@@ -536,33 +551,20 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
     if (slotCount <= MIN_INPUTS) return
 
     // Shift all assignments after the removed index down by 1, clear the last slot
-    const newAssignments = { ...assignments }
-    for (let i = index; i < slotCount - 1; i++) {
-      const next = mixerInput(i + 1)
-      const curr = mixerInput(i)
-      if (newAssignments[next]) { newAssignments[curr] = newAssignments[next] }
-      else { delete newAssignments[curr] }
-    }
-    delete newAssignments[mixerInput(slotCount - 1)]
-
+    const newAssignments = shiftAssignments(assignments, index, slotCount)
     // `record` (OL-32) of each pad before the shift, so a source keeps its
     // setting when it moves down one pad (POST .../sources replaces it).
     const recordBefore = new Map(production.sources.map((s) => [s.mixerInput, s.record]))
 
     setAssignments(newAssignments)
     setSlotCount((c) => c - 1)
+    setSourceMoveError(null)
 
     // Sync backend for every slot that changed — sequential to avoid CouchDB 409 conflicts
-    // when multiple writes race on the same document revision.
-    for (let i = index; i < slotCount; i++) {
-      const pad = mixerInput(i)
-      const newSrc = newAssignments[pad]
-      const oldSrc = assignments[pad]
-      const movedRecord = recordBefore.get(mixerInput(i + 1)) === 'transcode' && assignments[mixerInput(i + 1)] === newSrc
-      if (newSrc && newSrc !== oldSrc) {
-        await assignSource(production.id, { mixerInput: pad, sourceId: newSrc, ...(movedRecord ? { record: 'transcode' as const } : {}) })
-      } else if (!newSrc && oldSrc) await unassignSource(production.id, pad)
-    }
+    // when multiple writes race on the same document revision. `record` is
+    // re-applied after the moves, so the record cap is never exceeded.
+    const err = await syncRemoveShift(assignments, newAssignments, index, slotCount, recordBefore, sourceMoveOps)
+    if (err) await showSavedSources(err)
   }
 
   async function handleGfxChange(dskInput: string, graphicId: string) {
@@ -657,6 +659,7 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
                 <span className="text-xs uppercase tracking-wider text-orange-500">Sources</span>
                 <InfoTip text="Camera feeds and other inputs assigned to mixer slots. Each source connects to a video input on the vision mixer." />
               </div>
+              {sourceMoveError && <p role="alert" className="text-xs text-red-400">{sourceMoveError}</p>}
               {isActive ? (
                 <div className="flex flex-col gap-1.5">
                   {production.sources.filter((s) => !isGuestSlotAssignment(s)).length === 0

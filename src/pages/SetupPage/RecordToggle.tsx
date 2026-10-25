@@ -85,7 +85,8 @@ export function RecordToggle({
       </div>
       {!recordable && !on && <p className="text-[10px] text-[--color-text-muted] italic">{RECORD_UNSUPPORTED_SOURCE}</p>}
       {error && <p role="alert" className="text-[10px] text-red-400">{error}</p>}
-      {result?.appliesFrom === 'next-activation' && (
+      {/* With the toggle (#233 scope 1): the setting is read at activation. */}
+      {(on || result?.appliesFrom === 'next-activation') && (
         <p role="note" className="text-[10px] text-[--color-text-muted]">{isLive ? RECORD_LIVE_NOTE : RECORD_APPLIES_NOTE}</p>
       )}
       {noOutput && <p role="alert" className="text-[10px] text-amber-400">{RECORD_NO_OUTPUT_WARNING}</p>}

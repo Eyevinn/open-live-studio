@@ -61,6 +61,16 @@ describe('RecordToggle', () => {
     await screen.findByText(RECORD_APPLIES_NOTE)
   })
 
+  it('shows the next-activation note whenever the toggle is on, before any change', () => {
+    renderToggle({ record: 'transcode' })
+    expect(screen.getByText(RECORD_APPLIES_NOTE)).toBeTruthy()
+  })
+
+  it('shows no note while the toggle is off and untouched', () => {
+    renderToggle()
+    expect(screen.queryByText(RECORD_APPLIES_NOTE)).toBeNull()
+  })
+
   it('uses the live note while the production is live', async () => {
     setSourceRecord.mockResolvedValueOnce(result())
     renderToggle({ isLive: true })
