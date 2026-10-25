@@ -226,6 +226,9 @@ export const useAudioProcessingStore = create<AudioProcessingState & AudioProces
       hydrate: (productionId, elementId, processing) =>
         set((s) => {
           if (s.productionId !== productionId) return
+          // Expire stale commands first: there is no timer, and a lingering
+          // expired command would make the loop below skip its stage forever.
+          prunePending(s, Date.now())
           for (const stage of AUDIO_PROC_STAGES) {
             if (!stageAllowedOnElement(stage, elementId) || !(stage in processing)) continue
             if (hasPendingFor(s.pending, elementId, stage)) continue

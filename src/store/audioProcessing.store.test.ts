@@ -100,6 +100,20 @@ describe('audio processing store', () => {
       expect(st().known.ch1?.comp).toEqual(st().confirmed.ch1?.comp)
     })
 
+    it('hydrate expires a superseded command with no trailing frame (review #232 C1)', () => {
+      st().localEdit('ch1', 'comp', { threshold: -30 })
+      st().registerPending('A1', 'ch1', 'comp', { threshold: -30 })
+      st().applyState({ elementId: 'ch1', stage: 'comp', params: { threshold: -30 }, applied: false })
+      st().applyState({ elementId: 'ch1', stage: 'comp', params: { threshold: -45 }, applied: false })
+      st().applyState({ elementId: 'ch1', stage: 'comp', params: { threshold: -45 }, applied: true })
+      vi.advanceTimersByTime(PENDING_TTL_MS + 1000)
+      // Close and reopen FX: hydrate runs, no processing frame has arrived since.
+      st().hydrate('p1', 'ch1', { comp: { threshold: -45 } })
+      expect(st().pending).toEqual({})
+      expect(st().confirmed.ch1?.comp).toEqual({ threshold: -45 })
+      expect(st().known.ch1?.comp).toEqual({ threshold: -45 })
+    })
+
     it('does not reconcile a key that a newer command still has in flight', () => {
       st().applyState({ elementId: 'ch1', stage: 'comp', params: { threshold: -20, ratio: 2 }, applied: true })
       st().localEdit('ch1', 'comp', { threshold: -30, ratio: 4 })
