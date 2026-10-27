@@ -188,7 +188,8 @@ function StageSection({ elementId, stage, onChange }: {
       )}
       {stage === 'limiter' && (
         <p className="text-[9px] mb-1 text-amber-400/80">
-          The limiter currently acts before the master fader (Eyevinn/strom#1023), so raising the master can still clip.
+          {/* Eyevinn/strom#1023 */}
+          The limiter currently acts before the master fader, so raising the master can still clip.
         </p>
       )}
       {error && (

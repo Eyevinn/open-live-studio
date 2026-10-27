@@ -361,12 +361,20 @@ function OutputSlotRow({ value, slotIndex, usedIds, canRemove, onChange, onRemov
 // Production options modal — sources, template, endpoints
 // ---------------------------------------------------------------------------
 
+/**
+ * Footer shown while the production is live. "Record this input" stays editable
+ * while live (it applies from the next activation, OL-32); everything else is
+ * read-only (OL-40).
+ */
+export const LIVE_OPTIONS_FOOTER =
+  'This production is live. Only \u201cRecord this input\u201d can be changed, and it applies from the next activation. Deactivate the production to change anything else.'
+
 interface OptionsModalProps {
   production: Production
   onClose: () => void
 }
 
-function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
+export function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
   const { assignSource, unassignSource, setSourceRecord, fetchAll, assignGraphic, unassignGraphic, updateValues, updateName, assignOutput, unassignOutput } = useProductionsStore()
   const sources = useSourcesStore((s) => s.sources)
   const graphics = useGraphicsStore((s) => s.graphics)
@@ -611,7 +619,7 @@ function ProductionOptionsModal({ production, onClose }: OptionsModalProps) {
       className="max-w-6xl"
       footer={
         <div className="flex items-center justify-between">
-          {isActive && <span className="text-xs text-[--color-text-muted] italic">Deactivate this production to make changes.</span>}
+          {isActive && <span className="text-xs text-[--color-text-muted] italic">{LIVE_OPTIONS_FOOTER}</span>}
           <Button variant="active" onClick={() => { if (valuesDirty) void updateValues(production.id, configValues); onClose() }} className="ml-auto">Done</Button>
         </div>
       }

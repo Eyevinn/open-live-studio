@@ -53,7 +53,9 @@ describe('ProcessingPanel', () => {
     renderPanel('main', 'MAIN')
     expect(screen.queryByRole('region', { name: 'Gate' })).toBeNull()
     expect(screen.getByRole('region', { name: 'Limiter' })).toBeTruthy()
-    expect(screen.getByText(/before the master fader \(Eyevinn\/strom#1023\)/)).toBeTruthy()
+    const note = screen.getByText(/acts before the master fader/)
+    expect(note.textContent).toBe('The limiter currently acts before the master fader, so raising the master can still clip.')
+    expect(note.textContent).not.toMatch(/strom#|Eyevinn\//)
   })
 
   it('enabling the compressor sends AUDIO_PROC_SET and reset sends the defaults', () => {
