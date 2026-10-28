@@ -124,6 +124,39 @@ describe('connectTalkback', () => {
     expect(FakePeerConnection.instances[0]!.closed).toBe(true)
   })
 
+  it('fails a 201 with no readable Location (cross-origin, not CORS-exposed): closes the PC and warns', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { fetch, calls } = makeTalkbackFetch((call) =>
+      // What the browser hands back when `Location` is not in Access-Control-Expose-Headers.
+      call.method === 'POST' ? new Response('v=0 answer', { status: 201, headers: { 'Content-Type': 'application/sdp' } }) : undefined,
+    )
+    vi.stubGlobal('fetch', fetch)
+    const err = await connectTalkback({ kind: 'whip', productionId: 'p1', guestId: 'g1', track: new FakeTrack('mic') as unknown as MediaStreamTrack })
+      .catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(TalkbackError)
+    expect(err).toMatchObject({ status: 0 })
+    expect((err as Error).message).toMatch(/Location/)
+    const pc = FakePeerConnection.instances[0]!
+    expect(pc.closed).toBe(true)
+    expect(pc.remoteDescription).toBeNull()
+    expect(calls.filter((c) => c.method === 'POST')).toHaveLength(1)
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/without a readable Location/))
+    warn.mockRestore()
+  })
+
+  it('warns when the DELETE on close fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const { fetch } = makeTalkbackFetch((call) => {
+      if (call.method === 'DELETE') throw new TypeError('Failed to fetch')
+      return undefined
+    })
+    vi.stubGlobal('fetch', fetch)
+    const session = await connectTalkback({ kind: 'whep', productionId: 'p1', guestId: 'g1' })
+    await expect(session.close()).resolves.toBe(0)
+    expect(warn).toHaveBeenCalledWith(expect.stringMatching(/DELETE whep session failed/), expect.any(TypeError))
+    warn.mockRestore()
+  })
+
   it('maps a network failure to status 0', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch') }))
     await expect(connectTalkback({ kind: 'whep', productionId: 'p1', guestId: 'g1' })).rejects.toMatchObject({ status: 0 })

@@ -121,9 +121,9 @@ export interface TalkbackSession {
   pc: RTCPeerConnection
   /** WHIP only: the audio sender, for `replaceTrack` on a mic change. */
   sender: RTCRtpSender | null
-  /** Absolute session resource URL from `Location`, used for DELETE. */
-  resourceUrl: string | null
-  /** Close the PC and DELETE the crew session. Resolves with the DELETE status (0 = none/failed). */
+  /** Absolute session resource URL from `Location`, used for DELETE (a connect without one fails). */
+  resourceUrl: string
+  /** Close the PC and DELETE the crew session. Resolves with the DELETE status (0 = failed, warned). */
   close: () => Promise<number>
 }
 
@@ -185,14 +185,24 @@ export async function connectTalkback(opts: ConnectTalkbackOptions): Promise<Tal
       throw new TalkbackError(message, status)
     }
 
+    // Without a readable `Location` the session can never be DELETEd, so it would
+    // leak on the guest's intercom line. Cross-origin, `Location` is only readable
+    // when open-live exposes it via `Access-Control-Expose-Headers` (open-live#607).
+    // Treat it as a failed connect (inline "unavailable") instead of a silent leak.
     const location = response.headers.get('Location')
-    let resourceUrl: string | null = null
-    if (location) {
-      try {
-        resourceUrl = new URL(location, url).toString()
-      } catch {
-        resourceUrl = location
-      }
+    if (!location) {
+      // eslint-disable-next-line no-console -- the server-side session is orphaned; make it diagnosable
+      console.warn(
+        `[talkback] ${kind} POST returned 201 without a readable Location; the crew session cannot be deleted. ` +
+          'Check that open-live exposes Location via CORS (Access-Control-Expose-Headers).',
+      )
+      throw new TalkbackError('Talkback: server response has no readable Location (CORS expose-headers?)', 0)
+    }
+    let resourceUrl: string
+    try {
+      resourceUrl = new URL(location, url).toString()
+    } catch {
+      resourceUrl = location
     }
 
     const answer = await response.text()
@@ -205,16 +215,14 @@ export async function connectTalkback(opts: ConnectTalkbackOptions): Promise<Tal
       pc.onconnectionstatechange = null
       pc.ontrack = null
       pc.close()
-      closed = resourceUrl
-        ? crewAuthHeaders()
-            .then((headers) => fetch(resourceUrl as string, { method: 'DELETE', headers }))
-            .then((res) => res.status)
-            .catch((err: unknown) => {
-              // eslint-disable-next-line no-console -- surfaces best-effort cleanup failures for diagnostics
-              console.warn(`[talkback] DELETE ${kind} session failed (best-effort):`, err)
-              return 0
-            })
-        : Promise.resolve(0)
+      closed = crewAuthHeaders()
+        .then((headers) => fetch(resourceUrl, { method: 'DELETE', headers }))
+        .then((res) => res.status)
+        .catch((err: unknown) => {
+          // eslint-disable-next-line no-console -- surfaces best-effort cleanup failures for diagnostics
+          console.warn(`[talkback] DELETE ${kind} session failed (best-effort):`, err)
+          return 0
+        })
       return closed
     }
 
