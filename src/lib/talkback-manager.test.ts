@@ -80,6 +80,24 @@ describe('TalkbackManager open', () => {
   })
 })
 
+describe('TalkbackManager mic re-acquire failure', () => {
+  it('fails open guests (both legs closed, clone stopped) so the mic can be requested again', async () => {
+    const { manager, sessions, talkTrack } = setup()
+    await manager.open('a')
+    await manager.open('b')
+    manager.toggleLatch('a')
+    const cloneA = talkTrack('a')!
+    // Picker change → stream released → getUserMedia rejects (e.g. unplugged `exact` device).
+    manager.setMicStream(null)
+    manager.micFailed()
+    expect(manager.getSnapshot()['a']).toMatchObject({ status: 'unavailable', error: 'Microphone unavailable', latched: false })
+    expect(manager.getSnapshot()['b']).toMatchObject({ status: 'unavailable', error: 'Microphone unavailable' })
+    expect(sessions.every((s) => s.closed)).toBe(true)
+    expect(cloneA.readyState).toBe('ended')
+    expect(manager.wantsMic()).toBe(false)
+  })
+})
+
 describe('TalkbackManager push-to-talk on the per-guest track', () => {
   it('press → enabled, release → disabled; cancel-hold (blur/visibility/pointercancel) releases', async () => {
     const { manager, talkTrack } = setup()

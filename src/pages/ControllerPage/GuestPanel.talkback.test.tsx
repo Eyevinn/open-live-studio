@@ -208,4 +208,24 @@ describe('GuestPanel operator talkback', () => {
     expect(FakePeerConnection.instances.every((pc) => pc.closed)).toBe(true)
     await waitFor(() => expect(useIntercomStore.getState().micActive).toBe(false))
   })
+  it('a failed mic re-acquire (picker → unplugged device) fails the open guest and Retry requests the mic again', async () => {
+    await renderPanel()
+    seedGuest(guest())
+    await openTalkback()
+    const gum = navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>
+    gum.mockImplementationOnce(async () => { throw new DOMException('Requested device not found', 'NotFoundError') })
+
+    act(() => { useIntercomStore.getState().setMicDeviceId('gone') })
+
+    await waitFor(() => expect(screen.getByRole('status').getAttribute('title')).toBe('Microphone unavailable'))
+    await waitFor(() => expect(talkbackCalls().filter((c) => c.method === 'DELETE')).toHaveLength(2))
+    expect(FakePeerConnection.instances.every((pc) => pc.closed)).toBe(true)
+    expect(useIntercomStore.getState().micActive).toBe(false)
+
+    const before = gum.mock.calls.length
+    fireEvent.click(screen.getByRole('button', { name: /^Retry/ }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Talk to Ana (hold)' })).toHaveProperty('disabled', false))
+    expect(gum.mock.calls.length).toBe(before + 1)
+    expect(useIntercomStore.getState().micActive).toBe(true)
+  })
 })

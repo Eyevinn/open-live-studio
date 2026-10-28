@@ -174,8 +174,23 @@ export class TalkbackManager {
     }
   }
 
-  /** The mic could not be acquired: every guest still waiting for it becomes unavailable. */
+  /**
+   * The mic could not be acquired. Every guest still waiting for it becomes
+   * unavailable, and so does every guest that already holds a clone: this also
+   * fires on a re-acquire after a device change (e.g. an unplugged device picked
+   * with `deviceId: { exact }`), and those clones belong to the stream that was
+   * just released. Failing them clears `wantsMic()`, so the next Open/Retry
+   * requests the mic again instead of staying stuck with no stream.
+   */
   micFailed(reason = 'Microphone unavailable'): void {
+    this.rejectMicWaiters(reason)
+    // Waiting entries fail through their own rejected `waitForMic()`; they hold no clone yet.
+    for (const [guestId, e] of [...this.entries]) {
+      if (e.status !== 'unavailable' && (e.status === 'open' || e.track)) this.fail(guestId, e, reason)
+    }
+  }
+
+  private rejectMicWaiters(reason: string): void {
     const waiters = this.micWaiters
     this.micWaiters = []
     waiters.forEach((w) => w.reject(new Error(reason)))
@@ -340,7 +355,7 @@ export class TalkbackManager {
 
   /** Close every guest's talkback (production inactive, panel unmount). */
   closeAll(): Promise<number[]> {
-    this.micFailed('Talkback closed')
+    this.rejectMicWaiters('Talkback closed')
     return Promise.all(this.guestIds().map((id) => this.close(id))).then((r) => r.flat())
   }
 

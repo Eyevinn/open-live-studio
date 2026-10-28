@@ -40,7 +40,9 @@ export function useGuestTalkback(
   useEffect(() => { manager.setSinkId(outputDeviceId) }, [manager, outputDeviceId])
 
   // The mic is requested only while talkback needs it. If acquisition fails,
-  // `useIntercomAudio` flips `micActive` back off: fail the waiting guests.
+  // `useIntercomAudio` flips `micActive` back off: fail every guest that is
+  // waiting for or holding a clone of the mic (also a failed re-acquire after a
+  // picker change), which clears `wantsMic` so the next Open/Retry asks again.
   // (Declared before the request effect so it never sees its own request's
   // not-yet-applied `micActive`.)
   const micRequested = useRef(false)
