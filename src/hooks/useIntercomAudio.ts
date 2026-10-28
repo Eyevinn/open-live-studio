@@ -7,15 +7,24 @@ import { INTERCOM_AUDIO_CONSTRAINTS } from '@/lib/audio-constraints'
  * See docs/repo-patterns.md: "Echo cancellation must be explicitly requested"
  */
 export function useIntercomAudio() {
-  const { micActive, micDeviceId, setLocalStream, setAvailableDevices, setMicActive } = useIntercomStore()
+  const { micActive, micDeviceId, localStream, setLocalStream, setAvailableDevices, setAvailableOutputDevices, setMicActive } = useIntercomStore()
   const streamRef = useRef<MediaStream | null>(null)
 
-  // Enumerate audio devices
+  // Enumerate audio devices — on mount, on hot-plug, and again once the mic is
+  // granted (device labels are empty until the first getUserMedia succeeds).
   useEffect(() => {
-    void navigator.mediaDevices.enumerateDevices().then((devices) => {
-      setAvailableDevices(devices.filter((d) => d.kind === 'audioinput'))
-    })
-  }, [setAvailableDevices])
+    const md = navigator.mediaDevices
+    if (!md?.enumerateDevices) return
+    const enumerate = () => {
+      void md.enumerateDevices().then((devices) => {
+        setAvailableDevices(devices.filter((d) => d.kind === 'audioinput'))
+        setAvailableOutputDevices(devices.filter((d) => d.kind === 'audiooutput'))
+      }).catch(() => {})
+    }
+    enumerate()
+    md.addEventListener?.('devicechange', enumerate)
+    return () => md.removeEventListener?.('devicechange', enumerate)
+  }, [setAvailableDevices, setAvailableOutputDevices, localStream])
 
   // Acquire or release mic stream
   useEffect(() => {
@@ -32,14 +41,26 @@ export function useIntercomAudio() {
         : INTERCOM_AUDIO_CONSTRAINTS,
     }
 
+    if (!navigator.mediaDevices?.getUserMedia) {
+      // No media layer (insecure context / unsupported browser).
+      setMicActive(false)
+      return
+    }
+    let cancelled = false
     void navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
+      // Released (or the device changed) while the prompt was open: drop it.
+      if (cancelled) {
+        stream.getTracks().forEach((t) => t.stop())
+        return
+      }
       streamRef.current = stream
       setLocalStream(stream)
     }).catch(() => {
-      setMicActive(false)
+      if (!cancelled) setMicActive(false)
     })
 
     return () => {
+      cancelled = true
       streamRef.current?.getTracks().forEach((t) => t.stop())
       streamRef.current = null
       setLocalStream(null)

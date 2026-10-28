@@ -16,6 +16,9 @@ interface IntercomState {
   micDeviceId: string | null
   localStream: MediaStream | null
   availableDevices: MediaDeviceInfo[]
+  /** Output device for talkback/intercom audio (`setSinkId`); null = system default. */
+  outputDeviceId: string | null
+  availableOutputDevices: MediaDeviceInfo[]
 }
 
 interface IntercomActions {
@@ -26,6 +29,8 @@ interface IntercomActions {
   setMicDeviceId: (id: string | null) => void
   setLocalStream: (stream: MediaStream | null) => void
   setAvailableDevices: (devices: MediaDeviceInfo[]) => void
+  setOutputDeviceId: (id: string | null) => void
+  setAvailableOutputDevices: (devices: MediaDeviceInfo[]) => void
   isJoined: (id: string) => boolean
 }
 
@@ -39,6 +44,8 @@ export const useIntercomStore = create<IntercomState & IntercomActions>()(
       micDeviceId: null,
       localStream: null,
       availableDevices: [],
+      outputDeviceId: null,
+      availableOutputDevices: [],
 
       joinLine: (id) => {
         const { joinedLineIds } = get()
@@ -57,6 +64,10 @@ export const useIntercomStore = create<IntercomState & IntercomActions>()(
       setLocalStream: (localStream) => set({ localStream }),
 
       setAvailableDevices: (availableDevices) => set({ availableDevices }),
+
+      setOutputDeviceId: (outputDeviceId) => set({ outputDeviceId }),
+
+      setAvailableOutputDevices: (availableOutputDevices) => set({ availableOutputDevices }),
 
       isJoined: (id) => get().joinedLineIds.includes(id),
     }),
