@@ -11,6 +11,8 @@ import { guestHealthProblem } from '@/lib/guest-health'
 import type { Production } from '@/store/productions.store'
 import { ApiError, guestsApi, type GuestState, type ReturnMode } from '@/lib/api'
 import type { OutboundMessage } from '@/hooks/useControllerWs'
+import { useGuestTalkback } from '@/hooks/useGuestTalkback'
+import { TalkbackChip, TalkbackControls, TalkbackDevicePicker } from './GuestTalkback'
 
 /** Best-effort human message for a failed create/revoke/kick action. */
 function actionErrorMessage(err: unknown, fallback: string): string {
@@ -40,6 +42,10 @@ function actionErrorMessage(err: unknown, fallback: string): string {
 //                never taken to air unnoticed (studio#163 requirement 5).
 //   - Health:    `GUEST_HEALTH` (Strom block health) marks a slot whose input
 //                has stopped, e.g. "Guest 3: no audio", until Strom reports it ok.
+//   - Talkback:  a guest with `intercomLine` gets operator talkback (studio#237):
+//                the "Talkback" chip opens WHEP (listen) + WHIP (talk) through
+//                open-live's crew talkback proxy; Talk is push-to-talk with a
+//                single-guest latch. See `useGuestTalkback` / `talkback-manager.ts`.
 //
 // A slot's source (WHIP, or an SRT/EFP encoder for a return-only slot) is
 // assigned to a mixer input, so it already appears in the vision-mixer PGM/PVW
@@ -110,6 +116,10 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
   const setGuests = useGuestsStore((s) => s.setGuests)
   const { pgmInput, pvwInput } = useProductionStore()
   const sources = useSourcesStore((s) => s.sources)
+  const productionActive = production.status === 'active'
+  const liveGuestIds = Object.keys(guestsMap)
+  const { snapshot: talkback, manager: talkbackManager } = useGuestTalkback(productionId, productionActive, liveGuestIds)
+  const anyTalkbackLine = Object.values(guestsMap).some((g) => !!g.intercomLine)
 
   // Which slot's inline invite form is open, plus its draft fields.
   const [openInviteSlot, setOpenInviteSlot] = useState<string | null>(null)
@@ -235,6 +245,7 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
 
       <div className="flex flex-col gap-1.5">
         <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-500">Guest Slots</span>
+        {anyTalkbackLine && productionActive && <TalkbackDevicePicker />}
 
         {guestSlots.length === 0 ? (
           !disabledReason && (
@@ -252,6 +263,7 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
             const returnOnly = isReturnOnlySlot(slot.sourceId, sources)
             const sourceName = returnOnly ? (sources.find((s) => s.id === slot.sourceId)?.name ?? slot.sourceId) : null
             const failure = guestHealth[slot.mixerInput]
+            const talkbackView = guest ? talkback[guest.guestId] : undefined
             const kickTitle = returnOnly
               ? 'Remove guest: ends their return session. The encoder keeps feeding this slot until you stop it.'
               : 'Remove guest'
@@ -269,16 +281,14 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
                       </span>
                       {!returnOnly && guest.muted && <MutedMicIcon emphasized={onAirOrPvw} />}
                       {guest.intercomLine && (
-                        <span
-                          title={`Talkback line available (${guest.intercomLine})`}
-                          className="inline-flex items-center gap-1 text-[8px] font-bold uppercase tracking-widest text-sky-300 border border-sky-800 bg-sky-950/40 px-1.5 py-0.5 rounded shrink-0"
-                        >
-                          <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3Z" />
-                            <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4" />
-                          </svg>
-                          Talkback
-                        </span>
+                        <TalkbackChip
+                          guestName={guestName(guest, i + 1)}
+                          intercomLine={guest.intercomLine}
+                          view={talkbackView}
+                          disabled={!productionActive}
+                          onOpen={() => { void talkbackManager.open(guest.guestId) }}
+                          onClose={() => { void talkbackManager.close(guest.guestId) }}
+                        />
                       )}
                       {badge && <Badge variant={badge.variant} label={badge.label} className="shrink-0" />}
                       <button
@@ -332,6 +342,17 @@ export function GuestPanel({ production, send }: GuestPanelProps) {
                   <span className="text-[8px] uppercase tracking-widest text-zinc-600 truncate" title={`Picture and voice come from ${sourceName}`}>
                     Feed: {sourceName}
                   </span>
+                )}
+
+                {/* Operator talkback (studio#237): Talk / Latch / Listen once opened,
+                    or an inline "Talkback unavailable" for this guest only. */}
+                {guest?.intercomLine && talkbackView && (
+                  <TalkbackControls
+                    guestName={guestName(guest, i + 1)}
+                    guestId={guest.guestId}
+                    view={talkbackView}
+                    manager={talkbackManager}
+                  />
                 )}
 
                 {/* Return-mode control (occupied slots only) */}
