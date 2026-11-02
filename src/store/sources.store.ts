@@ -14,7 +14,7 @@ export interface Source {
   color: string
   liveCamera?: boolean
   latency?: number
-  /** 0-based audio stream index (SRT/EFP only); absent means 0 (ADR-006). */
+  /** 0-based audio stream index; absent means 0 (ADR-006). Applied for MPEG-TS/SRT only — EFP always uses the first stream (OL-45). */
   audioStreamIndex?: number
   /** Id of the gateway that registered this source, if gateway-owned (open-live #263). */
   gatewayId?: string
