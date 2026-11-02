@@ -73,3 +73,35 @@ export function audioStreamIndexPatch(
   if (streamType === 'efp' && Number(initial) > 0) return { audioStreamIndex: 0 }
   return {}
 }
+
+/** Inline error shown in New Source when the Audio stream input is not a non-negative integer. */
+export const NEW_AUDIO_STREAM_INDEX_ERROR = 'Audio stream must be a whole number, 0 or greater.'
+
+/**
+ * Result of {@link newSourceAudioStreamIndex}: either the `audioStreamIndex`
+ * part of the create body, or an inline error that blocks Add.
+ */
+export type NewSourceAudioStreamIndexResult =
+  | { ok: true; body: { audioStreamIndex?: number } }
+  | { ok: false; error: string }
+
+/**
+ * The `audioStreamIndex` part of the New Source create body (studio#244).
+ *
+ * - Types without audio stream selection (see {@link supportsAudioStreamSelection}):
+ *   never sent — the backend rejects it for whip/html/clip.
+ * - Empty or `0`: nothing sent; absent means 0 (ADR-006).
+ * - An integer > 0: sent.
+ * - Anything else (negative, fractional, non-numeric): an error that blocks Add.
+ *
+ * @param streamType The stream type selected in the New Source dialog.
+ * @param raw        The Audio stream field's string value.
+ */
+export function newSourceAudioStreamIndex(streamType: StreamType, raw: string): NewSourceAudioStreamIndexResult {
+  if (!supportsAudioStreamSelection(streamType)) return { ok: true, body: {} }
+  const trimmed = raw.trim()
+  if (trimmed === '') return { ok: true, body: {} }
+  const parsed = Number(trimmed)
+  if (!Number.isInteger(parsed) || parsed < 0) return { ok: false, error: NEW_AUDIO_STREAM_INDEX_ERROR }
+  return { ok: true, body: parsed > 0 ? { audioStreamIndex: parsed } : {} }
+}
