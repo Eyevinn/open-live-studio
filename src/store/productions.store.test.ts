@@ -175,7 +175,7 @@ describe('useProductionsStore.markInactive', () => {
           status: 'active',
           stromFlowId: 'flow-1',
           whepEndpoint: 'whep://x',
-          srtOutputUri: 'srt://y',
+          whipEndpoints: [{ mixerInput: 'video_0', url: 'https://whip/x' }],
         }),
       ],
     })
@@ -186,7 +186,7 @@ describe('useProductionsStore.markInactive', () => {
     expect(prod?.status).toBe('inactive')
     expect(prod?.stromFlowId).toBeUndefined()
     expect(prod?.whepEndpoint).toBeUndefined()
-    expect(prod?.srtOutputUri).toBeUndefined()
+    expect(prod?.whipEndpoints).toBeUndefined()
   })
 })
 
