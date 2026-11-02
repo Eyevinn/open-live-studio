@@ -8,7 +8,7 @@ import { ApiError, sourcesApi, type AudioStreamsResponse, type HtmlSourceAuth, t
 import { openHtmlAuthPopup, originOf, maskCredential } from '@/lib/htmlSourceAuthPopup'
 import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
 import { buildListenerAddress, isCallerAddress, listenerPort, passphraseOf, srtDirection, toCallerUrl, type SrtDirection } from '@/lib/srt'
-import { decideAudioStreamIndex } from '@/lib/audio-stream-index'
+import { EFP_AUDIO_STREAM_NOTE, audioStreamIndexPatch, efpIgnoredAudioStreamNote, supportsAudioStreamSelection } from '@/lib/audio-stream-index'
 import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
@@ -108,9 +108,9 @@ interface EditState {
   name: string
   streamType: StreamType
   latency: string
-  /** SRT/EFP: chosen 0-based audio stream index, as typed/selected (ADR-006). */
+  /** MPEG-TS/SRT: chosen 0-based audio stream index, as typed/selected (ADR-006). */
   audioStreamIndex: string
-  /** SRT/EFP: the index as loaded, so Save only PATCHes it when changed. */
+  /** The index as loaded, so Save only PATCHes it when changed (EFP: to clear a stale one). */
   initialAudioStreamIndex: string
   /** The address as stored (passphrase masked by the backend). */
   stored: string
@@ -176,7 +176,7 @@ export function SourcesPanel() {
   const [newClipRef, setNewClipRef] = useState<ClipRefState>({ ...emptyClipRef })
   const [addAddressError, setAddAddressError] = useState<string | null>(null)
   const [editAddressError, setEditAddressError] = useState<string | null>(null)
-  // Audio-stream discovery for the open SRT/EFP edit dialog (ADR-006).
+  // Audio-stream discovery for the open MPEG-TS/SRT edit dialog (ADR-006, OL-45).
   // `null` = loading; `'error'` = request failed (treated like unavailable).
   const [audioStreams, setAudioStreams] = useState<AudioStreamsResponse | 'error' | null>(null)
   // HTML-auth (studio#129) inline error + in-flight guard for the popup/save flow.
@@ -333,10 +333,11 @@ export function SourcesPanel() {
     setAuthBusy(false)
   }
 
-  // Discover audio streams when the edit dialog opens for an SRT/EFP source.
-  // Other source types never call the endpoint (the backend rejects them).
+  // Discover audio streams when the edit dialog opens for an MPEG-TS/SRT source.
+  // Other source types never call the endpoint: EFP always uses the first audio
+  // stream (OL-45) and the backend rejects the rest.
   const editId = editTarget?.id ?? null
-  const editAudioApplies = !!editTarget && isSrt(editTarget.streamType)
+  const editAudioApplies = !!editTarget && supportsAudioStreamSelection(editTarget.streamType)
   useEffect(() => {
     setAudioStreams(null)
     if (editId === null || !editAudioApplies) return
@@ -408,12 +409,11 @@ export function SourcesPanel() {
       }
       if (address === editTarget.stored) address = undefined
     }
-    const audioDecision = decideAudioStreamIndex(editTarget.audioStreamIndex, editTarget.initialAudioStreamIndex)
     void updateSource(editTarget.id, {
       name: editTarget.name.trim(),
       ...(address !== undefined ? { address } : {}),
       ...(STREAM_TYPE_HAS_LATENCY[editTarget.streamType] ? { latency: parseInt(editTarget.latency, 10) || 125 } : {}),
-      ...(isSrt(editTarget.streamType) && audioDecision.send ? { audioStreamIndex: audioDecision.audioStreamIndex } : {}),
+      ...audioStreamIndexPatch(editTarget.streamType, editTarget.audioStreamIndex, editTarget.initialAudioStreamIndex),
       ...(authPayload ? { auth: authPayload } : {}),
     })
     setEditAddressError(null)
@@ -828,7 +828,16 @@ export function SourcesPanel() {
                 />
               </div>
             )}
-            {isSrt(editTarget.streamType) && (
+            {editTarget.streamType === 'efp' && (
+              <div>
+                <span className={labelCls}>Audio stream</span>
+                <p className="text-xs text-[--color-text-muted]">
+                  {EFP_AUDIO_STREAM_NOTE}
+                  {Number(editTarget.initialAudioStreamIndex) > 0 && ` ${efpIgnoredAudioStreamNote(Number(editTarget.initialAudioStreamIndex))}`}
+                </p>
+              </div>
+            )}
+            {supportsAudioStreamSelection(editTarget.streamType) && (
               <div>
                 <label className={labelCls} htmlFor="edit-audio-stream">Audio stream</label>
                 {audioStreams === null ? (
