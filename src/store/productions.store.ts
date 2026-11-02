@@ -24,7 +24,6 @@ export interface Production {
   whepEndpoint?: string
   pgmWhepEndpoint?: string
   whipEndpoints?: Array<{ mixerInput: string; url: string }>
-  srtOutputUri?: string
   values?: Record<string, string | number | boolean>
   airTime?: string
   deletionWarnings?: Array<{ type: 'source' | 'graphic' | 'output'; name: string }>
@@ -88,7 +87,6 @@ function fromApi(p: ApiProduction): Production {
     whepEndpoint: p.whepEndpoint,
     pgmWhepEndpoint: p.pgmWhepEndpoint,
     whipEndpoints: p.whipEndpoints,
-    srtOutputUri: p.srtOutputUri,
     values: p.values,
     airTime: p.airTime,
     deletionWarnings: p.deletionWarnings,
@@ -155,7 +153,6 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
               if (updated.status === 'active') prod.activationWarnings = updated.activationWarnings
               if (updated.status === 'inactive') {
                 prod.whipEndpoints = undefined
-                prod.srtOutputUri = undefined
                 prod.whepOutputUrls = undefined
               }
             }
@@ -182,7 +179,6 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
                     prod.pgmWhepEndpoint = polled.pgmWhepEndpoint
                     prod.whipEndpoints = polled.whipEndpoints
                     prod.whepOutputUrls = polled.whepOutputUrls
-                    prod.srtOutputUri = polled.srtOutputUri
                     prod.inputRecordings = polled.inputRecordings
                     if (polled.status === 'active') prod.activationWarnings = polled.activationWarnings
                   }
@@ -214,7 +210,6 @@ export const useProductionsStore = create<ProductionsState & ProductionsActions>
             prod.whepEndpoint = undefined
             prod.pgmWhepEndpoint = undefined
             prod.whipEndpoints = undefined
-            prod.srtOutputUri = undefined
             prod.whepOutputUrls = undefined
             prod.inputRecordings = undefined
           }
