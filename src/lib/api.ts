@@ -284,7 +284,6 @@ export interface ApiProduction {
   whepEndpoint?: string
   pgmWhepEndpoint?: string
   whipEndpoints?: Array<{ mixerInput: string; url: string }>
-  srtOutputUri?: string
   values?: Record<string, string | number | boolean>
   airTime?: string
   deletionWarnings?: Array<{ type: 'source' | 'graphic' | 'output'; name: string }>
@@ -324,7 +323,6 @@ type RawProduction = {
   whepEndpoint?: string
   pgmWhepEndpoint?: string
   whipEndpoints?: Array<{ mixerInput: string; url: string }>
-  srtOutputUri?: string
   values?: Record<string, string | number | boolean>
   airTime?: string
   deletionWarnings?: Array<{ type: 'source' | 'graphic' | 'output'; name: string }>
@@ -351,7 +349,6 @@ function normalizeProduction(d: RawProduction): ApiProduction {
     whepEndpoint: d.whepEndpoint,
     pgmWhepEndpoint: d.pgmWhepEndpoint,
     whipEndpoints: d.whipEndpoints,
-    srtOutputUri: d.srtOutputUri,
     values: d.values,
     airTime: d.airTime,
     deletionWarnings: d.deletionWarnings,

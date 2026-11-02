@@ -1329,9 +1329,6 @@ export function ProductionsPanel() {
                   {isActive && prod.pgmWhepEndpoint && (
                     <InlineCopyButton label="WHEP OUT: PGM" value={prod.pgmWhepEndpoint} />
                   )}
-                  {isActive && prod.srtOutputUri && (
-                    <InlineCopyButton label="SRT OUT: Program" value={toCallerUrl(prod.srtOutputUri, stromHost)} />
-                  )}
                   {isActive && prod.outputAssignments?.flatMap((a) => {
                     const out = outputs.find((o) => o.id === a.outputId)
                     if (!out || out.outputType === 'whep' || !out.url) return []
