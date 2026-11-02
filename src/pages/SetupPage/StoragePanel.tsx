@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useStorageStore } from '@/store/storage.store'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
@@ -21,6 +21,7 @@ import {
   validateStorageConnectionForm,
   type StorageConnectionForm,
 } from '@/lib/storageConnection'
+import { capacityText, type CapacityState } from '@/lib/storageCapacity'
 
 const ROLES: StorageConnectionRole[] = ['clip', 'recording', 'both']
 
@@ -85,6 +86,16 @@ function TestResultView({ result }: { result: StorageConnectionTestResult }) {
   )
 }
 
+/** Free-space line under a connection's subtitle (studio#245); nothing until first requested. */
+function CapacityLine({ state }: { state: CapacityState | undefined }) {
+  if (!state) return null
+  return (
+    <span data-testid="storage-capacity" className="text-xs text-[--color-text-muted] block">
+      {capacityText(state)}
+    </span>
+  )
+}
+
 /**
  * Setup → Storage (studio#217, OL-21b.1). Lists, creates, edits, tests and
  * deletes storage connections. The secret key is write-only: it lives only in
@@ -96,7 +107,34 @@ export function StoragePanel() {
   const { connections, isLoading, loadError, lastFetchedAt, fetchAll, addConnection, updateConnection, removeConnection } =
     useStorageStore()
 
-  useEffect(() => { void fetchAll() }, [fetchAll])
+  // Per-row free space (studio#245). Each row is fetched independently and a
+  // failure stays on its own row; a per-id sequence number drops stale replies
+  // when a row is re-fetched (refresh, edit) before the previous reply lands.
+  const [capacity, setCapacity] = useState<Record<string, CapacityState>>({})
+  const capacitySeq = useRef<Record<string, number>>({})
+
+  const loadCapacity = useCallback((id: string) => {
+    const seq = (capacitySeq.current[id] ?? 0) + 1
+    capacitySeq.current[id] = seq
+    setCapacity((m) => ({ ...m, [id]: { kind: 'loading' } }))
+    const settle = (next: CapacityState) => {
+      if (capacitySeq.current[id] === seq) setCapacity((m) => ({ ...m, [id]: next }))
+    }
+    storageConnectionsApi.capacity(id).then(
+      (result) => settle({ kind: 'loaded', result }),
+      () => settle({ kind: 'error' }),
+    )
+  }, [])
+
+  /** Reloads the list, then every row's capacity in parallel (mount and Retry). */
+  const refresh = useCallback(async () => {
+    await fetchAll()
+    const { connections: loadedConnections, loadError: listError } = useStorageStore.getState()
+    if (listError) return
+    for (const c of loadedConnections) loadCapacity(c.id)
+  }, [fetchAll, loadCapacity])
+
+  useEffect(() => { void refresh() }, [refresh])
 
   const [formState, setFormState] = useState<FormState | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
@@ -145,8 +183,11 @@ export function StoragePanel() {
       if (original) {
         const patch = buildPatchInput(form, original)
         if (Object.keys(patch).length > 0) await updateConnection(original.id, patch)
+        // Endpoint, credentials or bucket may have changed.
+        loadCapacity(original.id)
       } else {
-        await addConnection(buildCreateInput(form))
+        const created = await addConnection(buildCreateInput(form))
+        loadCapacity(created.id)
       }
       closeForm()
     } catch (err) {
@@ -207,7 +248,7 @@ export function StoragePanel() {
       {loadError && (
         <div className="flex items-center justify-between rounded border border-red-800 px-3 py-2 text-xs text-red-300">
           <span>Could not load storage connections: {loadError}</span>
-          <Button size="sm" variant="ghost" onClick={() => void fetchAll()}>Retry</Button>
+          <Button size="sm" variant="ghost" onClick={() => void refresh()}>Retry</Button>
         </div>
       )}
 
@@ -232,6 +273,7 @@ export function StoragePanel() {
               <span className="text-xs text-[--color-text-muted] font-mono truncate block">
                 {c.endpoint} · bucket {c.defaultBucket ?? '(none)'} · {c.secretKeySet ? 'Secret key set' : 'No secret key'}
               </span>
+              <CapacityLine state={capacity[c.id]} />
             </div>
             <Button size="sm" variant="ghost" className="text-white hover:text-orange-500" onClick={() => openTest(c)}>
               Test

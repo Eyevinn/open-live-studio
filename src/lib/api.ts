@@ -892,6 +892,28 @@ export interface StorageConnectionTestResult {
   note?: string
 }
 
+/**
+ * `GET /:id/capacity` (open-live #613, spec §2.8a; always HTTP 200 except 404
+ * for an unknown id). Free space comes from the MinIO admin API; any upstream
+ * failure is a classified `unavailable` result. `estimatedMinutes` assumes
+ * `referenceBitrateKbps` (the Enc PGM default).
+ */
+export type ApiStorageCapacity =
+  | {
+      status: 'available'
+      totalBytes: number
+      freeBytes: number
+      scope: 'server' | 'bucket-quota'
+      referenceBitrateKbps: number
+      estimatedMinutes: number
+      checkedAt: string
+    }
+  | {
+      status: 'unavailable'
+      reason: 'forbidden' | 'not-supported' | 'unreachable'
+      checkedAt: string
+    }
+
 /** 409 body of `DELETE` while the connection is still referenced. */
 export interface StorageConnectionReferences {
   sources: number
@@ -959,6 +981,11 @@ export const storageConnectionsApi = {
 
   remove: (id: string) =>
     request<void>(`/api/v1/storage-connections/${encodeURIComponent(id)}`, { method: 'DELETE', quiet: true }),
+
+  // Free space + recording-minutes estimate (studio#245). Quiet: each Storage
+  // row shows its own capacity line, and a failed request is shown there.
+  capacity: (id: string) =>
+    request<ApiStorageCapacity>(`/api/v1/storage-connections/${encodeURIComponent(id)}/capacity`, { quiet: true }),
 
   test: (id: string, bucket?: string) =>
     request<StorageConnectionTestResult>(`/api/v1/storage-connections/${encodeURIComponent(id)}/test`, {
