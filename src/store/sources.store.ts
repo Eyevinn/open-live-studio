@@ -41,8 +41,11 @@ interface SourcesActions {
    * `auth`, when passed, is merged into the same PATCH as the other fields
    * (studio#154) so e.g. an HTML source's interactive credential is not lost
    * when the operator uses the main Save instead of "Save Credential".
+   *
+   * `quiet` suppresses the global error toast, for callers that show the
+   * failure inline themselves (the Edit Source dialog, studio#242).
    */
-  updateSource: (id: string, fields: Partial<Pick<Source, 'name' | 'address' | 'latency' | 'audioStreamIndex'>> & { auth?: HtmlSourceAuthInput }) => Promise<void>
+  updateSource: (id: string, fields: Partial<Pick<Source, 'name' | 'address' | 'latency' | 'audioStreamIndex'>> & { auth?: HtmlSourceAuthInput }, opts?: { quiet?: boolean }) => Promise<void>
   updateStatus: (id: string, status: SourceStatus) => Promise<void>
   /**
    * Set/replace the HTML-source header credential (Design B). The credential
@@ -121,8 +124,9 @@ export const useSourcesStore = create<SourcesState & SourcesActions>()(
         set((state) => { state.sources = state.sources.filter((s) => s.id !== id) })
       },
 
-      updateSource: async (id, fields) => {
-        const updated = await sourcesApi.update(id, fields)
+      updateSource: async (id, fields, opts) => {
+        // Only forward `opts` when given, so existing callers keep the 2-arg call.
+        const updated = await (opts ? sourcesApi.update(id, fields, opts) : sourcesApi.update(id, fields))
         set((state) => {
           const source = state.sources.find((s) => s.id === id)
           if (source) {

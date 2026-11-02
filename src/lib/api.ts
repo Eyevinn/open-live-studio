@@ -467,10 +467,11 @@ export const sourcesApi = {
    * trip (studio#154), matching the single non-strict `SourcePatch` surface on
    * `PATCH /api/v1/sources/:id`.
    */
-  update: (id: string, body: Partial<Omit<ApiSource, 'id' | 'auth'>> & { auth?: HtmlSourceAuthInput }) =>
+  update: (id: string, body: Partial<Omit<ApiSource, 'id' | 'auth'>> & { auth?: HtmlSourceAuthInput }, opts?: { quiet?: boolean }) =>
     request<ApiSource>(`/api/v1/sources/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
+      ...(opts?.quiet ? { quiet: true } : {}),
     }),
 
   /**
