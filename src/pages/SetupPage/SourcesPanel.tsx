@@ -8,7 +8,7 @@ import { ApiError, sourcesApi, type AudioStreamsResponse, type HtmlSourceAuth, t
 import { openHtmlAuthPopup, originOf, maskCredential } from '@/lib/htmlSourceAuthPopup'
 import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
 import { buildListenerAddress, isCallerAddress, listenerPort, passphraseOf, srtDirection, toCallerUrl, type SrtDirection } from '@/lib/srt'
-import { EFP_AUDIO_STREAM_NOTE, audioStreamIndexPatch, efpIgnoredAudioStreamNote, supportsAudioStreamSelection } from '@/lib/audio-stream-index'
+import { EFP_AUDIO_STREAM_NOTE, audioStreamIndexPatch, efpIgnoredAudioStreamNote, newSourceAudioStreamIndex, supportsAudioStreamSelection } from '@/lib/audio-stream-index'
 import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
@@ -173,6 +173,10 @@ export function SourcesPanel() {
   const [newManualPort, setNewManualPort] = useState('')
   const [newPassphrase, setNewPassphrase] = useState('')
   const [newLatency, setNewLatency] = useState('')
+  // Audio stream for a new MPEG-TS/SRT source (studio#244). Manual entry only:
+  // there is no source id yet, so no discovery call.
+  const [newAudioStreamIndex, setNewAudioStreamIndex] = useState('0')
+  const [newAudioStreamError, setNewAudioStreamError] = useState<string | null>(null)
   const [newClipRef, setNewClipRef] = useState<ClipRefState>({ ...emptyClipRef })
   const [addAddressError, setAddAddressError] = useState<string | null>(null)
   const [editAddressError, setEditAddressError] = useState<string | null>(null)
@@ -228,6 +232,8 @@ export function SourcesPanel() {
     setNewManualPort('')
     setNewPassphrase('')
     setNewLatency('')
+    setNewAudioStreamIndex('0')
+    setNewAudioStreamError(null)
     setNewClipRef({ ...emptyClipRef })
     setAddAddressError(null)
     setNewAuthEnabled(false)
@@ -272,6 +278,8 @@ export function SourcesPanel() {
     }
     const addrErr = validateAddress(newAddress, newStreamType, newDirection)
     if (addrErr) { setAddAddressError(addrErr); return }
+    const audio = newSourceAudioStreamIndex(newStreamType, newAudioStreamIndex)
+    if (!audio.ok) { setNewAudioStreamError(audio.error); return }
     let address = newAddress.trim()
     if (newIsListener) {
       const port = listenerPortFor(portMode, newManualPort)
@@ -287,6 +295,7 @@ export function SourcesPanel() {
       status: 'inactive',
       color: '#27272a',
       ...(STREAM_TYPE_HAS_LATENCY[newStreamType] ? { latency: parseInt(newLatency, 10) || 125 } : {}),
+      ...audio.body,
     })
     if (newStreamType === 'html' && newAuthEnabled && newAuthHeaderValue.trim()) {
       // Create-then-PATCH (issue's suggested approach): the source needs an id
@@ -923,6 +932,8 @@ export function SourcesPanel() {
                     setNewAddress('')
                     setNewClipRef({ ...emptyClipRef })
                     setAddAddressError(null)
+                    setNewAudioStreamIndex('0')
+                    setNewAudioStreamError(null)
                     setNewAuthEnabled(false)
                     setNewAuthHeaderName(DEFAULT_HEADER_NAME)
                     setNewAuthHeaderValue('')
@@ -1037,6 +1048,24 @@ export function SourcesPanel() {
                 onChange={(e) => setNewLatency(e.target.value)}
                 className={inputCls}
               />
+            </div>
+          )}
+          {supportsAudioStreamSelection(newStreamType) && (
+            <div>
+              <label className={labelCls} htmlFor="new-audio-stream">Audio stream</label>
+              <input
+                id="new-audio-stream"
+                type="number"
+                min={0}
+                step={1}
+                value={newAudioStreamIndex}
+                onChange={(e) => { setNewAudioStreamIndex(e.target.value); setNewAudioStreamError(null) }}
+                className={inputCls}
+              />
+              {newAudioStreamError && <p className="text-xs text-red-400 mt-1">{newAudioStreamError}</p>}
+              <p className="mt-1 text-xs text-[--color-text-muted] opacity-70">
+                Enter the 0-based audio stream index. The stream list is available in Edit Source once the source is live. Takes effect on the next production activation.
+              </p>
             </div>
           )}
         </div>
