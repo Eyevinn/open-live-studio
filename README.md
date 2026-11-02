@@ -17,7 +17,7 @@ The fastest way to try Open Live — no Kubernetes required.
 Visit **[openlive.apps.osaas.io](https://openlive.apps.osaas.io)** to spin up a managed instance on Open Source Cloud. Start for an event, tear down after. No infrastructure to manage and no monthly minimum.
 
 - 14-day free trial, free plan available
-- 15 EUR/month (self-hosted Strom) or 69 EUR/month (shared GPU in Frankfurt)
+- 15 EUR/month (self-hosted Strom) or 69 EUR/month (shared GPU)
 
 ## Features
 
