@@ -1010,6 +1010,106 @@ export const storageConnectionsApi = {
   },
 }
 
+// --------------- Intercom connection (open-live #617/#618, OL-47; studio#254) ---------------
+// Shapes mirror open-live `docs/specs/intercom-connection.md` §2. The manager
+// API key and WHIP key are write-only: no response ever carries them, only
+// `tokenSet` / `whipKeySet`.
+
+/** Auth mode of the manager connection; decided by the backend, never by Studio. */
+export type IntercomConnectionMode = 'osc' | 'direct'
+
+/** Which configuration is in effect. */
+export type IntercomConnectionSource = 'stored' | 'env' | 'none'
+
+/** Where the OSC PAT used for the SAT exchange comes from (`osc` mode only). */
+export type IntercomPatSource = 'OscAccessToken' | 'INTERCOM_MANAGER_TOKEN'
+
+/** `GET /api/v1/intercom-connection` (and the `PUT` response). */
+export interface ApiIntercomConnectionStatus {
+  source: IntercomConnectionSource
+  configured: boolean
+  /** Normalised manager base URL (ends in `/api/v1`), or null. Not secret. */
+  url: string | null
+  mode: IntercomConnectionMode | null
+  modeOverridden: boolean
+  tokenSet: boolean
+  whipKeySet: boolean
+  patSource: IntercomPatSource | null
+  oscPatSet: boolean
+  /** Plain-language reason the connection is not usable, else null. */
+  problem: string | null
+  updatedAt: string | null
+}
+
+/**
+ * `PUT` body. `mode` is an advanced override Studio does not send (the backend
+ * infers it from the host). Omitting `apiKey`/`whipKey` keeps the stored one
+ * for the same manager origin; `whipKey: null` clears it.
+ */
+export interface IntercomConnectionInput {
+  url: string
+  mode?: IntercomConnectionMode
+  apiKey?: string
+  whipKey?: string | null
+}
+
+/** `POST /test` body: unsaved values, or `{}` to test the connection in effect. */
+export interface IntercomConnectionTestInput {
+  url?: string
+  mode?: IntercomConnectionMode
+  apiKey?: string
+  whipKey?: string
+}
+
+export type IntercomTestStatus =
+  | 'ok'
+  | 'unreachable'
+  | 'auth-failed'
+  | 'sat-exchange-failed'
+  | 'missing-credential'
+  | 'unexpected-response'
+  | 'not-configured'
+
+/**
+ * Structured probe result of `POST /test` (HTTP 200 for any probe that ran).
+ * `not-configured` carries only `ok`, `status`, `message` and `source`, so the
+ * other fields are optional.
+ */
+export interface IntercomConnectionTestResult {
+  ok: boolean
+  status: IntercomTestStatus
+  message: string
+  httpStatus?: number
+  mode?: IntercomConnectionMode
+  patSource?: IntercomPatSource | null
+  url?: string
+  whipKey?: 'not-verifiable' | 'not-set' | 'not-used'
+  source: 'unsaved' | IntercomConnectionSource
+}
+
+// All calls are `quiet`: the Setup Intercom tab shows every error inline once.
+export const intercomConnectionApi = {
+  get: () =>
+    request<ApiIntercomConnectionStatus>('/api/v1/intercom-connection', { quiet: true }),
+
+  set: (body: IntercomConnectionInput) =>
+    request<ApiIntercomConnectionStatus>('/api/v1/intercom-connection', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+      quiet: true,
+    }),
+
+  clear: () =>
+    request<void>('/api/v1/intercom-connection', { method: 'DELETE', quiet: true }),
+
+  test: (body: IntercomConnectionTestInput) =>
+    request<IntercomConnectionTestResult>('/api/v1/intercom-connection/test', {
+      method: 'POST',
+      body: JSON.stringify(body),
+      quiet: true,
+    }),
+}
+
 // ─── Recordings (open-live #42, #534, #550; studio#220, #229) ─────────────────
 // List, read and delete. Shapes mirror open-live `src/routes/recordings.ts` and
 // `src/db/types.ts` (`RecordingDoc`, `RecordingUploadSummary`) on main — do not
