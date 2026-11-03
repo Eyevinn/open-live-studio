@@ -6,15 +6,17 @@ import { GraphicsPanel } from './GraphicsPanel'
 import { OutputsPanel } from './OutputsPanel'
 import { GatewaysPanel } from './GatewaysPanel'
 import { StoragePanel } from './StoragePanel'
+import { IntercomPanel } from './IntercomPanel'
 import { RecordingsPanel } from './RecordingsPanel'
 import { cn } from '@/lib/cn'
 
-type Tab = 'sources' | 'gateways' | 'storage' | 'graphics' | 'outputs' | 'recordings'
+type Tab = 'sources' | 'gateways' | 'storage' | 'intercom' | 'graphics' | 'outputs' | 'recordings'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'sources', label: 'Sources' },
   { id: 'gateways', label: 'Gateways' },
   { id: 'storage', label: 'Storage' },
+  { id: 'intercom', label: 'Intercom' },
   { id: 'graphics', label: 'Graphics' },
   { id: 'outputs', label: 'Outputs' },
   { id: 'recordings', label: 'Recordings' },
@@ -62,6 +64,7 @@ export function SetupPage() {
         {activeTab === 'sources' && <SourcesPanel />}
         {activeTab === 'gateways' && <GatewaysPanel />}
         {activeTab === 'storage' && <StoragePanel />}
+        {activeTab === 'intercom' && <IntercomPanel />}
         {activeTab === 'graphics' && <GraphicsPanel />}
         {activeTab === 'outputs' && <OutputsPanel onOpenStorage={() => setActiveTab('storage')} />}
         {activeTab === 'recordings' && <RecordingsPanel initialProductionId={recordingsProductionId} />}
