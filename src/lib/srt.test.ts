@@ -7,6 +7,9 @@ import {
   stripPassphrase,
   toCallerUrl,
   isCallerAddress,
+  hasMaskedPassphrase,
+  listenerEditAddress,
+  maskedPassphraseError,
 } from './srt'
 
 describe('srtDirection', () => {
@@ -112,5 +115,53 @@ describe('isCallerAddress', () => {
 
   it('rejects hostless addresses', () => {
     expect(isCallerAddress('srt://:1234')).toBe(false)
+  })
+})
+
+describe('listenerEditAddress', () => {
+  const stored = 'srt://:9000?mode=listener&passphrase=***'
+
+  it('removes the passphrase when asked, even with text in the field', () => {
+    expect(listenerEditAddress({ stored, port: 9000, passphrase: 'ignored-value', removePassphrase: true })).toBe(
+      'srt://:9000?mode=listener',
+    )
+  })
+
+  it('sends nothing for an empty field, so the stored passphrase is kept', () => {
+    expect(listenerEditAddress({ stored, port: 9000, passphrase: '  ', removePassphrase: false })).toBeUndefined()
+  })
+
+  it('sends a newly typed passphrase', () => {
+    expect(listenerEditAddress({ stored, port: 9000, passphrase: 'new-secret-123', removePassphrase: false })).toBe(
+      'srt://:9000?mode=listener&passphrase=new-secret-123',
+    )
+  })
+
+  it('sends the listener address when switching from caller', () => {
+    expect(
+      listenerEditAddress({ stored: 'srt://host.example:9000?mode=caller', port: 0, passphrase: '', removePassphrase: false }),
+    ).toBe('srt://:0?mode=listener')
+  })
+})
+
+describe('maskedPassphraseError', () => {
+  const stored = 'srt://host.example:9000?mode=caller&passphrase=***'
+
+  it('detects the masked passphrase', () => {
+    expect(hasMaskedPassphrase(stored)).toBe(true)
+    expect(hasMaskedPassphrase('srt://host.example:9000?passphrase=real-secret')).toBe(false)
+  })
+
+  it('allows the unchanged address (it is not sent)', () => {
+    expect(maskedPassphraseError(stored, stored)).toBeNull()
+  })
+
+  it('blocks a changed address that still carries the mask', () => {
+    expect(maskedPassphraseError('srt://other.example:9000?mode=caller&passphrase=***', stored)).not.toBeNull()
+  })
+
+  it('allows a changed address with a real or no passphrase', () => {
+    expect(maskedPassphraseError('srt://other.example:9000?mode=caller&passphrase=real-secret', stored)).toBeNull()
+    expect(maskedPassphraseError('srt://other.example:9000?mode=caller', stored)).toBeNull()
   })
 })
