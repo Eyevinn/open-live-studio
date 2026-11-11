@@ -1,17 +1,44 @@
 /**
- * The two shapes an SRT address takes in Open Live, and how to move between them.
+ * The three shapes an SRT address takes in Open Live, and how to move between them.
  *
  * A listener address is hostless: `srt://:PORT?mode=listener`. Strom binds PORT on
  * the shared server and waits for a sender, so the port has to come from this
  * instance's range and be free; port 0 asks the backend to pick one. A caller
  * address names the far end, `srt://host:PORT?mode=caller`, and binds nothing here.
+ * A relay address, `srt+relay://<id>`, is a session on the SRT relay Strom fronts:
+ * one public UDP port where Strom and the outside party both call in with the
+ * same stream ID. `srt+relay://auto` asks the backend to generate the ID; it is
+ * kept from then on, also when an edit sends `auto` again.
  */
 
-export type SrtDirection = 'listener' | 'caller'
+import type { SrtConnect } from './api'
+
+export type SrtDirection = 'listener' | 'caller' | 'relay'
+
+/** Whether the address is an SRT relay address (`srt+relay://…`). */
+export function isRelayAddress(address: string | undefined | null): boolean {
+  return !!address && /^srt\+relay:\/\//i.test(address.trim())
+}
+
+/** The stream ID of a relay address, or null. */
+export function relayIdOf(address: string): string | null {
+  const m = /^srt\+relay:\/\/([A-Za-z0-9_-]{1,64})(?:[?#]|$)/i.exec(address.trim())
+  return m ? (m[1] ?? null) : null
+}
+
+/**
+ * A relay address for a new or re-saved document. The backend generates the
+ * stream ID for `auto`, or keeps the one the document already has.
+ */
+export function buildRelayAddress(passphrase?: string): string {
+  const p = passphrase?.trim()
+  return `srt+relay://auto${p ? `?passphrase=${encodeURIComponent(p)}` : ''}`
+}
 
 /** Which way a stored SRT address points. Hostless means Strom listens. */
 export function srtDirection(address: string): SrtDirection {
   const a = address.trim()
+  if (isRelayAddress(a)) return 'relay'
   if (!/^srt:\/\/:\d+/i.test(a)) return 'caller'
   return /[?&]mode=(caller|rendezvous)\b/i.test(a) ? 'caller' : 'listener'
 }
@@ -99,4 +126,36 @@ export function listenerEditAddress(edit: {
 export function maskedPassphraseError(address: string, stored: string): string | null {
   if (address === stored || !hasMaskedPassphrase(address)) return null
   return 'The passphrase is hidden as ***. Type the passphrase again, or use "Remove passphrase".'
+}
+
+/**
+ * The relay address to PATCH when an edit is saved, or undefined to leave the
+ * stored one alone. Same rules as a listener: `removePassphrase` on a stored relay
+ * address sends it without a passphrase; a typed passphrase, or a switch from
+ * another direction, sends a new one; otherwise nothing is sent, so the masked
+ * `***` is never written back. Always `auto`: the backend keeps the stream ID.
+ */
+export function relayEditAddress(edit: {
+  stored: string
+  passphrase: string
+  removePassphrase: boolean
+}): string | undefined {
+  const switched = srtDirection(edit.stored) !== 'relay'
+  if (edit.removePassphrase && !switched) return buildRelayAddress()
+  if (switched || edit.passphrase.trim()) return buildRelayAddress(edit.passphrase)
+  return undefined
+}
+
+/**
+ * The address the outside party dials for a stored SRT address, or null when
+ * there is none to show. A listener: the Strom host with the mode flipped. A
+ * relay: the backend's `connect.uri` (`srt://<relay>?streamid=<id>`), which is
+ * null while the relay's public address is unknown. A caller address points
+ * elsewhere, so nobody dials us. Never carries the passphrase.
+ */
+export function dialInAddress(address: string, connect: SrtConnect | undefined, stromHost?: string): string | null {
+  const direction = srtDirection(address)
+  if (direction === 'relay') return connect?.uri ?? null
+  if (direction === 'listener') return toCallerUrl(address, stromHost)
+  return null
 }

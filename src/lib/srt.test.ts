@@ -10,7 +10,13 @@ import {
   hasMaskedPassphrase,
   listenerEditAddress,
   maskedPassphraseError,
+  relayEditAddress,
+  isRelayAddress,
+  relayIdOf,
+  buildRelayAddress,
+  dialInAddress,
 } from './srt'
+import type { SrtConnect } from './api'
 
 describe('srtDirection', () => {
   it('treats a hostless address without a caller mode as a listener', () => {
@@ -163,5 +169,74 @@ describe('maskedPassphraseError', () => {
   it('allows a changed address with a real or no passphrase', () => {
     expect(maskedPassphraseError('srt://other.example:9000?mode=caller&passphrase=real-secret', stored)).toBeNull()
     expect(maskedPassphraseError('srt://other.example:9000?mode=caller', stored)).toBeNull()
+  })
+})
+
+describe('relayEditAddress', () => {
+  const stored = 'srt+relay://abcdefghijklmnop?passphrase=***'
+
+  it('removes the passphrase when asked, even with text in the field', () => {
+    expect(relayEditAddress({ stored, passphrase: 'ignored-value', removePassphrase: true })).toBe('srt+relay://auto')
+  })
+
+  it('sends nothing for an empty field, so the stored passphrase is kept', () => {
+    expect(relayEditAddress({ stored, passphrase: '  ', removePassphrase: false })).toBeUndefined()
+  })
+
+  it('sends a newly typed passphrase', () => {
+    expect(relayEditAddress({ stored, passphrase: 'new-secret-123', removePassphrase: false })).toBe(
+      'srt+relay://auto?passphrase=new-secret-123',
+    )
+  })
+
+  it('sends a relay address when switching from another direction', () => {
+    expect(relayEditAddress({ stored: 'srt://:9000?mode=listener', passphrase: '', removePassphrase: true })).toBe('srt+relay://auto')
+    expect(relayEditAddress({ stored: 'srt://h.example:9000?mode=caller', passphrase: 'pass-123456', removePassphrase: false })).toBe(
+      'srt+relay://auto?passphrase=pass-123456',
+    )
+  })
+})
+
+describe('relay addresses', () => {
+  it('are recognised and read as their own direction', () => {
+    expect(isRelayAddress('srt+relay://abc')).toBe(true)
+    expect(isRelayAddress('srt://:9000')).toBe(false)
+    expect(srtDirection('srt+relay://abc?passphrase=***')).toBe('relay')
+  })
+
+  it('carry a stream ID', () => {
+    expect(relayIdOf('srt+relay://abc_123?passphrase=***')).toBe('abc_123')
+    expect(relayIdOf('srt+relay://abc-1')).toBe('abc-1')
+    expect(relayIdOf('srt://:9000')).toBeNull()
+  })
+
+  it('are built as auto, with an optional encoded passphrase', () => {
+    expect(buildRelayAddress()).toBe('srt+relay://auto')
+    expect(buildRelayAddress('  ')).toBe('srt+relay://auto')
+    expect(buildRelayAddress('pass word!1')).toBe('srt+relay://auto?passphrase=pass%20word!1')
+  })
+
+  it('bind no listener port', () => {
+    expect(listenerPort('srt+relay://abc')).toBeNull()
+  })
+})
+
+describe('dialInAddress', () => {
+  const CONNECT: SrtConnect = {
+    uri: 'srt://relay.example.com:9000?streamid=abc', host: 'relay.example.com', port: 9000, mode: 'caller', source: 'srt-relay', streamid: 'abc',
+  }
+
+  it('relay: the backend connect uri, or null while it is unknown', () => {
+    expect(dialInAddress('srt+relay://abc?passphrase=***', CONNECT, 'strom.example')).toBe('srt://relay.example.com:9000?streamid=abc')
+    expect(dialInAddress('srt+relay://abc', { ...CONNECT, uri: null, reason: 'srt-relay-public-unknown' })).toBeNull()
+    expect(dialInAddress('srt+relay://abc', undefined)).toBeNull()
+  })
+
+  it('listener: the Strom host with the mode flipped, as before', () => {
+    expect(dialInAddress('srt://:1234?mode=listener&passphrase=***', undefined, 'host.example')).toBe('srt://host.example:1234?mode=caller')
+  })
+
+  it('caller: nothing to dial', () => {
+    expect(dialInAddress('srt://host.example:1234?mode=caller', undefined, 'strom.example')).toBeNull()
   })
 })
