@@ -125,6 +125,8 @@ export interface ApiSource {
   latency?: number
   /** 0-based audio elementary-stream index (SRT/EFP only); absent means 0 (ADR-006). */
   audioStreamIndex?: number
+  /** Derived SRT dial-in address (SRT/EFP sources, newer backends only). */
+  connect?: SrtConnect
   /**
    * Id of the Gateway (open-live `GatewayDoc._id`) that registered this source,
    * if any. Present only on gateway-owned sources; the gateway recreates these
@@ -248,13 +250,32 @@ export interface RtmpDestinationInput {
   ingestUrl?: string
 }
 
+/**
+ * Read-only dial-in address the backend derives for an SRT source or output
+ * (open-live `lib/srt-connect.ts`). For a relay address (`source: 'srt-relay'`)
+ * `uri` is `srt://<relay public host:port>?streamid=<id>`, or null with a
+ * `reason` while the relay's public address is unknown. Never carries the
+ * passphrase.
+ */
+export interface SrtConnect {
+  uri: string | null
+  host: string | null
+  port: number | null
+  /** The SRT mode the outside party uses. */
+  mode: 'caller' | 'listener'
+  source: 'authored-host' | 'srt-public-host' | 'strom-host' | 'srt-relay' | 'unknown'
+  /** Relay addresses only: the stream ID the outside party uses. */
+  streamid?: string
+  reason?: string
+}
+
 export interface ApiOutput {
   id: string
   name: string
   outputType: OutputType
   url?: string
   /** Derived SRT dial-in address (SRT outputs only). */
-  connect?: string
+  connect?: SrtConnect
   /** RTMP destination material (rtmp outputs only). Stream key masked to `streamKeySet`. */
   rtmp?: RtmpDestination
   /** Derived health, present on list/get responses (open-live #255). */
@@ -743,6 +764,12 @@ export interface ServerInfo {
   srtPorts?: number[] | null
   /** `pending` means no ports are held yet; `unsupported`/`disabled` mean any port goes. */
   srtPortState?: 'reserved' | 'pending' | 'unsupported' | 'disabled'
+  /**
+   * The SRT relay Strom fronts. Absent on older backends. When `configured`,
+   * sources and outputs may use `srt+relay://auto` addresses; `public` is the
+   * relay's public host:port.
+   */
+  srtRelay?: { configured: boolean; public: string | null }
 }
 
 export const serverInfoApi = {

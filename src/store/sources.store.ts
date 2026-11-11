@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
-import { sourcesApi, type ApiSource, type HtmlSourceAuth, type HtmlSourceAuthInput, type StreamType } from '@/lib/api'
+import { sourcesApi, type ApiSource, type HtmlSourceAuth, type HtmlSourceAuthInput, type SrtConnect, type StreamType } from '@/lib/api'
 
 export type SourceStatus = 'active' | 'inactive'
 
@@ -18,6 +18,8 @@ export interface Source {
   audioStreamIndex?: number
   /** Id of the gateway that registered this source, if gateway-owned (open-live #263). */
   gatewayId?: string
+  /** Read-only dial-in address derived by the backend (SRT/EFP sources). */
+  connect?: SrtConnect
   /**
    * Authenticated-HTML-source material (open-live #332). The credential value is
    * never present — only `header.valueSet` echoes that one is stored.
@@ -71,6 +73,7 @@ function fromApi(s: ApiSource): Source {
     audioStreamIndex: s.audioStreamIndex,
     gatewayId: s.gatewayId,
     auth: s.auth,
+    connect: s.connect,
   }
 }
 
@@ -132,6 +135,8 @@ export const useSourcesStore = create<SourcesState & SourcesActions>()(
           if (source) {
             if (updated.name !== undefined) source.name = updated.name
             if (updated.address !== undefined) source.address = updated.address
+            // Derived from the address, so it follows every address change.
+            source.connect = updated.connect
             if (updated.latency !== undefined) source.latency = updated.latency
             if (updated.audioStreamIndex !== undefined) source.audioStreamIndex = updated.audioStreamIndex
             // The endpoint always echoes the current `auth` (masked); keep the
