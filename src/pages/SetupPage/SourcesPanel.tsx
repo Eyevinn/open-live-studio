@@ -7,13 +7,13 @@ import { useServerInfo } from '@/hooks/useServerInfo'
 import { ApiError, sourcesApi, type AudioStreamsResponse, type HtmlSourceAuth, type HtmlSourceAuthInput, type StreamType } from '@/lib/api'
 import { openHtmlAuthPopup, originOf, maskCredential } from '@/lib/htmlSourceAuthPopup'
 import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
-import { buildListenerAddress, isCallerAddress, listenerPort, passphraseOf, srtDirection, toCallerUrl, type SrtDirection } from '@/lib/srt'
+import { buildListenerAddress, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, passphraseOf, srtDirection, stripPassphrase, toCallerUrl, type SrtDirection } from '@/lib/srt'
 import { EFP_AUDIO_STREAM_NOTE, audioStreamIndexPatch, efpIgnoredAudioStreamNote, newSourceAudioStreamIndex, supportsAudioStreamSelection } from '@/lib/audio-stream-index'
 import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
 import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
-import { DirectionToggle, ListenerFields, inputCls, labelCls, listenerPortFor, listenerReady, useListenerPortMode } from '@/components/ui/SrtDirectionFields'
+import { DirectionToggle, ListenerFields, RemovePassphraseButton, inputCls, labelCls, listenerPortFor, listenerReady, useListenerPortMode } from '@/components/ui/SrtDirectionFields'
 import { ClipReferenceFields } from '@/components/ui/ClipReferenceFields'
 import { emptyClipRef, parseClipRef, serializeClipRef, validateClipRef, type ClipRefState } from '@/lib/clipRef'
 import { useIsPhone } from '@/hooks/usePhoneLayout'
@@ -123,6 +123,8 @@ interface EditState {
   port: number | null
   manualPort: string
   passphrase: string
+  /** Listener mode: the operator asked to remove the stored passphrase. */
+  removePassphrase: boolean
   /** Clip type: the reference parsed from the stored `address` JSON. */
   clipRef: ClipRefState
   /** HTML auth (studio#129): whether the interactive-popup credential flow is enabled. */
@@ -340,6 +342,7 @@ export function SourcesPanel() {
       port: direction === 'listener' ? listenerPort(stored) : null,
       manualPort: '',
       passphrase: '',
+      removePassphrase: false,
       clipRef: src.streamType === 'clip' ? parseClipRef(stored) : { ...emptyClipRef },
       // Enable the auth section if a header credential is already configured.
       authEnabled: src.auth?.mode === 'header' || storedValueSet,
@@ -440,18 +443,15 @@ export function SourcesPanel() {
     if (STREAM_TYPE_HAS_LATENCY[editTarget.streamType] && !latency.ok) { setEditLatencyError(latency.message); return }
     let address: string | undefined
     if (editIsListener) {
-      const switched = srtDirection(editTarget.stored) !== 'listener'
-      // Unchanged port and no new passphrase: leave the stored address alone, so the
-      // masked passphrase the backend returned is never written back over the real one.
-      if (switched || editTarget.passphrase.trim()) {
-        const port = listenerPortFor(portMode, editTarget.manualPort, editTarget.port)
-        if (port === null) return
-        address = buildListenerAddress(port, editTarget.passphrase)
-      }
+      const port = listenerPortFor(portMode, editTarget.manualPort, editTarget.port)
+      if (port === null) return
+      address = listenerEditAddress({ ...editTarget, port })
     } else if (STREAM_TYPE_HAS_ADDRESS[editTarget.streamType]) {
       address = editTarget.address.trim()
-      if (isSrt(editTarget.streamType) && !/[?&]mode=/i.test(address)) {
-        address += (address.includes('?') ? '&' : '?') + 'mode=caller'
+      if (isSrt(editTarget.streamType)) {
+        if (!/[?&]mode=/i.test(address)) address += (address.includes('?') ? '&' : '?') + 'mode=caller'
+        const maskErr = maskedPassphraseError(address, editTarget.stored)
+        if (maskErr) { setEditAddressError(maskErr); return }
       }
       if (address === editTarget.stored) address = undefined
     }
@@ -739,6 +739,8 @@ export function SourcesPanel() {
                   onPassphrase={(passphrase) => setEditTarget({ ...editTarget, passphrase })}
                   keepPort={srtDirection(editTarget.stored) === 'listener' ? editTarget.port : null}
                   hasPassphrase={passphraseOf(editTarget.stored) !== null}
+                  removePassphrase={editTarget.removePassphrase}
+                  onRemovePassphrase={(removePassphrase) => setEditTarget({ ...editTarget, removePassphrase })}
                 />
                 {editTarget.port && srtDirection(editTarget.stored) === 'listener' && (
                   <p className="text-xs text-[--color-text-muted] font-mono break-all">
@@ -756,6 +758,11 @@ export function SourcesPanel() {
                   onChange={(e) => { setEditTarget({ ...editTarget, address: e.target.value }); setEditAddressError(null) }}
                   className={inputCls}
                 />
+                {isSrt(editTarget.streamType) && passphraseOf(editTarget.address) !== null && (
+                  <RemovePassphraseButton
+                    onClick={() => { setEditTarget({ ...editTarget, address: stripPassphrase(editTarget.address) }); setEditAddressError(null) }}
+                  />
+                )}
                 {editAddressError && <p className="text-xs text-red-400 mt-1">{editAddressError}</p>}
               </div>
             )}

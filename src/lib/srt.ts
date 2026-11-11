@@ -60,3 +60,43 @@ export function toCallerUrl(address: string, stromHost?: string): string {
 export function isCallerAddress(address: string): boolean {
   return /^srt:\/\/(\[[0-9a-fA-F:]+\]|[A-Za-z0-9.-]+):\d{1,5}(?:[?#]|$)/.test(address.trim())
 }
+
+/** What the backend returns in place of a stored passphrase (`passphrase=***`). */
+export const MASKED_PASSPHRASE = '***'
+
+/** Whether the address still carries the backend's masked passphrase. */
+export function hasMaskedPassphrase(address: string): boolean {
+  return passphraseOf(address) === MASKED_PASSPHRASE
+}
+
+/**
+ * The listener address to PATCH when an edit is saved, or undefined to leave the
+ * stored one alone. The backend replaces a sent address in full and keeps the
+ * stored one when none is sent, so:
+ * - `removePassphrase` sends the address without a passphrase, which removes it;
+ * - a typed passphrase, or a switch from caller to listener, sends the new address;
+ * - otherwise (an empty field) nothing is sent and the stored passphrase is kept.
+ *   Sending the address back would write the masked `***` over the real value.
+ */
+export function listenerEditAddress(edit: {
+  stored: string
+  port: number
+  passphrase: string
+  removePassphrase: boolean
+}): string | undefined {
+  if (edit.removePassphrase) return buildListenerAddress(edit.port)
+  const switched = srtDirection(edit.stored) !== 'listener'
+  if (switched || edit.passphrase.trim()) return buildListenerAddress(edit.port, edit.passphrase)
+  return undefined
+}
+
+/**
+ * Why an edited caller address cannot be saved as is, or null. The field starts
+ * with the stored address, whose passphrase the backend masks. If the operator
+ * changes something else and leaves `passphrase=***` in place, saving would set
+ * the passphrase to the literal `***`. The unchanged address is fine: it is not sent.
+ */
+export function maskedPassphraseError(address: string, stored: string): string | null {
+  if (address === stored || !hasMaskedPassphrase(address)) return null
+  return 'The passphrase is hidden as ***. Type the passphrase again, or use "Remove passphrase".'
+}

@@ -80,11 +80,26 @@ export function DirectionToggle({
 }
 
 /**
+ * The explicit "Remove passphrase" action for an SRT address that has one. An
+ * empty passphrase field means "keep", so removal needs its own control.
+ */
+export function RemovePassphraseButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="text-xs text-[--color-text-muted] hover:text-orange-500 underline mt-1">
+      Remove passphrase
+    </button>
+  )
+}
+
+/**
  * The fields of a listener: how the port is chosen, and an optional passphrase.
  * `keepPort` is the port an existing document already holds; it is kept as is.
+ * When a passphrase is stored and `onRemovePassphrase` is given, the operator can
+ * mark it for removal; the field is then disabled until the removal is undone.
  */
 export function ListenerFields({
   mode, manualPort, onManualPort, passphrase, onPassphrase, keepPort, hasPassphrase,
+  removePassphrase = false, onRemovePassphrase,
 }: {
   mode: ListenerPortMode
   manualPort: string
@@ -93,6 +108,8 @@ export function ListenerFields({
   onPassphrase: (v: string) => void
   keepPort?: number | null
   hasPassphrase?: boolean
+  removePassphrase?: boolean
+  onRemovePassphrase?: (remove: boolean) => void
 }) {
   return (
     <>
@@ -133,11 +150,24 @@ export function ListenerFields({
         </label>
         <input
           type="text"
-          value={passphrase}
-          placeholder={hasPassphrase ? 'Set — leave blank to keep' : 'None'}
+          value={removePassphrase ? '' : passphrase}
+          placeholder={removePassphrase ? 'Removed on save' : hasPassphrase ? 'Set — leave blank to keep' : 'None'}
+          disabled={removePassphrase}
           onChange={(e) => onPassphrase(e.target.value)}
-          className={inputCls}
+          className={`${inputCls} disabled:opacity-50`}
         />
+        {hasPassphrase && onRemovePassphrase && (
+          removePassphrase ? (
+            <p className="text-xs text-amber-400 mt-1">
+              The passphrase will be removed on save.{' '}
+              <button type="button" onClick={() => onRemovePassphrase(false)} className="underline hover:text-orange-500">
+                Undo
+              </button>
+            </p>
+          ) : (
+            <RemovePassphraseButton onClick={() => onRemovePassphrase(true)} />
+          )
+        )}
       </div>
     </>
   )

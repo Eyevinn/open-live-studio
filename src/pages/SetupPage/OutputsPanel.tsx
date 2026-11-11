@@ -3,13 +3,13 @@ import { useOutputsStore, type OutputType, type Output } from '@/store/outputs.s
 import { useProductionsStore } from '@/store/productions.store'
 import { useServerInfo } from '@/hooks/useServerInfo'
 import type { OutputStatus, RtmpDestinationInput, RtmpPlatform } from '@/lib/api'
-import { buildListenerAddress, isCallerAddress, listenerPort, passphraseOf, srtDirection, toCallerUrl, type SrtDirection } from '@/lib/srt'
+import { buildListenerAddress, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, passphraseOf, srtDirection, stripPassphrase, toCallerUrl, type SrtDirection } from '@/lib/srt'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Badge } from '@/components/ui/Badge'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
-import { DirectionToggle, ListenerFields, inputCls, labelCls, listenerPortFor, listenerReady, useListenerPortMode } from '@/components/ui/SrtDirectionFields'
+import { DirectionToggle, ListenerFields, RemovePassphraseButton, inputCls, labelCls, listenerPortFor, listenerReady, useListenerPortMode } from '@/components/ui/SrtDirectionFields'
 import { RtmpFields, RTMP_PLATFORM_LABELS, streamKeyError, customUrlMissing } from '@/components/ui/RtmpDestinationFields'
 import { useStorageStore } from '@/store/storage.store'
 import {
@@ -63,6 +63,8 @@ interface EditState {
   port: number | null
   manualPort: string
   passphrase: string
+  /** Listener mode: the operator asked to remove the stored passphrase. */
+  removePassphrase: boolean
   // RTMP-only fields (present when outputType === 'rtmp').
   platform: RtmpPlatform
   /** Resolved ingest URL as stored (custom carries the operator URL; presets a table URL). */
@@ -303,6 +305,7 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
       port: direction === 'listener' ? listenerPort(stored) : null,
       manualPort: '',
       passphrase: '',
+      removePassphrase: false,
       platform: o.rtmp?.platform ?? 'youtube',
       ingestUrl: o.rtmp?.ingestUrl ?? '',
       keyStored: !!o.rtmp?.streamKeySet,
@@ -370,17 +373,14 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
     }
     let url: string | undefined
     if (editTarget.direction === 'listener') {
-      const switched = srtDirection(editTarget.stored) !== 'listener'
-      // Unchanged port and no new passphrase: leave the stored URL alone, so the
-      // masked passphrase the backend returned is never written back over the real one.
-      if (switched || editTarget.passphrase.trim()) {
-        const port = listenerPortFor(portMode, editTarget.manualPort, editTarget.port)
-        if (port === null) return
-        url = buildListenerAddress(port, editTarget.passphrase)
-      }
+      const port = listenerPortFor(portMode, editTarget.manualPort, editTarget.port)
+      if (port === null) return
+      url = listenerEditAddress({ ...editTarget, port })
     } else {
       if (!isCallerAddress(editTarget.url)) { setEditUrlError("Enter the destination's host and port, e.g. srt://cdn.example.com:9000?mode=caller"); return }
       url = withCallerMode(editTarget.url.trim())
+      const maskErr = maskedPassphraseError(url, editTarget.stored)
+      if (maskErr) { setEditUrlError(maskErr); return }
       const duplicate = outputs.find((o) => o.id !== editTarget.id && o.url?.trim() === url)
       if (duplicate) { setEditUrlError(`Address already used by "${duplicate.name}"`); return }
       if (url === editTarget.stored) url = undefined
@@ -644,6 +644,8 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
                       onPassphrase={(passphrase) => setEditTarget({ ...editTarget, passphrase })}
                       keepPort={srtDirection(editTarget.stored) === 'listener' ? editTarget.port : null}
                       hasPassphrase={passphraseOf(editTarget.stored) !== null}
+                      removePassphrase={editTarget.removePassphrase}
+                      onRemovePassphrase={(removePassphrase) => setEditTarget({ ...editTarget, removePassphrase })}
                     />
                     {editTarget.port && srtDirection(editTarget.stored) === 'listener' && (
                       <p className="text-xs text-[--color-text-muted] font-mono break-all">
@@ -661,6 +663,11 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
                       onChange={(e) => { setEditTarget({ ...editTarget, url: e.target.value }); setEditUrlError(null) }}
                       className={inputCls}
                     />
+                    {passphraseOf(editTarget.url) !== null && (
+                      <RemovePassphraseButton
+                        onClick={() => { setEditTarget({ ...editTarget, url: stripPassphrase(editTarget.url) }); setEditUrlError(null) }}
+                      />
+                    )}
                     {editUrlError && <p className="text-xs text-red-400 mt-1">{editUrlError}</p>}
                   </div>
                 )}
