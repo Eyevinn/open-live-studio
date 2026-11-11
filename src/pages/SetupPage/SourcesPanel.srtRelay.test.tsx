@@ -94,4 +94,36 @@ describe('SourcesPanel — SRT relay', () => {
     await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
     expect(update.mock.calls[0]?.[1]).toMatchObject({ address: 'srt+relay://auto?passphrase=anothersecret' })
   })
+
+  it('switching a relay source with a passphrase to Listener does not claim to keep it', async () => {
+    const update = vi.spyOn(sourcesApi, 'update').mockResolvedValue(RELAY_CAM)
+    render(<SourcesPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    await screen.findByText('Edit Source')
+    fireEvent.click(screen.getByRole('button', { name: 'Listener' }))
+    expect(screen.queryByPlaceholderText('Set — leave blank to keep')).toBeNull()
+    fireEvent.change(screen.getByPlaceholderText('None'), { target: { value: 'newlistenersecret' } })
+    save()
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0]?.[1]).toMatchObject({ address: 'srt://:0?mode=listener&passphrase=newlistenersecret' })
+  })
+
+  it('refuses a relay passphrase outside 10–79 characters', async () => {
+    const update = vi.spyOn(sourcesApi, 'update').mockResolvedValue(RELAY_CAM)
+    render(<SourcesPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    await screen.findByText('Edit Source')
+    fireEvent.change(screen.getByPlaceholderText('Set — leave blank to keep'), { target: { value: 'x'.repeat(80) } })
+    save()
+    expect(await screen.findByText('The passphrase must be 10–79 characters (it is 80).')).toBeTruthy()
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('a relay row says Strom is not answering when the relay status is unavailable', async () => {
+    vi.spyOn(sourcesApi, 'list').mockResolvedValue([
+      { ...RELAY_CAM, connect: { ...RELAY_CAM.connect!, uri: null, host: null, port: null, reason: 'srt-relay-unreachable' } },
+    ])
+    render(<SourcesPanel />)
+    expect(await screen.findByText(/via relay · stream ID AbCdEfGhIjKlMnOpQrStUv · relay status unavailable, Strom is not answering/)).toBeTruthy()
+  })
 })

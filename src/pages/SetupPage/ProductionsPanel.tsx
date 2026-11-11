@@ -11,7 +11,7 @@ import type { ProductionConfig, ProductionGraphicAssignment } from '@/lib/api'
 import { PRODUCTION_PROPERTIES, type TemplateProperty } from '@/lib/production-schema'
 import { Button } from '@/components/ui/Button'
 import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
-import { isRelayAddress, toCallerUrl } from '@/lib/srt'
+import { dialInAddress } from '@/lib/srt'
 import { isReturnOnlySlot } from '@/lib/guest-slots'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
@@ -1332,9 +1332,9 @@ export function ProductionsPanel() {
                   {isActive && prod.outputAssignments?.flatMap((a) => {
                     const out = outputs.find((o) => o.id === a.outputId)
                     if (!out || out.outputType === 'whep' || !out.url) return []
-                    // A relay output is dialled at the relay (backend `connect.uri`);
-                    // nothing to copy while the relay's public address is unknown.
-                    const dial = isRelayAddress(out.url) ? out.connect?.uri : toCallerUrl(out.url, stromHost)
+                    // The address viewers dial, as the backend resolves it (listener
+                    // and relay alike); nothing to copy while it is unknown.
+                    const dial = dialInAddress(out.url, out.connect, stromHost)
                     if (!dial) return []
                     return [<InlineCopyButton key={a.outputId} label={`SRT OUT: ${out.name}`} value={dial} />]
                   })}

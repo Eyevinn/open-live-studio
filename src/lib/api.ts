@@ -266,8 +266,23 @@ export interface SrtConnect {
   source: 'authored-host' | 'srt-public-host' | 'strom-host' | 'srt-relay' | 'unknown'
   /** Relay addresses only: the stream ID the outside party uses. */
   streamid?: string
-  reason?: string
+  /** Present only when `uri` is null: why the backend cannot give the address. */
+  reason?: SrtConnectReason
 }
+
+/**
+ * Why `SrtConnect.uri` is null. `srt-relay-not-configured`: Strom reports no
+ * relay. `srt-relay-unreachable`: Strom could not be asked, so it is unknown.
+ * Newer backends may add reasons; treat unknown ones as "not known".
+ */
+export type SrtConnectReason =
+  | 'srt-host-not-configured'
+  | 'srt-host-not-loopback-reachable'
+  | 'strom-url-not-parseable'
+  | 'srt-relay-not-configured'
+  | 'srt-relay-unreachable'
+  | 'srt-relay-public-unknown'
+  | (string & {})
 
 export interface ApiOutput {
   id: string
@@ -475,7 +490,7 @@ export const sourcesApi = {
   audioStreams: (id: string) =>
     request<AudioStreamsResponse>(`/api/v1/sources/${encodeURIComponent(id)}/audio-streams`),
 
-  create: (body: Omit<ApiSource, 'id'>) =>
+  create: (body: Omit<ApiSource, 'id' | 'connect'>) =>
     request<ApiSource>('/api/v1/sources', {
       method: 'POST',
       body: JSON.stringify(body),
@@ -488,7 +503,7 @@ export const sourcesApi = {
    * trip (studio#154), matching the single non-strict `SourcePatch` surface on
    * `PATCH /api/v1/sources/:id`.
    */
-  update: (id: string, body: Partial<Omit<ApiSource, 'id' | 'auth'>> & { auth?: HtmlSourceAuthInput }, opts?: { quiet?: boolean }) =>
+  update: (id: string, body: Partial<Omit<ApiSource, 'id' | 'auth' | 'connect'>> & { auth?: HtmlSourceAuthInput }, opts?: { quiet?: boolean }) =>
     request<ApiSource>(`/api/v1/sources/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
@@ -767,9 +782,11 @@ export interface ServerInfo {
   /**
    * The SRT relay Strom fronts. Absent on older backends. When `configured`,
    * sources and outputs may use `srt+relay://auto` addresses; `public` is the
-   * relay's public host:port.
+   * relay's public host:port. `state` (newer backends): `ok` when Strom
+   * answered the last check, `unreachable` when the values are last known,
+   * `unknown` before Strom has answered at all.
    */
-  srtRelay?: { configured: boolean; public: string | null }
+  srtRelay?: { configured: boolean; public: string | null; state?: 'ok' | 'unreachable' | 'unknown' }
 }
 
 export const serverInfoApi = {

@@ -63,9 +63,9 @@ export function listenerReady(mode: ListenerPortMode, manualPort: string, keep?:
  * Whether the backend's Strom fronts an SRT relay. Only then is "Via relay"
  * offered for new addresses. Older backends do not report it: not configured.
  */
-export function useSrtRelay(): { configured: boolean; public: string | null } {
+export function useSrtRelayConfigured(): boolean {
   const { info } = useServerInfo()
-  return { configured: info?.srtRelay?.configured === true, public: info?.srtRelay?.public ?? null }
+  return info?.srtRelay?.configured === true
 }
 
 export const RELAY_LABEL = 'Via relay (one public port)'
@@ -116,7 +116,7 @@ export function RemovePassphraseButton({ onClick }: { onClick: () => void }) {
  * mark it for removal; the field is then disabled until the removal is undone.
  */
 export function ListenerFields({
-  mode, manualPort, onManualPort, passphrase, onPassphrase, keepPort, hasPassphrase,
+  mode, manualPort, onManualPort, passphrase, onPassphrase, keepPort, hasPassphrase, passphraseError,
   removePassphrase = false, onRemovePassphrase,
 }: {
   mode: ListenerPortMode
@@ -125,9 +125,11 @@ export function ListenerFields({
   passphrase: string
   onPassphrase: (v: string) => void
   keepPort?: number | null
+  /** Whether a passphrase is stored that a blank field keeps. */
   hasPassphrase?: boolean
   removePassphrase?: boolean
   onRemovePassphrase?: (remove: boolean) => void
+  passphraseError?: string | null
 }) {
   return (
     <>
@@ -186,6 +188,7 @@ export function ListenerFields({
             <RemovePassphraseButton onClick={() => onRemovePassphrase(true)} />
           )
         )}
+        {passphraseError && <p className="text-xs text-red-400 mt-1">{passphraseError}</p>}
       </div>
     </>
   )
@@ -197,11 +200,12 @@ export function ListenerFields({
  * ("The sender", "Viewers"); `dialIn` is the address it dials, once known.
  */
 export function RelayFields({
-  passphrase, onPassphrase, hasPassphrase, who, dialIn, stored,
+  passphrase, onPassphrase, hasPassphrase, who, dialIn, dialInMissing, stored, passphraseError,
   removePassphrase = false, onRemovePassphrase,
 }: {
   passphrase: string
   onPassphrase: (v: string) => void
+  /** Whether a relay passphrase is stored that a blank field keeps. */
   hasPassphrase?: boolean
   /** As on ListenerFields: mark a stored passphrase for removal on save. */
   removePassphrase?: boolean
@@ -209,8 +213,11 @@ export function RelayFields({
   who: string
   /** The relay dial-in address of a saved document (backend `connect.uri`). */
   dialIn?: string | null
+  /** Why `dialIn` is unknown (see `dialInUnknownReason`). */
+  dialInMissing?: string
   /** Whether the document is already saved as a relay address. */
   stored?: boolean
+  passphraseError?: string | null
 }) {
   return (
     <>
@@ -242,6 +249,7 @@ export function RelayFields({
             <RemovePassphraseButton onClick={() => onRemovePassphrase(true)} />
           )
         )}
+        {passphraseError && <p className="text-xs text-red-400 mt-1">{passphraseError}</p>}
         {(removePassphrase || (!hasPassphrase && !passphrase.trim())) && (
           <p className="text-xs text-amber-400 mt-1">
             The relay port is public: anyone who learns the stream ID can connect. Set a passphrase.
@@ -252,7 +260,7 @@ export function RelayFields({
         <p className="text-xs text-[--color-text-muted] font-mono break-all">
           {dialIn
             ? `${who} dials ${dialIn}${hasPassphrase && !removePassphrase ? ' with the passphrase' : ''}`
-            : 'The relay\'s public address is not known yet.'}
+            : `The relay dial-in address is not known: ${dialInMissing ?? 'relay address not known'}.`}
         </p>
       )}
     </>

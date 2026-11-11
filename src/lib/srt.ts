@@ -129,33 +129,74 @@ export function maskedPassphraseError(address: string, stored: string): string |
 }
 
 /**
- * The relay address to PATCH when an edit is saved, or undefined to leave the
- * stored one alone. Same rules as a listener: `removePassphrase` on a stored relay
- * address sends it without a passphrase; a typed passphrase, or a switch from
- * another direction, sends a new one; otherwise nothing is sent, so the masked
- * `***` is never written back. Always `auto`: the backend keeps the stream ID.
- */
-export function relayEditAddress(edit: {
-  stored: string
-  passphrase: string
-  removePassphrase: boolean
-}): string | undefined {
-  const switched = srtDirection(edit.stored) !== 'relay'
-  if (edit.removePassphrase && !switched) return buildRelayAddress()
-  if (switched || edit.passphrase.trim()) return buildRelayAddress(edit.passphrase)
-  return undefined
-}
-
-/**
  * The address the outside party dials for a stored SRT address, or null when
- * there is none to show. A listener: the Strom host with the mode flipped. A
- * relay: the backend's `connect.uri` (`srt://<relay>?streamid=<id>`), which is
- * null while the relay's public address is unknown. A caller address points
- * elsewhere, so nobody dials us. Never carries the passphrase.
+ * there is none to show. The backend's `connect` decides for listener and relay
+ * addresses alike (it applies SRT_PUBLIC_HOST, refuses private Strom hosts, and
+ * knows the relay's public address), so Studio and backend never compute the
+ * public address two ways. `connect.uri` is null when the backend cannot tell;
+ * `dialInUnknownReason` says why. Only an older backend that sends no `connect`
+ * falls back to the Strom host with the listener mode flipped. A caller address
+ * points elsewhere, so nobody dials us. Never carries the passphrase.
  */
 export function dialInAddress(address: string, connect: SrtConnect | undefined, stromHost?: string): string | null {
   const direction = srtDirection(address)
-  if (direction === 'relay') return connect?.uri ?? null
-  if (direction === 'listener') return toCallerUrl(address, stromHost)
-  return null
+  if (direction === 'caller') return null
+  if (connect) return connect.uri
+  return direction === 'listener' ? toCallerUrl(address, stromHost) : null
+}
+
+/** Why the backend could not give a dial-in address, in an operator's words. */
+export function dialInUnknownReason(connect: SrtConnect | undefined): string {
+  switch (connect?.reason) {
+    case 'srt-relay-not-configured':
+      return 'Strom reports no SRT relay'
+    case 'srt-relay-unreachable':
+      return 'relay status unavailable, Strom is not answering'
+    case 'srt-host-not-configured':
+    case 'srt-host-not-loopback-reachable':
+    case 'strom-url-not-parseable':
+      return 'public SRT host not known (set SRT_PUBLIC_HOST on the backend)'
+    default:
+      return connect?.source === 'srt-relay' || !connect ? 'relay address not known' : 'dial-in address not known'
+  }
+}
+
+/**
+ * The one-line description of a stored SRT address in a source or output row:
+ * who dials what (e.g. `sender dials srt://… with the passphrase`), or, when
+ * the dial-in address is unknown, why. `dials` is the subject and verb
+ * ("sender dials", "viewers dial"). A caller address is shown as stored.
+ */
+export function srtRowLabel(address: string, connect: SrtConnect | undefined, stromHost: string | undefined, dials: string): string {
+  const direction = srtDirection(address)
+  const dialIn = dialInAddress(address, connect, stromHost)
+  if (dialIn) return `${dials} ${dialIn}${passphraseOf(address) !== null ? ' with the passphrase' : ''}`
+  if (direction === 'relay') return `via relay · stream ID ${relayIdOf(address) ?? '—'} · ${dialInUnknownReason(connect)}`
+  if (direction === 'listener') return `${stripPassphrase(address)} · ${dialInUnknownReason(connect)}`
+  return address
+}
+
+/**
+ * The address an Edit of a relay document sends, or undefined to leave the
+ * stored one alone. Like a listener: an unchanged relay address with no new
+ * passphrase is not sent, so the masked passphrase the backend returned is
+ * never written back. Otherwise `auto`, and the backend keeps the stream ID.
+ * `removePassphrase` on a stored relay address sends it without a passphrase,
+ * which removes it (the backend replaces a sent address in full).
+ */
+export function relayAddressPatch(storedDirection: SrtDirection | null, passphrase: string, removePassphrase = false): string | undefined {
+  if (removePassphrase && storedDirection === 'relay') return buildRelayAddress()
+  return storedDirection !== 'relay' || passphrase.trim() ? buildRelayAddress(passphrase) : undefined
+}
+
+/**
+ * The SRT (libsrt) passphrase rule, checked on the raw value before it is
+ * URL-encoded: empty (none), or 10–79 characters. Null when it is fine.
+ */
+export function passphraseError(passphrase: string): string | null {
+  const p = passphrase.trim()
+  if (!p) return null
+  return p.length < 10 || p.length > 79
+    ? `The passphrase must be 10–79 characters (it is ${p.length}).`
+    : null
 }

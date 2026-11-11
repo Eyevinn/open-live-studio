@@ -10,11 +10,14 @@ import {
   hasMaskedPassphrase,
   listenerEditAddress,
   maskedPassphraseError,
-  relayEditAddress,
   isRelayAddress,
   relayIdOf,
   buildRelayAddress,
   dialInAddress,
+  dialInUnknownReason,
+  passphraseError,
+  relayAddressPatch,
+  srtRowLabel,
 } from './srt'
 import type { SrtConnect } from './api'
 
@@ -172,31 +175,6 @@ describe('maskedPassphraseError', () => {
   })
 })
 
-describe('relayEditAddress', () => {
-  const stored = 'srt+relay://abcdefghijklmnop?passphrase=***'
-
-  it('removes the passphrase when asked, even with text in the field', () => {
-    expect(relayEditAddress({ stored, passphrase: 'ignored-value', removePassphrase: true })).toBe('srt+relay://auto')
-  })
-
-  it('sends nothing for an empty field, so the stored passphrase is kept', () => {
-    expect(relayEditAddress({ stored, passphrase: '  ', removePassphrase: false })).toBeUndefined()
-  })
-
-  it('sends a newly typed passphrase', () => {
-    expect(relayEditAddress({ stored, passphrase: 'new-secret-123', removePassphrase: false })).toBe(
-      'srt+relay://auto?passphrase=new-secret-123',
-    )
-  })
-
-  it('sends a relay address when switching from another direction', () => {
-    expect(relayEditAddress({ stored: 'srt://:9000?mode=listener', passphrase: '', removePassphrase: true })).toBe('srt+relay://auto')
-    expect(relayEditAddress({ stored: 'srt://h.example:9000?mode=caller', passphrase: 'pass-123456', removePassphrase: false })).toBe(
-      'srt+relay://auto?passphrase=pass-123456',
-    )
-  })
-})
-
 describe('relay addresses', () => {
   it('are recognised and read as their own direction', () => {
     expect(isRelayAddress('srt+relay://abc')).toBe(true)
@@ -232,11 +210,75 @@ describe('dialInAddress', () => {
     expect(dialInAddress('srt+relay://abc', undefined)).toBeNull()
   })
 
-  it('listener: the Strom host with the mode flipped, as before', () => {
+  it('listener: the backend connect decides (SRT_PUBLIC_HOST), not the Strom host', () => {
+    const connect: SrtConnect = { uri: 'srt://srt.example.com:1234?mode=caller', host: 'srt.example.com', port: 1234, mode: 'caller', source: 'srt-public-host' }
+    expect(dialInAddress('srt://:1234?mode=listener', connect, 'strom.example')).toBe('srt://srt.example.com:1234?mode=caller')
+    // The backend refuses a private Strom host: no guessed address either.
+    const privateHost: SrtConnect = { uri: null, host: '10.0.0.5', port: 1234, mode: 'caller', source: 'strom-host', reason: 'srt-host-not-loopback-reachable' }
+    expect(dialInAddress('srt://:1234?mode=listener', privateHost, '10.0.0.5')).toBeNull()
+  })
+
+  it('listener on an older backend without connect: the Strom host with the mode flipped', () => {
     expect(dialInAddress('srt://:1234?mode=listener&passphrase=***', undefined, 'host.example')).toBe('srt://host.example:1234?mode=caller')
   })
 
-  it('caller: nothing to dial', () => {
-    expect(dialInAddress('srt://host.example:1234?mode=caller', undefined, 'strom.example')).toBeNull()
+  it('caller: nothing to dial, whatever connect says', () => {
+    const connect: SrtConnect = { uri: 'srt://host.example:1234?mode=listener', host: 'host.example', port: 1234, mode: 'listener', source: 'authored-host' }
+    expect(dialInAddress('srt://host.example:1234?mode=caller', connect, 'strom.example')).toBeNull()
+  })
+})
+
+describe('srtRowLabel', () => {
+  const unresolved = (reason: string): SrtConnect => ({ uri: null, host: null, port: null, mode: 'caller', source: 'srt-relay', streamid: 'abc', reason })
+
+  it('says who dials what, with the passphrase when one is set', () => {
+    const connect: SrtConnect = { uri: 'srt://relay.example.com:9000?streamid=abc', host: 'relay.example.com', port: 9000, mode: 'caller', source: 'srt-relay', streamid: 'abc' }
+    expect(srtRowLabel('srt+relay://abc?passphrase=***', connect, undefined, 'sender dials')).toBe('sender dials srt://relay.example.com:9000?streamid=abc with the passphrase')
+  })
+
+  it('gives the reason when a relay dial-in address is unknown', () => {
+    expect(srtRowLabel('srt+relay://abc', unresolved('srt-relay-not-configured'), undefined, 'x')).toBe('via relay · stream ID abc · Strom reports no SRT relay')
+    expect(srtRowLabel('srt+relay://abc', unresolved('srt-relay-unreachable'), undefined, 'x')).toBe('via relay · stream ID abc · relay status unavailable, Strom is not answering')
+    expect(srtRowLabel('srt+relay://abc', unresolved('srt-relay-public-unknown'), undefined, 'x')).toBe('via relay · stream ID abc · relay address not known')
+    expect(srtRowLabel('srt+relay://abc', undefined, undefined, 'x')).toBe('via relay · stream ID abc · relay address not known')
+  })
+
+  it('a caller address is shown as stored', () => {
+    expect(srtRowLabel('srt://cdn.example.com:9000?mode=caller', undefined, 'strom', 'x')).toBe('srt://cdn.example.com:9000?mode=caller')
+  })
+
+  it('reason texts', () => {
+    expect(dialInUnknownReason({ uri: null, host: null, port: 1, mode: 'caller', source: 'strom-host', reason: 'srt-host-not-loopback-reachable' })).toMatch(/SRT_PUBLIC_HOST/)
+  })
+})
+
+describe('relayAddressPatch', () => {
+  it('leaves a stored relay address alone without a new passphrase', () => {
+    expect(relayAddressPatch('relay', '')).toBeUndefined()
+    expect(relayAddressPatch('relay', '   ')).toBeUndefined()
+  })
+  it('sends auto with a new passphrase, or when switching to relay', () => {
+    expect(relayAddressPatch('relay', 'anothersecret')).toBe('srt+relay://auto?passphrase=anothersecret')
+    expect(relayAddressPatch('listener', '')).toBe('srt+relay://auto')
+    expect(relayAddressPatch(null, '')).toBe('srt+relay://auto')
+  })
+  it('removes a stored passphrase when asked, even with text in the field', () => {
+    expect(relayAddressPatch('relay', 'ignored-value', true)).toBe('srt+relay://auto')
+    expect(relayAddressPatch('listener', 'pass-123456', true)).toBe('srt+relay://auto?passphrase=pass-123456')
+  })
+})
+
+describe('passphraseError', () => {
+  it('accepts none, or 10–79 characters counted before URL encoding', () => {
+    expect(passphraseError('')).toBeNull()
+    expect(passphraseError('   ')).toBeNull()
+    expect(passphraseError('a'.repeat(10))).toBeNull()
+    expect(passphraseError('a'.repeat(79))).toBeNull()
+    // 10 raw characters that encode to more: still fine.
+    expect(passphraseError('&&&&&&&&&&')).toBeNull()
+  })
+  it('refuses shorter or longer ones with a clear message', () => {
+    expect(passphraseError('short')).toBe('The passphrase must be 10–79 characters (it is 5).')
+    expect(passphraseError('a'.repeat(80))).toMatch(/10–79 characters \(it is 80\)/)
   })
 })

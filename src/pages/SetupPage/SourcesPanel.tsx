@@ -7,13 +7,13 @@ import { useServerInfo } from '@/hooks/useServerInfo'
 import { ApiError, sourcesApi, type AudioStreamsResponse, type HtmlSourceAuth, type HtmlSourceAuthInput, type SrtConnect, type StreamType } from '@/lib/api'
 import { openHtmlAuthPopup, originOf, maskCredential } from '@/lib/htmlSourceAuthPopup'
 import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
-import { buildListenerAddress, buildRelayAddress, dialInAddress, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, passphraseOf, relayEditAddress, relayIdOf, srtDirection, stripPassphrase, toCallerUrl, type SrtDirection } from '@/lib/srt'
+import { buildListenerAddress, buildRelayAddress, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, passphraseError, passphraseOf, relayAddressPatch, srtDirection, srtRowLabel, stripPassphrase, type SrtDirection } from '@/lib/srt'
 import { EFP_AUDIO_STREAM_NOTE, audioStreamIndexPatch, efpIgnoredAudioStreamNote, newSourceAudioStreamIndex, supportsAudioStreamSelection } from '@/lib/audio-stream-index'
 import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
 import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
-import { DirectionToggle, ListenerFields, RELAY_LABEL, RelayFields, RemovePassphraseButton, inputCls, labelCls, listenerPortFor, listenerReady, useListenerPortMode, useSrtRelay } from '@/components/ui/SrtDirectionFields'
+import { DirectionToggle, ListenerFields, RELAY_LABEL, RelayFields, RemovePassphraseButton, inputCls, labelCls, listenerPortFor, listenerReady, useListenerPortMode, useSrtRelayConfigured } from '@/components/ui/SrtDirectionFields'
 import { ClipReferenceFields } from '@/components/ui/ClipReferenceFields'
 import { emptyClipRef, parseClipRef, serializeClipRef, validateClipRef, type ClipRefState } from '@/lib/clipRef'
 import { useIsPhone } from '@/hooks/usePhoneLayout'
@@ -116,6 +116,10 @@ interface EditState {
   initialAudioStreamIndex: string
   /** The address as stored (passphrase masked by the backend). */
   stored: string
+  /** SRT/EFP: which way the stored address points, read once on open; null otherwise. */
+  storedDirection: SrtDirection | null
+  /** Whether the stored address carries a passphrase (masked). */
+  storedPassphrase: boolean
   /** The backend's dial-in address for the stored address (relay: `srt://<relay>?streamid=<id>`). */
   connect?: SrtConnect
   direction: SrtDirection
@@ -152,7 +156,7 @@ export function SourcesPanel() {
   const fetchGateways = useGatewaysStore((s) => s.fetchAll)
   const { info } = useServerInfo()
   const portMode = useListenerPortMode()
-  const srtRelay = useSrtRelay()
+  const relayConfigured = useSrtRelayConfigured()
 
   useEffect(() => {
     void fetchAll()
@@ -297,6 +301,10 @@ export function SourcesPanel() {
     if (STREAM_TYPE_HAS_LATENCY[newStreamType] && !latency.ok) { setAddLatencyError(latency.message); return }
     const audio = newSourceAudioStreamIndex(newStreamType, newAudioStreamIndex)
     if (!audio.ok) { setNewAudioStreamError(audio.error); return }
+    if (newIsListener || newIsRelay) {
+      const ppErr = passphraseError(newPassphrase)
+      if (ppErr) { setAddAddressError(ppErr); return }
+    }
     let address = newAddress.trim()
     if (newIsListener) {
       const port = listenerPortFor(portMode, newManualPort)
@@ -334,7 +342,8 @@ export function SourcesPanel() {
 
   function openEdit(src: { id: string; name: string; address?: string; latency?: number; audioStreamIndex?: number; streamType: StreamType; auth?: HtmlSourceAuth; connect?: SrtConnect }) {
     const stored = src.address ?? ''
-    const direction: SrtDirection = isSrt(src.streamType) ? srtDirection(stored) : 'caller'
+    const storedDirection = isSrt(src.streamType) ? srtDirection(stored) : null
+    const direction: SrtDirection = storedDirection ?? 'caller'
     const storedValueSet = hasStoredHeaderValue(src.auth)
     setEditTarget({
       id: src.id,
@@ -344,6 +353,8 @@ export function SourcesPanel() {
       audioStreamIndex: String(src.audioStreamIndex ?? 0),
       initialAudioStreamIndex: String(src.audioStreamIndex ?? 0),
       stored,
+      storedDirection,
+      storedPassphrase: passphraseOf(stored) !== null,
       connect: src.connect,
       direction,
       address: direction === 'caller' ? stored : '',
@@ -450,13 +461,17 @@ export function SourcesPanel() {
     // An empty field leaves the stored latency unchanged (no `latency` key).
     const latency = validateLatency(editTarget.latency)
     if (STREAM_TYPE_HAS_LATENCY[editTarget.streamType] && !latency.ok) { setEditLatencyError(latency.message); return }
+    if (editIsListener || editIsRelay) {
+      const ppErr = editTarget.removePassphrase ? null : passphraseError(editTarget.passphrase)
+      if (ppErr) { setEditAddressError(ppErr); return }
+    }
     let address: string | undefined
     if (editIsListener) {
       const port = listenerPortFor(portMode, editTarget.manualPort, editTarget.port)
       if (port === null) return
       address = listenerEditAddress({ ...editTarget, port })
     } else if (editIsRelay) {
-      address = relayEditAddress(editTarget)
+      address = relayAddressPatch(editTarget.storedDirection, editTarget.passphrase, editTarget.removePassphrase)
     } else if (STREAM_TYPE_HAS_ADDRESS[editTarget.streamType]) {
       address = editTarget.address.trim()
       if (isSrt(editTarget.streamType)) {
@@ -579,7 +594,6 @@ export function SourcesPanel() {
         {[...sources].sort((a, b) => a.name.localeCompare(b.name)).map((src) => {
           const inActiveProduction = activeSourceIds.has(src.id)
           const listener = isSrt(src.streamType) && !!src.address && srtDirection(src.address) === 'listener'
-          const viaRelay = isSrt(src.streamType) && !!src.address && srtDirection(src.address) === 'relay'
           const ingest = isSrt(src.streamType) && src.address ? dialInAddress(src.address, src.connect, info?.stromHost) : null
           // Gateway-owned sources are recreated by the gateway on every heartbeat,
           // so Edit/Delete are locked in Studio (open-live #263, read-only Phase 1).
@@ -643,11 +657,7 @@ export function SourcesPanel() {
                   </span>
                 ) : STREAM_TYPE_HAS_ADDRESS[src.streamType] && (
                   <span className="text-xs text-[--color-text-muted] font-mono truncate block">
-                    {ingest
-                      ? `sender dials ${ingest}${passphraseOf(src.address) ? ' with the passphrase' : ''}`
-                      : viaRelay
-                        ? `via relay · stream ID ${relayIdOf(src.address) ?? '—'} · relay address not known`
-                        : src.address}
+                    {isSrt(src.streamType) && src.address ? srtRowLabel(src.address, src.connect, info?.stromHost, 'sender dials') : src.address}
                     {src.latency != null && src.latency !== 125 && (
                       <span className="ml-2 text-[--color-text-muted] opacity-60">{src.latency} ms</span>
                     )}
@@ -737,7 +747,7 @@ export function SourcesPanel() {
                 onChange={(direction) => { setEditTarget({ ...editTarget, direction }); setEditAddressError(null) }}
                 listenerLabel={LISTENER_LABEL}
                 callerLabel={CALLER_LABEL}
-                relayLabel={srtRelay.configured || srtDirection(editTarget.stored) === 'relay' ? RELAY_LABEL : undefined}
+                relayLabel={relayConfigured || editTarget.storedDirection === 'relay' ? RELAY_LABEL : undefined}
               />
             )}
             {editTarget.streamType === 'clip' ? (
@@ -753,15 +763,18 @@ export function SourcesPanel() {
                   manualPort={editTarget.manualPort}
                   onManualPort={(manualPort) => setEditTarget({ ...editTarget, manualPort })}
                   passphrase={editTarget.passphrase}
-                  onPassphrase={(passphrase) => setEditTarget({ ...editTarget, passphrase })}
-                  keepPort={srtDirection(editTarget.stored) === 'listener' ? editTarget.port : null}
-                  hasPassphrase={passphraseOf(editTarget.stored) !== null}
+                  onPassphrase={(passphrase) => { setEditTarget({ ...editTarget, passphrase }); setEditAddressError(null) }}
+                  keepPort={editTarget.storedDirection === 'listener' ? editTarget.port : null}
+                  // "Leave blank to keep" only holds when the stored address is a
+                  // listener too: switching from relay builds a new address.
+                  hasPassphrase={editTarget.storedDirection === 'listener' && editTarget.storedPassphrase}
+                  passphraseError={editAddressError}
                   removePassphrase={editTarget.removePassphrase}
                   onRemovePassphrase={(removePassphrase) => setEditTarget({ ...editTarget, removePassphrase })}
                 />
-                {editTarget.port && srtDirection(editTarget.stored) === 'listener' && (
+                {editTarget.port && editTarget.storedDirection === 'listener' && (
                   <p className="text-xs text-[--color-text-muted] font-mono break-all">
-                    Sender dials {toCallerUrl(editTarget.stored, info?.stromHost)}{passphraseOf(editTarget.stored) ? ' with the passphrase' : ''}
+                    {srtRowLabel(editTarget.stored, editTarget.connect, info?.stromHost, 'Sender dials')}
                   </p>
                 )}
               </>
@@ -769,12 +782,14 @@ export function SourcesPanel() {
               <RelayFields
                 who="The sender"
                 passphrase={editTarget.passphrase}
+                onPassphrase={(passphrase) => { setEditTarget({ ...editTarget, passphrase }); setEditAddressError(null) }}
+                hasPassphrase={editTarget.storedDirection === 'relay' && editTarget.storedPassphrase}
+                stored={editTarget.storedDirection === 'relay'}
                 removePassphrase={editTarget.removePassphrase}
                 onRemovePassphrase={(removePassphrase) => setEditTarget({ ...editTarget, removePassphrase })}
-                onPassphrase={(passphrase) => setEditTarget({ ...editTarget, passphrase })}
-                hasPassphrase={srtDirection(editTarget.stored) === 'relay' && passphraseOf(editTarget.stored) !== null}
-                stored={srtDirection(editTarget.stored) === 'relay'}
                 dialIn={dialInAddress(editTarget.stored, editTarget.connect)}
+                dialInMissing={dialInUnknownReason(editTarget.connect)}
+                passphraseError={editAddressError}
               />
             ) : STREAM_TYPE_HAS_ADDRESS[editTarget.streamType] && (
               <div>
@@ -1031,7 +1046,7 @@ export function SourcesPanel() {
               onChange={(d) => { setNewDirection(d); setAddAddressError(null) }}
               listenerLabel={LISTENER_LABEL}
               callerLabel={CALLER_LABEL}
-              relayLabel={srtRelay.configured ? RELAY_LABEL : undefined}
+              relayLabel={relayConfigured ? RELAY_LABEL : undefined}
             />
           )}
           {newStreamType === 'clip' ? (
@@ -1046,10 +1061,16 @@ export function SourcesPanel() {
               manualPort={newManualPort}
               onManualPort={setNewManualPort}
               passphrase={newPassphrase}
-              onPassphrase={setNewPassphrase}
+              onPassphrase={(v) => { setNewPassphrase(v); setAddAddressError(null) }}
+              passphraseError={addAddressError}
             />
           ) : newIsRelay ? (
-            <RelayFields who="The sender" passphrase={newPassphrase} onPassphrase={setNewPassphrase} />
+            <RelayFields
+              who="The sender"
+              passphrase={newPassphrase}
+              onPassphrase={(v) => { setNewPassphrase(v); setAddAddressError(null) }}
+              passphraseError={addAddressError}
+            />
           ) : STREAM_TYPE_HAS_ADDRESS[newStreamType] && (
             <div>
               <label className={labelCls}>{isSrt(newStreamType) ? "Sender's address" : 'Address'}</label>
