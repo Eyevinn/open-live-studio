@@ -166,7 +166,7 @@ export function ListenerFields({
       </div>
       <div>
         <label className={labelCls}>
-          Passphrase <span className="normal-case opacity-60">(optional, 10–79 characters)</span>
+          Passphrase <span className="normal-case opacity-60">(optional, 10–79 bytes, å counts as 2)</span>
         </label>
         <input
           type="text"
@@ -227,7 +227,7 @@ export function RelayFields({
       </p>
       <div>
         <label className={labelCls}>
-          Passphrase <span className="normal-case opacity-60">(recommended, 10–79 characters)</span>
+          Passphrase <span className="normal-case opacity-60">(recommended, 10–79 bytes, å counts as 2)</span>
         </label>
         <input
           type="text"

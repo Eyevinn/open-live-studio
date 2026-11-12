@@ -304,7 +304,7 @@ describe('relayAddressPatch', () => {
 })
 
 describe('passphraseError', () => {
-  it('accepts none, or 10–79 characters counted before URL encoding', () => {
+  it('accepts none, or 10–79 UTF-8 bytes counted before URL encoding', () => {
     expect(passphraseError('')).toBeNull()
     expect(passphraseError('   ')).toBeNull()
     expect(passphraseError('a'.repeat(10))).toBeNull()
@@ -313,7 +313,10 @@ describe('passphraseError', () => {
     expect(passphraseError('&&&&&&&&&&')).toBeNull()
   })
   it('refuses shorter or longer ones with a clear message', () => {
-    expect(passphraseError('short')).toBe('The passphrase must be 10–79 characters (it is 5).')
-    expect(passphraseError('a'.repeat(80))).toMatch(/10–79 characters \(it is 80\)/)
+    expect(passphraseError('short')).toBe('The passphrase must be 10–79 bytes (it is 5; letters such as å count as 2).')
+    expect(passphraseError('a'.repeat(80))).toMatch(/10–79 bytes \(it is 80;/)
+    // 45 × å is 45 UTF-16 units but 90 bytes, which Strom refuses.
+    expect(passphraseError('å'.repeat(45))).toMatch(/it is 90;/)
+    expect(passphraseError('å'.repeat(39))).toBeNull()
   })
 })

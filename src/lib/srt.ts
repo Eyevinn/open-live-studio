@@ -220,13 +220,16 @@ export function relayAddressPatch(storedDirection: SrtDirection | null, passphra
 }
 
 /**
- * The SRT (libsrt) passphrase rule, checked on the raw value before it is
- * URL-encoded: empty (none), or 10–79 characters. Null when it is fine.
+ * The SRT passphrase rule, checked on the raw value before it is URL-encoded:
+ * empty (none), or 10–79 bytes in UTF-8, so "å" counts as 2. Strom checks the
+ * decoded value in bytes (up to 80) and the Open Live backend allows at most
+ * 79, so 79 is the limit that passes both. Null when it is fine.
  */
 export function passphraseError(passphrase: string): string | null {
   const p = passphrase.trim()
   if (!p) return null
-  return p.length < 10 || p.length > 79
-    ? `The passphrase must be 10–79 characters (it is ${p.length}).`
+  const bytes = new TextEncoder().encode(p).length
+  return bytes < 10 || bytes > 79
+    ? `The passphrase must be 10–79 bytes (it is ${bytes}; letters such as å count as 2).`
     : null
 }

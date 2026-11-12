@@ -117,7 +117,7 @@ describe('OutputsPanel — SRT relay not configured', () => {
     expect(update.mock.calls[0]?.[1]).toMatchObject({ url: 'srt://:0?mode=listener' })
   })
 
-  it('refuses a passphrase outside 10–79 characters with a clear message', async () => {
+  it('refuses a passphrase outside 10–79 bytes with a clear message', async () => {
     const create = vi.spyOn(outputsApi, 'create').mockResolvedValue({ ...LISTENER_OUT, id: 'new' })
     render(<OutputsPanel />)
     await screen.findByText('Relay PGM')
@@ -126,7 +126,7 @@ describe('OutputsPanel — SRT relay not configured', () => {
     fireEvent.change(screen.getAllByRole('textbox')[0]!, { target: { value: 'Out 2' } })
     fireEvent.change(screen.getByPlaceholderText('None'), { target: { value: 'short' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
-    expect(await screen.findByText('The passphrase must be 10–79 characters (it is 5).')).toBeTruthy()
+    expect(await screen.findByText('The passphrase must be 10–79 bytes (it is 5; letters such as å count as 2).')).toBeTruthy()
     expect(create).not.toHaveBeenCalled()
   })
 })

@@ -108,14 +108,14 @@ describe('SourcesPanel — SRT relay', () => {
     expect(update.mock.calls[0]?.[1]).toMatchObject({ address: 'srt://:0?mode=listener&passphrase=newlistenersecret' })
   })
 
-  it('refuses a relay passphrase outside 10–79 characters', async () => {
+  it('refuses a relay passphrase outside 10–79 bytes', async () => {
     const update = vi.spyOn(sourcesApi, 'update').mockResolvedValue(RELAY_CAM)
     render(<SourcesPanel />)
     fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
     await screen.findByText('Edit Source')
     fireEvent.change(screen.getByPlaceholderText('Set — leave blank to keep'), { target: { value: 'x'.repeat(80) } })
     save()
-    expect(await screen.findByText('The passphrase must be 10–79 characters (it is 80).')).toBeTruthy()
+    expect(await screen.findByText('The passphrase must be 10–79 bytes (it is 80; letters such as å count as 2).')).toBeTruthy()
     expect(update).not.toHaveBeenCalled()
   })
 
