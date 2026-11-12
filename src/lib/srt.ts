@@ -27,12 +27,21 @@ export function relayIdOf(address: string): string | null {
 }
 
 /**
+ * A passphrase as a URL query value. encodeURIComponent leaves `! * ' ( ) ~`
+ * as they are, but the backend accepts only `[A-Za-z0-9._-=&%+]` in an SRT
+ * query, so those are percent-encoded too. Strom decodes the value.
+ */
+export function encodePassphrase(passphrase: string): string {
+  return encodeURIComponent(passphrase).replace(/[!*'()~]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+}
+
+/**
  * A relay address for a new or re-saved document. The backend generates the
  * stream ID for `auto`, or keeps the one the document already has.
  */
 export function buildRelayAddress(passphrase?: string): string {
   const p = passphrase?.trim()
-  return `srt+relay://auto${p ? `?passphrase=${encodeURIComponent(p)}` : ''}`
+  return `srt+relay://auto${p ? `?passphrase=${encodePassphrase(p)}` : ''}`
 }
 
 /** Which way a stored SRT address points. Hostless means Strom listens. */
@@ -60,7 +69,7 @@ export function passphraseOf(address: string): string | null {
 /** A listener address for Strom to bind. Port 0 lets the backend choose. */
 export function buildListenerAddress(port: number, passphrase?: string): string {
   const p = passphrase?.trim()
-  return `srt://:${port}?mode=listener${p ? `&passphrase=${encodeURIComponent(p)}` : ''}`
+  return `srt://:${port}?mode=listener${p ? `&passphrase=${encodePassphrase(p)}` : ''}`
 }
 
 /** The address without its passphrase parameter. */

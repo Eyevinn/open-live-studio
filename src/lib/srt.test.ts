@@ -18,6 +18,7 @@ import {
   dialInIsLocalOnly,
   passphraseError,
   relayAddressPatch,
+  encodePassphrase,
   srtRowLabel,
 } from './srt'
 import type { SrtConnect } from './api'
@@ -176,6 +177,22 @@ describe('maskedPassphraseError', () => {
   })
 })
 
+describe('encodePassphrase', () => {
+  const BACKEND_QUERY_CHARS = /^[A-Za-z0-9._\-=&%+]+$/
+
+  it("percent-encodes ! * ' ( ) ~, which encodeURIComponent leaves", () => {
+    expect(encodePassphrase("my!secret(2024)*'~")).toBe('my%21secret%282024%29%2A%27%7E')
+  })
+
+  it('gives addresses the backend query charset accepts, and decodes back', () => {
+    const p = "a b!c*d'e(f)g~h/i?j&k=l#m+nå"
+    expect(decodeURIComponent(encodePassphrase(p))).toBe(p)
+    expect(buildRelayAddress(p).split('?')[1]).toMatch(BACKEND_QUERY_CHARS)
+    expect(buildListenerAddress(9000, p).split('?')[1]).toMatch(BACKEND_QUERY_CHARS)
+    expect(passphraseOf(buildListenerAddress(9000, p))).toBe(p)
+  })
+})
+
 describe('relay addresses', () => {
   it('are recognised and read as their own direction', () => {
     expect(isRelayAddress('srt+relay://abc')).toBe(true)
@@ -192,7 +209,7 @@ describe('relay addresses', () => {
   it('are built as auto, with an optional encoded passphrase', () => {
     expect(buildRelayAddress()).toBe('srt+relay://auto')
     expect(buildRelayAddress('  ')).toBe('srt+relay://auto')
-    expect(buildRelayAddress('pass word!1')).toBe('srt+relay://auto?passphrase=pass%20word!1')
+    expect(buildRelayAddress('pass word!1')).toBe('srt+relay://auto?passphrase=pass%20word%211')
   })
 
   it('bind no listener port', () => {
