@@ -131,18 +131,33 @@ export function maskedPassphraseError(address: string, stored: string): string |
 /**
  * The address the outside party dials for a stored SRT address, or null when
  * there is none to show. The backend's `connect` decides for listener and relay
- * addresses alike (it applies SRT_PUBLIC_HOST, refuses private Strom hosts, and
- * knows the relay's public address), so Studio and backend never compute the
- * public address two ways. `connect.uri` is null when the backend cannot tell;
- * `dialInUnknownReason` says why. Only an older backend that sends no `connect`
- * falls back to the Strom host with the listener mode flipped. A caller address
- * points elsewhere, so nobody dials us. Never carries the passphrase.
+ * addresses alike (it applies SRT_PUBLIC_HOST and knows the relay's public
+ * address), so Studio and backend never compute the public address two ways.
+ * A caller address points elsewhere, so nobody dials us. Never carries the
+ * passphrase.
+ *
+ * A listener on a private or localhost Strom gets `connect.uri: null` (no
+ * public address), but it can still be dialled on that network, so the Strom
+ * host is used with the mode flipped; `dialInIsLocalOnly` tells the two apart.
+ * The same fallback covers an older backend that sends no `connect`. A relay
+ * address with `uri: null` has no fallback: its public address is unknown.
  */
 export function dialInAddress(address: string, connect: SrtConnect | undefined, stromHost?: string): string | null {
   const direction = srtDirection(address)
   if (direction === 'caller') return null
-  if (connect) return connect.uri
-  return direction === 'listener' ? toCallerUrl(address, stromHost) : null
+  if (connect?.uri) return connect.uri
+  if (direction !== 'listener') return null
+  const host = connect?.host ?? stromHost
+  return host ? toCallerUrl(address, host) : null
+}
+
+/**
+ * Whether `dialInAddress` gave a listener the Strom host because the backend
+ * has no public address for it (a private or localhost Strom): dialable only
+ * from that network.
+ */
+export function dialInIsLocalOnly(address: string, connect: SrtConnect | undefined): boolean {
+  return !!connect && !connect.uri && srtDirection(address) === 'listener'
 }
 
 /** Why the backend could not give a dial-in address, in an operator's words. */
@@ -170,9 +185,15 @@ export function dialInUnknownReason(connect: SrtConnect | undefined): string {
 export function srtRowLabel(address: string, connect: SrtConnect | undefined, stromHost: string | undefined, dials: string): string {
   const direction = srtDirection(address)
   const dialIn = dialInAddress(address, connect, stromHost)
-  if (dialIn) return `${dials} ${dialIn}${passphraseOf(address) !== null ? ' with the passphrase' : ''}`
+  const withPassphrase = passphraseOf(address) !== null ? ' with the passphrase' : ''
+  if (dialIn) {
+    const localOnly = dialInIsLocalOnly(address, connect) ? ' · local network only (set SRT_PUBLIC_HOST on the backend for a public address)' : ''
+    return `${dials} ${dialIn}${withPassphrase}${localOnly}`
+  }
   if (direction === 'relay') return `via relay · stream ID ${relayIdOf(address) ?? '—'} · ${dialInUnknownReason(connect)}`
-  if (direction === 'listener') return `${stripPassphrase(address)} · ${dialInUnknownReason(connect)}`
+  if (direction === 'listener') {
+    return `${stripPassphrase(address)}${withPassphrase} · ${connect ? dialInUnknownReason(connect) : 'Strom host not known'}`
+  }
   return address
 }
 

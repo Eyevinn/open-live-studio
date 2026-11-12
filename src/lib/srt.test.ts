@@ -15,6 +15,7 @@ import {
   buildRelayAddress,
   dialInAddress,
   dialInUnknownReason,
+  dialInIsLocalOnly,
   passphraseError,
   relayAddressPatch,
   srtRowLabel,
@@ -213,9 +214,26 @@ describe('dialInAddress', () => {
   it('listener: the backend connect decides (SRT_PUBLIC_HOST), not the Strom host', () => {
     const connect: SrtConnect = { uri: 'srt://srt.example.com:1234?mode=caller', host: 'srt.example.com', port: 1234, mode: 'caller', source: 'srt-public-host' }
     expect(dialInAddress('srt://:1234?mode=listener', connect, 'strom.example')).toBe('srt://srt.example.com:1234?mode=caller')
-    // The backend refuses a private Strom host: no guessed address either.
+  })
+
+  it('listener on a private or localhost Strom: the Strom host, marked local only', () => {
     const privateHost: SrtConnect = { uri: null, host: '10.0.0.5', port: 1234, mode: 'caller', source: 'strom-host', reason: 'srt-host-not-loopback-reachable' }
-    expect(dialInAddress('srt://:1234?mode=listener', privateHost, '10.0.0.5')).toBeNull()
+    expect(dialInAddress('srt://:1234?mode=listener&passphrase=***', privateHost)).toBe('srt://10.0.0.5:1234?mode=caller')
+    expect(dialInAddress('srt://:1234?mode=listener', { ...privateHost, host: null }, '10.0.0.6')).toBe('srt://10.0.0.6:1234?mode=caller')
+    expect(dialInIsLocalOnly('srt://:1234?mode=listener', privateHost)).toBe(true)
+    expect(srtRowLabel('srt://:1234?mode=listener&passphrase=***', privateHost, undefined, 'sender dials')).toBe(
+      'sender dials srt://10.0.0.5:1234?mode=caller with the passphrase · local network only (set SRT_PUBLIC_HOST on the backend for a public address)',
+    )
+  })
+
+  it('listener with no host known at all: nothing to dial, and the row says why', () => {
+    const unparseable: SrtConnect = { uri: null, host: null, port: 1234, mode: 'caller', source: 'unknown', reason: 'strom-url-not-parseable' }
+    expect(dialInAddress('srt://:1234?mode=listener', unparseable)).toBeNull()
+    expect(srtRowLabel('srt://:1234?mode=listener', unparseable, undefined, 'x')).toMatch(/^srt:\/\/:1234\?mode=listener · public SRT host not known/)
+    expect(dialInAddress('srt://:1234?mode=listener&passphrase=***', undefined)).toBeNull()
+    expect(srtRowLabel('srt://:1234?mode=listener&passphrase=***', undefined, undefined, 'x')).toBe(
+      'srt://:1234?mode=listener with the passphrase · Strom host not known',
+    )
   })
 
   it('listener on an older backend without connect: the Strom host with the mode flipped', () => {
