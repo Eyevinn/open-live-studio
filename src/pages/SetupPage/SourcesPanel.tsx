@@ -3,7 +3,7 @@ import { useSourcesStore } from '@/store/sources.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useProductionStore } from '@/store/production.store'
 import { useGatewaysStore } from '@/store/gateways.store'
-import { useServerInfo } from '@/hooks/useServerInfo'
+import { refreshServerInfo, useServerInfo } from '@/hooks/useServerInfo'
 import { ApiError, sourcesApi, type AudioStreamsResponse, type HtmlSourceAuth, type HtmlSourceAuthInput, type SrtConnect, type StreamType } from '@/lib/api'
 import { openHtmlAuthPopup, originOf, maskCredential } from '@/lib/htmlSourceAuthPopup'
 import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
@@ -181,6 +181,12 @@ export function SourcesPanel() {
   const [addOpen, setAddOpen] = useState(false)
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const [editTarget, setEditTarget] = useState<EditState | null>(null)
+  // server-info `srt` follows Strom (capabilities, relays, ports): read it
+  // again whenever a New or Edit dialog opens, so the choices are current.
+  const editOpenId = editTarget?.id ?? null
+  useEffect(() => {
+    if (addOpen || editOpenId !== null) void refreshServerInfo()
+  }, [addOpen, editOpenId])
   const [newName, setNewName] = useState('')
   const [newAddress, setNewAddress] = useState('')
   const [newStreamType, setNewStreamType] = useState<StreamType>('srt')
@@ -346,7 +352,7 @@ export function SourcesPanel() {
       }, { quiet: true })
     } catch (err) {
       // Keep the dialog open with the entered values; show the reason once.
-      setAddSaveError(srtSaveErrorMessage(err) ?? (err instanceof ApiError ? saveErrorMessage(err) : 'Could not create the source.'))
+      setAddSaveError(srtSaveErrorMessage(err, offer) ?? (err instanceof ApiError ? saveErrorMessage(err) : 'Could not create the source.'))
       return
     }
     if (newStreamType === 'html' && newAuthEnabled && newAuthHeaderValue.trim()) {
@@ -420,7 +426,7 @@ export function SourcesPanel() {
     try {
       await updateSource(id, fields, { quiet: true })
     } catch (err) {
-      setEditSaveError(srtSaveErrorMessage(err) ?? saveErrorMessage(err))
+      setEditSaveError(srtSaveErrorMessage(err, offer) ?? saveErrorMessage(err))
       return
     }
     setAuthError(null)

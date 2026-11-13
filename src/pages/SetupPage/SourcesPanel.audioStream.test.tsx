@@ -14,7 +14,7 @@ import { useGatewaysStore } from '@/store/gateways.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { SourcesPanel } from './SourcesPanel'
 
-vi.mock('@/hooks/useServerInfo', () => ({ useServerInfo: () => ({ info: null, loaded: true }) }))
+vi.mock('@/hooks/useServerInfo', () => ({ refreshServerInfo: async () => {}, useServerInfo: () => ({ info: null, loaded: true }) }))
 vi.mock('@/hooks/usePhoneLayout', () => ({ useIsPhone: () => false }))
 
 type UpdateFields = Parameters<ReturnType<typeof useSourcesStore.getState>['updateSource']>[1]

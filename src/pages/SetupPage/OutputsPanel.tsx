@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useOutputsStore, type OutputType, type Output } from '@/store/outputs.store'
 import { useProductionsStore } from '@/store/productions.store'
-import { useServerInfo } from '@/hooks/useServerInfo'
+import { refreshServerInfo, useServerInfo } from '@/hooks/useServerInfo'
 import type { OutputStatus, RtmpDestinationInput, RtmpPlatform, SrtConnect } from '@/lib/api'
 import { DEFAULT_RELAY, bareQueryKeyError, buildListenerAddress, buildRelayAddress, chosenRelay, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, offeredDirection, passphraseError, passphraseOf, relayAddressPatch, relayNameOf, rendezvousError, srtConnectWarningText, srtDirection, srtRowLabel, srtSaveErrorMessage, stripPassphrase, type SrtDirection } from '@/lib/srt'
 import { Button } from '@/components/ui/Button'
@@ -203,6 +203,12 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
 
   const [addOpen, setAddOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<EditState | null>(null)
+  // server-info `srt` follows Strom (capabilities, relays, ports): read it
+  // again whenever a New or Edit dialog opens, so the choices are current.
+  const editOpenId = editTarget?.id ?? null
+  useEffect(() => {
+    if (addOpen || editOpenId !== null) void refreshServerInfo()
+  }, [addOpen, editOpenId])
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [addUrlError, setAddUrlError] = useState<string | null>(null)
@@ -275,7 +281,7 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
       setAddOpen(false)
     } catch (err) {
       // Keep the dialog open with the entered values; show the backend message once.
-      setAddError(srtSaveErrorMessage(err) ?? outputSaveErrorMessage(err))
+      setAddError(srtSaveErrorMessage(err, offer) ?? outputSaveErrorMessage(err))
     } finally {
       setSaving(false)
     }
@@ -378,7 +384,7 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
       closeEdit()
     } catch (err) {
       // Keep the dialog open with the entered values; show the backend message once.
-      setEditError(srtSaveErrorMessage(err) ?? outputSaveErrorMessage(err))
+      setEditError(srtSaveErrorMessage(err, offer) ?? outputSaveErrorMessage(err))
     } finally {
       setSaving(false)
     }

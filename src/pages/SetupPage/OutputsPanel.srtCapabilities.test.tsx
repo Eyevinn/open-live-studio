@@ -9,10 +9,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { ApiError, outputsApi, storageConnectionsApi, type ApiOutput, type ServerInfo, type SrtCapabilities } from '@/lib/api'
 import { useOutputsStore } from '@/store/outputs.store'
 import { useProductionsStore } from '@/store/productions.store'
+import { useSourcesStore } from '@/store/sources.store'
 import { OutputsPanel } from './OutputsPanel'
 
 let mockInfo: ServerInfo | null = null
-vi.mock('@/hooks/useServerInfo', () => ({ useServerInfo: () => ({ info: mockInfo, loaded: true }) }))
+vi.mock('@/hooks/useServerInfo', () => ({ refreshServerInfo: async () => {}, useServerInfo: () => ({ info: mockInfo, loaded: true }) }))
 
 const DEFAULT_RELAY = { name: 'default', public: 'srt.example.com:9000' }
 const EU_RELAY = { name: 'eu-north', public: 'eu.example.com:9000' }
@@ -69,6 +70,7 @@ beforeEach(() => {
   withSrt({})
   useOutputsStore.setState({ outputs: [], isLoading: false, lastFetchedAt: Date.now() })
   useProductionsStore.setState({ productions: [] })
+  useSourcesStore.setState({ sources: [] })
 })
 
 afterEach(() => {
@@ -124,6 +126,59 @@ describe('OutputsPanel — SRT directions Strom can do', () => {
     save()
     expect(await screen.findByText('Rendezvous will not work here. This Strom cannot be reached from outside; use caller.')).toBeTruthy()
     expect(create).not.toHaveBeenCalled()
+  })
+})
+
+describe('OutputsPanel — listener ports from Strom (STROM_PORTS)', () => {
+  // No legacy reservation; Strom reports its STROM_PORTS as srt.ports.
+  function withStromPorts(): void {
+    withSrt({ ports: [{ first: 47100, last: 47103 }] })
+    mockInfo = { ...mockInfo!, srtPorts: null, srtPortState: 'disabled' }
+  }
+
+  it('offers the lowest port no listed source or output uses, and saves it when left blank', async () => {
+    withStromPorts()
+    // Listener output on 47101 (LISTENER_OUT) and a listener source on 47100.
+    useSourcesStore.setState({
+      sources: [{ id: 's1', name: 'Cam', address: 'srt://:47100?mode=listener', streamType: 'srt', status: 'inactive', color: '#27272a' }],
+    })
+    const create = vi.spyOn(outputsApi, 'create').mockResolvedValue({ ...LISTENER_OUT, id: 'new' })
+    await openNew()
+    expect(screen.getByPlaceholderText('47102')).toBeTruthy()
+    expect(screen.getByText(/Leave blank to use 47102, the lowest one no listed source or output uses\./)).toBeTruthy()
+    save()
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    expect(create.mock.calls[0]?.[0]).toMatchObject({ outputType: 'mpegtssrt', url: 'srt://:47102?mode=listener' })
+  })
+
+  it('a typed port outside the spans warns inline and is still saved', async () => {
+    withStromPorts()
+    const create = vi.spyOn(outputsApi, 'create').mockResolvedValue({ ...LISTENER_OUT, id: 'new' })
+    await openNew()
+    fireEvent.change(screen.getByPlaceholderText('47100'), { target: { value: '9000' } })
+    expect(screen.getByText('Port 9000 is outside the ports Strom is set up for (47100\u201347103), so senders may not reach it. It is saved anyway.')).toBeTruthy()
+    save()
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    expect(create.mock.calls[0]?.[0]).toMatchObject({ url: 'srt://:9000?mode=listener' })
+  })
+
+  it('every port in use: no default, the operator enters one', async () => {
+    withSrt({ ports: [{ first: 47101, last: 47101 }] })
+    mockInfo = { ...mockInfo!, srtPorts: null, srtPortState: 'disabled' }
+    const create = vi.spyOn(outputsApi, 'create').mockResolvedValue({ ...LISTENER_OUT, id: 'new' })
+    await openNew()
+    expect(screen.getByText(/Every one of them is in use by a listed source or output; enter a port\./)).toBeTruthy()
+    save()
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('connect.warning srt-port-outside-strom-ports shows in the row and in Edit', async () => {
+    withStromPorts()
+    vi.spyOn(outputsApi, 'list').mockResolvedValue([
+      { ...LISTENER_OUT, url: 'srt://:9000?mode=listener', connect: { ...LISTENER_OUT.connect!, port: 9000, warning: 'srt-port-outside-strom-ports' } },
+    ])
+    await openEdit()
+    expect(screen.getAllByText(/This listener port is outside the ports Strom is set up for \(STROM_PORTS\)/).length).toBe(2)
   })
 })
 

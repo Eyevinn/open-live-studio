@@ -293,8 +293,15 @@ export type SrtConnectReason =
   | 'srt-relay-public-unknown'
   | (string & {})
 
-/** Why an SRT address's mode will not work on this Strom (`SrtConnect.warning`). */
-export type SrtConnectWarning = 'srt-listener-unsupported' | 'srt-rendezvous-unsupported' | (string & {})
+/**
+ * Why an SRT address may not work on this Strom (`SrtConnect.warning`).
+ * `srt-port-outside-strom-ports`: a listener port outside Strom's `srt.ports`.
+ */
+export type SrtConnectWarning =
+  | 'srt-listener-unsupported'
+  | 'srt-rendezvous-unsupported'
+  | 'srt-port-outside-strom-ports'
+  | (string & {})
 
 /**
  * 422 body for a relay address naming a relay Strom definitely does not have

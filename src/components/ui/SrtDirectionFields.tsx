@@ -1,6 +1,9 @@
+import { useId } from 'react'
 import { useServerInfo } from '@/hooks/useServerInfo'
 import type { SrtRelayEndpoint } from '@/lib/api'
-import { DEFAULT_RELAY, srtOffer, type SrtDirection, type SrtOffer } from '@/lib/srt'
+import { DEFAULT_RELAY, describeSpans, freePortsInSpans, listenerPort, portInSpans, srtOffer, type PortSpan, type SrtDirection, type SrtOffer } from '@/lib/srt'
+import { useOutputsStore } from '@/store/outputs.store'
+import { useSourcesStore } from '@/store/sources.store'
 
 export const inputCls = 'w-full px-3 py-2 rounded bg-[--color-surface-raised] border border-[--color-border-strong] text-sm text-[--color-text-primary] focus:outline-none focus:border-orange-500 focus:ring-1 focus:ring-orange-500/30'
 export const labelCls = 'text-xs text-[--color-text-muted] uppercase tracking-wider block mb-1'
@@ -8,21 +11,39 @@ export const labelCls = 'text-xs text-[--color-text-muted] uppercase tracking-wi
 /**
  * How a listener gets its port on this backend. `auto`: the backend holds ports
  * on the shared Strom and assigns a free one on save. `pending`: it is still
- * waiting for them, so nothing can be saved yet. `manual`: an older backend, or
- * one whose Strom hands out no ports, where the operator names the port.
+ * waiting for them, so nothing can be saved yet. `spans`: no reservation, but
+ * Strom reports the ports it is set up for (server-info `srt.ports`, its
+ * STROM_PORTS); the operator picks one, `suggested` (the lowest one no listed
+ * source or output listens on) when the field is left blank, and a port outside
+ * them is allowed with a warning. `manual`: an older backend, or one whose Strom
+ * names no ports, where the operator names the port.
  */
 export type ListenerPortMode =
   | { kind: 'loading' }
   | { kind: 'auto'; ports: number[] }
   | { kind: 'pending' }
+  | { kind: 'spans'; spans: PortSpan[]; suggested: number | null; free: number[] }
   | { kind: 'manual' }
+
+/** How many free ports the `spans` picker lists. */
+const OFFERED_PORTS = 20
 
 export function useListenerPortMode(): ListenerPortMode {
   const { info, loaded } = useServerInfo()
+  const sources = useSourcesStore((s) => s.sources)
+  const outputs = useOutputsStore((s) => s.outputs)
   if (!loaded) return { kind: 'loading' }
   if (info?.srtPortState === 'pending') return { kind: 'pending' }
   if (info?.srtPortState === 'reserved' && info.srtPorts && info.srtPorts.length > 0) {
     return { kind: 'auto', ports: info.srtPorts }
+  }
+  const spans = info?.srt?.ports
+  if (spans && spans.length > 0) {
+    const used = [...sources.map((s) => s.address), ...outputs.map((o) => o.url)]
+      .map((a) => (a ? listenerPort(a) : null))
+      .filter((p): p is number => p !== null)
+    const free = freePortsInSpans(spans, used, OFFERED_PORTS)
+    return { kind: 'spans', spans, suggested: free[0] ?? null, free }
   }
   return { kind: 'manual' }
 }
@@ -48,11 +69,22 @@ export function describePorts(ports: number[]): string {
 export function listenerPortFor(mode: ListenerPortMode, manualPort: string, keep?: number | null): number | null {
   if (keep) return keep
   if (mode.kind === 'auto') return 0
-  if (mode.kind === 'manual') {
-    const p = parseInt(manualPort, 10)
-    return Number.isInteger(p) && p > 0 && p <= 65535 ? p : null
-  }
+  if (mode.kind === 'spans' && !manualPort.trim()) return mode.suggested
+  if (mode.kind === 'manual' || mode.kind === 'spans') return parsePort(manualPort)
   return null
+}
+
+function parsePort(value: string): number | null {
+  const p = parseInt(value, 10)
+  return Number.isInteger(p) && p > 0 && p <= 65535 ? p : null
+}
+
+/** The inline warning for a typed port outside Strom's ports, or null. */
+export function portOutsideSpansWarning(mode: ListenerPortMode, manualPort: string): string | null {
+  if (mode.kind !== 'spans') return null
+  const p = parsePort(manualPort)
+  if (p === null || portInSpans(p, mode.spans)) return null
+  return `Port ${p} is outside the ports Strom is set up for (${describeSpans(mode.spans)}), so senders may not reach it. It is saved anyway.`
 }
 
 /** Whether Save is possible in listener mode right now. */
@@ -161,6 +193,8 @@ export function ListenerFields({
   onRemovePassphrase?: (remove: boolean) => void
   passphraseError?: string | null
 }) {
+  const portListId = useId()
+  const outside = portOutsideSpansWarning(mode, manualPort)
   return (
     <>
       <div>
@@ -177,6 +211,29 @@ export function ListenerFields({
           <p className="text-xs text-amber-400">
             This instance is still waiting for its port range from Strom. Try again in a minute.
           </p>
+        ) : mode.kind === 'spans' ? (
+          <>
+            <input
+              type="number"
+              min={1}
+              max={65535}
+              value={manualPort}
+              placeholder={mode.suggested !== null ? String(mode.suggested) : 'e.g. 9000'}
+              list={portListId}
+              onChange={(e) => onManualPort(e.target.value)}
+              className={inputCls}
+            />
+            <datalist id={portListId}>
+              {mode.free.map((p) => <option key={p} value={p} />)}
+            </datalist>
+            <p className="text-xs text-[--color-text-muted] mt-1">
+              Strom is set up for ports {describeSpans(mode.spans)}.{' '}
+              {mode.suggested !== null
+                ? `Leave blank to use ${mode.suggested}, the lowest one no listed source or output uses.`
+                : 'Every one of them is in use by a listed source or output; enter a port.'}
+            </p>
+            {outside && <p role="note" className="text-xs text-amber-400 mt-1">{outside}</p>}
+          </>
         ) : (
           <>
             <input

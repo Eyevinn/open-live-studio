@@ -35,6 +35,9 @@ import {
   rendezvousError,
   srtConnectWarningText,
   srtSaveErrorMessage,
+  portInSpans,
+  freePortsInSpans,
+  describeSpans,
 } from './srt'
 import { ApiError, type SrtCapabilities, type SrtConnect } from './api'
 
@@ -490,6 +493,9 @@ describe('srtConnectWarningText', () => {
     expect(srtConnectWarningText({ ...connect, warning: 'srt-rendezvous-unsupported' })).toMatch(/rendezvous address will not work/)
     expect(srtConnectWarningText({ ...connect, warning: 'srt-something-new' })).toMatch(/will not work here/)
   })
+  it('explains a listener port outside Strom\'s ports', () => {
+    expect(srtConnectWarningText({ ...connect, warning: 'srt-port-outside-strom-ports' })).toMatch(/outside the ports Strom is set up for \(STROM_PORTS\)/)
+  })
   it('says nothing without a warning', () => {
     expect(srtConnectWarningText(connect)).toBeNull()
     expect(srtConnectWarningText(undefined)).toBeNull()
@@ -501,20 +507,26 @@ describe('srtSaveErrorMessage', () => {
     const err = new ApiError('Strom has no SRT relay named "x"; configured: default, eu-north', 422, {
       error: 'Strom has no SRT relay named "x"; configured: default, eu-north', statusCode: 422, code: 'srt-relay-unknown', relays: ['default', 'eu-north'],
     })
-    expect(srtSaveErrorMessage(err)).toBe('Strom has no SRT relay of that name. Configured relays: default, eu-north. Pick one of them.')
+    expect(srtSaveErrorMessage(err, { listener: true })).toBe('Strom has no SRT relay of that name. Configured relays: default, eu-north. Pick one of them.')
   })
-  it('explains 422 srt-relay-not-configured', () => {
+  it('explains 422 srt-relay-not-configured: listener or caller when Listener is offered', () => {
     const err = new ApiError('no relay', 422, { error: 'no relay', statusCode: 422, code: 'srt-relay-not-configured', relays: [] })
-    expect(srtSaveErrorMessage(err)).toBe('Strom reports no SRT relay, so "Via relay" cannot be used here. Choose listener or caller.')
+    expect(srtSaveErrorMessage(err, { listener: true })).toBe('Strom reports no SRT relay, so "Via relay" cannot be used here. Choose listener or caller.')
+  })
+  it('explains 422 srt-relay-not-configured: only caller when Strom cannot be reached from outside', () => {
+    const err = new ApiError('no relay', 422, { error: 'no relay', statusCode: 422, code: 'srt-relay-not-configured', relays: [] })
+    const text = srtSaveErrorMessage(err, { listener: false })
+    expect(text).toBe('Strom reports no SRT relay, so "Via relay" cannot be used here. This Strom cannot be reached from outside; use caller.')
+    expect(text).not.toMatch(/listener/i)
   })
   it('rewords the 400 for a query key without a value', () => {
     const msg = "SRT parameter 'latency' has no value, which crashes GStreamer: write 'latency=<value>' or remove it"
-    expect(srtSaveErrorMessage(new ApiError(msg, 400, { error: msg, statusCode: 400 }))).toBe(bareQueryKeyError('srt://h:1?latency'))
+    expect(srtSaveErrorMessage(new ApiError(msg, 400, { error: msg, statusCode: 400 }), { listener: true })).toBe(bareQueryKeyError('srt://h:1?latency'))
   })
   it('leaves other errors to the general message', () => {
-    expect(srtSaveErrorMessage(new ApiError('Port 47100 is outside', 422, { error: 'Port 47100 is outside', statusCode: 422 }))).toBeNull()
-    expect(srtSaveErrorMessage(new ApiError('Invalid SRT relay name after "@"', 400))).toBeNull()
-    expect(srtSaveErrorMessage(new Error('boom'))).toBeNull()
+    expect(srtSaveErrorMessage(new ApiError('Port 47100 is outside', 422, { error: 'Port 47100 is outside', statusCode: 422 }), { listener: true })).toBeNull()
+    expect(srtSaveErrorMessage(new ApiError('Invalid SRT relay name after "@"', 400), { listener: true })).toBeNull()
+    expect(srtSaveErrorMessage(new Error('boom'), { listener: true })).toBeNull()
   })
 })
 
@@ -533,5 +545,24 @@ describe('passphraseError', () => {
     // 45 × å is 45 UTF-16 units but 90 bytes, which Strom refuses.
     expect(passphraseError('å'.repeat(45))).toMatch(/it is 90;/)
     expect(passphraseError('å'.repeat(39))).toBeNull()
+  })
+})
+
+describe('Strom port spans', () => {
+  const spans = [{ first: 48000, last: 48000 }, { first: 47100, last: 47102 }]
+  it('portInSpans checks every span, inclusive', () => {
+    expect(portInSpans(47100, spans)).toBe(true)
+    expect(portInSpans(47102, spans)).toBe(true)
+    expect(portInSpans(48000, spans)).toBe(true)
+    expect(portInSpans(47103, spans)).toBe(false)
+    expect(portInSpans(9000, [])).toBe(false)
+  })
+  it('freePortsInSpans lists the lowest unused ports first, up to the limit', () => {
+    expect(freePortsInSpans(spans, [47100, 47102], 10)).toEqual([47101, 48000])
+    expect(freePortsInSpans(spans, [], 2)).toEqual([47100, 47101])
+    expect(freePortsInSpans(spans, [47100, 47101, 47102, 48000], 10)).toEqual([])
+  })
+  it('describeSpans reads as ranges, lowest first', () => {
+    expect(describeSpans(spans)).toBe('47100\u201347102, 48000')
   })
 })

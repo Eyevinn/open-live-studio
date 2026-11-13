@@ -408,6 +408,8 @@ export function srtConnectWarningText(connect: SrtConnect | undefined): string |
       return 'Strom reports that it cannot be reached from outside, so this listener address will not work. Switch to caller or Via relay.'
     case 'srt-rendezvous-unsupported':
       return 'Strom reports that it cannot be reached from outside, so this rendezvous address will not work. Switch to caller or Via relay.'
+    case 'srt-port-outside-strom-ports':
+      return 'This listener port is outside the ports Strom is set up for (STROM_PORTS), so senders may not reach it. Pick a port in that range.'
     default:
       return 'Strom reports that this SRT mode will not work here.'
   }
@@ -416,16 +418,19 @@ export function srtConnectWarningText(connect: SrtConnect | undefined): string |
 /**
  * A readable message for a failed source or output save caused by its SRT
  * address, or null to use the general message:
- * - 422 `srt-relay-not-configured` / `srt-relay-unknown`, with the relays Strom has;
+ * - 422 `srt-relay-not-configured`, pointing to the directions that work here
+ *   (`offer`: listener only when Strom can be reached from outside);
+ * - 422 `srt-relay-unknown`, with the relays Strom has;
  * - 400 for a query key without a value.
  */
-export function srtSaveErrorMessage(err: unknown): string | null {
+export function srtSaveErrorMessage(err: unknown, offer: Pick<SrtOffer, 'listener'>): string | null {
   // Read by shape, not `instanceof`: importing the ApiError class would pull
   // the API client (and its browser-only auth) into this pure module.
   if (!isApiError(err)) return null
   const body = err.body as Partial<SrtRelayErrorBody> | undefined
   if (err.status === 422 && body?.code === 'srt-relay-not-configured') {
-    return 'Strom reports no SRT relay, so "Via relay" cannot be used here. Choose listener or caller.'
+    const instead = offer.listener ? 'Choose listener or caller.' : unreachableFromOutsideText(false)
+    return `Strom reports no SRT relay, so "Via relay" cannot be used here. ${instead}`
   }
   if (err.status === 422 && body?.code === 'srt-relay-unknown') {
     const names = Array.isArray(body.relays) ? body.relays : []
@@ -440,4 +445,37 @@ export function srtSaveErrorMessage(err: unknown): string | null {
 
 function isApiError(err: unknown): err is ApiError {
   return err instanceof Error && typeof (err as Partial<ApiError>).status === 'number'
+}
+
+/** One of Strom's STROM_PORTS spans (server-info `srt.ports`), inclusive. */
+export type PortSpan = { first: number; last: number }
+
+/** Whether `port` lies in one of the spans. */
+export function portInSpans(port: number, spans: readonly PortSpan[]): boolean {
+  return spans.some((s) => port >= s.first && port <= s.last)
+}
+
+/**
+ * Up to `limit` ports from the spans, lowest first, skipping `used` (the
+ * listener ports of the listed sources and outputs).
+ */
+export function freePortsInSpans(spans: readonly PortSpan[], used: Iterable<number>, limit: number): number[] {
+  const taken = new Set(used)
+  const out: number[] = []
+  const sorted = [...spans].sort((a, b) => a.first - b.first)
+  for (const s of sorted) {
+    for (let p = Math.max(1, s.first); p <= Math.min(65535, s.last) && out.length < limit; p++) {
+      if (!taken.has(p) && !out.includes(p)) out.push(p)
+    }
+    if (out.length >= limit) break
+  }
+  return out
+}
+
+/** The spans as an operator reads them: `47100–47199, 48000`. */
+export function describeSpans(spans: readonly PortSpan[]): string {
+  return [...spans]
+    .sort((a, b) => a.first - b.first)
+    .map((s) => (s.first === s.last ? `${s.first}` : `${s.first}\u2013${s.last}`))
+    .join(', ')
 }
