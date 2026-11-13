@@ -7,7 +7,7 @@ import { useServerInfo } from '@/hooks/useServerInfo'
 import { ApiError, sourcesApi, type AudioStreamsResponse, type HtmlSourceAuth, type HtmlSourceAuthInput, type SrtConnect, type StreamType } from '@/lib/api'
 import { openHtmlAuthPopup, originOf, maskCredential } from '@/lib/htmlSourceAuthPopup'
 import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
-import { DEFAULT_RELAY, bareQueryKeyError, buildListenerAddress, buildRelayAddress, chosenRelay, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, offeredDirection, passphraseError, passphraseOf, relayAddressPatch, relayNameOf, relaySwitchPassphraseError, rendezvousError, srtConnectWarningText, srtDirection, srtRowLabel, stripPassphrase, type SrtDirection } from '@/lib/srt'
+import { DEFAULT_RELAY, bareQueryKeyError, buildListenerAddress, buildRelayAddress, chosenRelay, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, offeredDirection, passphraseError, passphraseOf, relayAddressPatch, relayNameOf, relaySwitchPassphraseError, rendezvousError, srtConnectWarningText, srtDirection, srtRowLabel, srtSaveErrorMessage, stripPassphrase, type SrtDirection } from '@/lib/srt'
 import { EFP_AUDIO_STREAM_NOTE, audioStreamIndexPatch, efpIgnoredAudioStreamNote, newSourceAudioStreamIndex, supportsAudioStreamSelection } from '@/lib/audio-stream-index'
 import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
@@ -204,6 +204,8 @@ export function SourcesPanel() {
   const [addLatencyError, setAddLatencyError] = useState<string | null>(null)
   const [editLatencyError, setEditLatencyError] = useState<string | null>(null)
   const [editSaveError, setEditSaveError] = useState<string | null>(null)
+  // A failed New Source POST, shown inline (the call is quiet, so no toast too).
+  const [addSaveError, setAddSaveError] = useState<string | null>(null)
   // Audio-stream discovery for the open MPEG-TS/SRT edit dialog (ADR-006, OL-45).
   // `null` = loading; `'error'` = request failed (treated like unavailable).
   const [audioStreams, setAudioStreams] = useState<AudioStreamsResponse | 'error' | null>(null)
@@ -262,6 +264,7 @@ export function SourcesPanel() {
     setNewManualPort('')
     setNewPassphrase('')
     setNewRelay('')
+    setAddSaveError(null)
     setNewLatency('')
     setNewAudioStreamIndex('0')
     setNewAudioStreamError(null)
@@ -329,15 +332,23 @@ export function SourcesPanel() {
     } else if (isSrt(newStreamType) && !/[?&]mode=/i.test(address)) {
       address += (address.includes('?') ? '&' : '?') + 'mode=caller'
     }
-    const created = await addSource({
-      name: newName.trim(),
-      address,
-      streamType: newStreamType,
-      status: 'inactive',
-      color: '#27272a',
-      ...(STREAM_TYPE_HAS_LATENCY[newStreamType] && latency.ok ? { latency: latency.value ?? LATENCY_DEFAULT_MS } : {}),
-      ...audio.body,
-    })
+    setAddSaveError(null)
+    let created: Awaited<ReturnType<typeof addSource>>
+    try {
+      created = await addSource({
+        name: newName.trim(),
+        address,
+        streamType: newStreamType,
+        status: 'inactive',
+        color: '#27272a',
+        ...(STREAM_TYPE_HAS_LATENCY[newStreamType] && latency.ok ? { latency: latency.value ?? LATENCY_DEFAULT_MS } : {}),
+        ...audio.body,
+      }, { quiet: true })
+    } catch (err) {
+      // Keep the dialog open with the entered values; show the reason once.
+      setAddSaveError(srtSaveErrorMessage(err) ?? (err instanceof ApiError ? saveErrorMessage(err) : 'Could not create the source.'))
+      return
+    }
     if (newStreamType === 'html' && newAuthEnabled && newAuthHeaderValue.trim()) {
       // Create-then-PATCH (issue's suggested approach): the source needs an id
       // before the credential can be attached, so this is a second call. If it
@@ -409,7 +420,7 @@ export function SourcesPanel() {
     try {
       await updateSource(id, fields, { quiet: true })
     } catch (err) {
-      setEditSaveError(saveErrorMessage(err))
+      setEditSaveError(srtSaveErrorMessage(err) ?? saveErrorMessage(err))
       return
     }
     setAuthError(null)
@@ -1108,7 +1119,7 @@ export function SourcesPanel() {
               relays={offer.relays}
               showPicker={offer.relayPicker}
               relay={newRelay}
-              onRelay={setNewRelay}
+              onRelay={(relay) => { setNewRelay(relay); setAddSaveError(null) }}
             />
           ) : STREAM_TYPE_HAS_ADDRESS[newStreamType] && (
             <div>
@@ -1208,6 +1219,7 @@ export function SourcesPanel() {
               </p>
             </div>
           )}
+          {addSaveError && <p role="alert" className="text-xs text-red-400">{addSaveError}</p>}
         </div>
       </Modal>
     </div>

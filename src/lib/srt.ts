@@ -15,7 +15,7 @@
  * `auto@default` moves it back to the default relay.
  */
 
-import type { SrtCapabilities, SrtConnect, SrtRelayEndpoint } from './api'
+import type { ApiError, SrtCapabilities, SrtConnect, SrtRelayEndpoint, SrtRelayErrorBody } from './api'
 
 export type SrtDirection = 'listener' | 'caller' | 'relay'
 
@@ -428,4 +428,33 @@ export function srtConnectWarningText(connect: SrtConnect | undefined): string |
     default:
       return 'Strom reports that this SRT mode will not work here.'
   }
+}
+
+/**
+ * A readable message for a failed source or output save caused by its SRT
+ * address, or null to use the general message:
+ * - 422 `srt-relay-not-configured` / `srt-relay-unknown`, with the relays Strom has;
+ * - 400 for a query key without a value.
+ */
+export function srtSaveErrorMessage(err: unknown): string | null {
+  // Read by shape, not `instanceof`: importing the ApiError class would pull
+  // the API client (and its browser-only auth) into this pure module.
+  if (!isApiError(err)) return null
+  const body = err.body as Partial<SrtRelayErrorBody> | undefined
+  if (err.status === 422 && body?.code === 'srt-relay-not-configured') {
+    return 'Strom reports no SRT relay, so "Via relay" cannot be used here. Choose listener or caller.'
+  }
+  if (err.status === 422 && body?.code === 'srt-relay-unknown') {
+    const names = Array.isArray(body.relays) ? body.relays : []
+    return `Strom has no SRT relay of that name. ${names.length ? `Configured relays: ${names.join(', ')}. Pick one of them.` : 'Pick another relay.'}`
+  }
+  if (err.status === 400) {
+    const m = /SRT parameter '([^']*)' has no value/.exec(err.message)
+    if (m) return bareQueryKeyError(`?${m[1]}`)
+  }
+  return null
+}
+
+function isApiError(err: unknown): err is ApiError {
+  return err instanceof Error && typeof (err as Partial<ApiError>).status === 'number'
 }

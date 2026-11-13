@@ -1,4 +1,9 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+
+// api.ts reads `window._env_` and the SAT auth on import; stub both so the real
+// ApiError class can be loaded in the node test environment.
+vi.mock('./base.js', () => ({ BASE: 'http://test' }))
+vi.mock('./sat.js', () => ({ authenticateWithOpenLive: vi.fn(), getApiToken: vi.fn().mockResolvedValue(null) }))
 import {
   srtDirection,
   listenerPort,
@@ -30,8 +35,9 @@ import {
   offeredDirection,
   rendezvousError,
   srtConnectWarningText,
+  srtSaveErrorMessage,
 } from './srt'
-import type { SrtCapabilities, SrtConnect } from './api'
+import { ApiError, type SrtCapabilities, type SrtConnect } from './api'
 
 describe('srtDirection', () => {
   it('treats a hostless address without a caller mode as a listener', () => {
@@ -497,6 +503,27 @@ describe('srtConnectWarningText', () => {
   })
 })
 
+describe('srtSaveErrorMessage', () => {
+  it('names the configured relays for 422 srt-relay-unknown', () => {
+    const err = new ApiError('Strom has no SRT relay named "x"; configured: default, eu-north', 422, {
+      error: 'Strom has no SRT relay named "x"; configured: default, eu-north', statusCode: 422, code: 'srt-relay-unknown', relays: ['default', 'eu-north'],
+    })
+    expect(srtSaveErrorMessage(err)).toBe('Strom has no SRT relay of that name. Configured relays: default, eu-north. Pick one of them.')
+  })
+  it('explains 422 srt-relay-not-configured', () => {
+    const err = new ApiError('no relay', 422, { error: 'no relay', statusCode: 422, code: 'srt-relay-not-configured', relays: [] })
+    expect(srtSaveErrorMessage(err)).toBe('Strom reports no SRT relay, so "Via relay" cannot be used here. Choose listener or caller.')
+  })
+  it('rewords the 400 for a query key without a value', () => {
+    const msg = "SRT parameter 'latency' has no value, which crashes GStreamer: write 'latency=<value>' or remove it"
+    expect(srtSaveErrorMessage(new ApiError(msg, 400, { error: msg, statusCode: 400 }))).toBe(bareQueryKeyError('srt://h:1?latency'))
+  })
+  it('leaves other errors to the general message', () => {
+    expect(srtSaveErrorMessage(new ApiError('Port 47100 is outside', 422, { error: 'Port 47100 is outside', statusCode: 422 }))).toBeNull()
+    expect(srtSaveErrorMessage(new ApiError('Invalid SRT relay name after "@"', 400))).toBeNull()
+    expect(srtSaveErrorMessage(new Error('boom'))).toBeNull()
+  })
+})
 
 describe('passphraseError', () => {
   it('accepts none, or 10–80 UTF-8 bytes counted before URL encoding', () => {

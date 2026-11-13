@@ -3,7 +3,7 @@ import { useOutputsStore, type OutputType, type Output } from '@/store/outputs.s
 import { useProductionsStore } from '@/store/productions.store'
 import { useServerInfo } from '@/hooks/useServerInfo'
 import type { OutputStatus, RtmpDestinationInput, RtmpPlatform, SrtConnect } from '@/lib/api'
-import { DEFAULT_RELAY, bareQueryKeyError, buildListenerAddress, buildRelayAddress, chosenRelay, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, offeredDirection, passphraseError, passphraseOf, relayAddressPatch, relayNameOf, relaySwitchPassphraseError, rendezvousError, srtConnectWarningText, srtDirection, srtRowLabel, stripPassphrase, type SrtDirection } from '@/lib/srt'
+import { DEFAULT_RELAY, bareQueryKeyError, buildListenerAddress, buildRelayAddress, chosenRelay, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, offeredDirection, passphraseError, passphraseOf, relayAddressPatch, relayNameOf, relaySwitchPassphraseError, rendezvousError, srtConnectWarningText, srtDirection, srtRowLabel, srtSaveErrorMessage, stripPassphrase, type SrtDirection } from '@/lib/srt'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Badge } from '@/components/ui/Badge'
@@ -275,7 +275,7 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
       setAddOpen(false)
     } catch (err) {
       // Keep the dialog open with the entered values; show the backend message once.
-      setAddError(outputSaveErrorMessage(err))
+      setAddError(srtSaveErrorMessage(err) ?? outputSaveErrorMessage(err))
     } finally {
       setSaving(false)
     }
@@ -378,7 +378,7 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
       closeEdit()
     } catch (err) {
       // Keep the dialog open with the entered values; show the backend message once.
-      setEditError(outputSaveErrorMessage(err))
+      setEditError(srtSaveErrorMessage(err) ?? outputSaveErrorMessage(err))
     } finally {
       setSaving(false)
     }

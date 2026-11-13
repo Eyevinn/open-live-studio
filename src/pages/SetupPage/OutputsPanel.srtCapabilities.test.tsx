@@ -6,7 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { outputsApi, storageConnectionsApi, type ApiOutput, type ServerInfo, type SrtCapabilities } from '@/lib/api'
+import { ApiError, outputsApi, storageConnectionsApi, type ApiOutput, type ServerInfo, type SrtCapabilities } from '@/lib/api'
 import { useOutputsStore } from '@/store/outputs.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { OutputsPanel } from './OutputsPanel'
@@ -160,5 +160,38 @@ describe('OutputsPanel — relay picker', () => {
     save()
     await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
     expect(update.mock.calls[0]?.[1]).toMatchObject({ url: 'srt+relay://auto@eu-north' })
+  })
+})
+
+describe('OutputsPanel — SRT save errors', () => {
+  it('shows a 422 srt-relay-unknown on edit with the configured relays', async () => {
+    withSrt({ relays: [DEFAULT_RELAY, EU_RELAY] })
+    vi.spyOn(outputsApi, 'list').mockResolvedValue([RELAY_OUT])
+    vi.spyOn(outputsApi, 'update').mockRejectedValue(new ApiError('nope', 422, {
+      error: 'nope', statusCode: 422, code: 'srt-relay-unknown', relays: ['default', 'eu-north'],
+    }))
+    await openEdit()
+    fireEvent.change(screen.getByLabelText('Relay'), { target: { value: 'eu-north' } })
+    save()
+    expect(await screen.findByText('Strom has no SRT relay of that name. Configured relays: default, eu-north. Pick one of them.')).toBeTruthy()
+    expect(screen.getByText('Edit Output')).toBeTruthy()
+  })
+
+  it('refuses a destination with a query key without a value before sending it', async () => {
+    const create = vi.spyOn(outputsApi, 'create').mockResolvedValue({ ...LISTENER_OUT, id: 'new' })
+    await openNew()
+    fireEvent.click(screen.getByRole('button', { name: 'Caller' }))
+    fireEvent.change(screen.getByPlaceholderText('srt://cdn.example.com:9000?mode=caller'), { target: { value: 'srt://cdn.example.com:9000?latency' } })
+    save()
+    expect(await screen.findByText('The SRT parameter "latency" has no value, which crashes GStreamer. Write latency=<value>, or remove it.')).toBeTruthy()
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('shows the backend 400 for a query key without a value readably', async () => {
+    const msg = "SRT parameter 'latency' has no value, which crashes GStreamer: write 'latency=<value>' or remove it"
+    vi.spyOn(outputsApi, 'create').mockRejectedValue(new ApiError(msg, 400, { error: msg, statusCode: 400 }))
+    await openNew()
+    save()
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'The SRT parameter "latency" has no value, which crashes GStreamer. Write latency=<value>, or remove it.')
   })
 })

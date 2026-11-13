@@ -37,7 +37,8 @@ interface SourcesActions {
   fetchAll: () => Promise<void>
   refresh: () => Promise<void>
   /** Returns the created source so callers can chain a follow-up call (e.g. setting HTML auth right after create, studio#154). */
-  addSource: (source: Omit<Source, 'id'>) => Promise<Source>
+  /** `quiet` suppresses the global error toast, for callers that show the failure inline. */
+  addSource: (source: Omit<Source, 'id'>, opts?: { quiet?: boolean }) => Promise<Source>
   removeSource: (id: string) => Promise<void>
   /**
    * `auth`, when passed, is merged into the same PATCH as the other fields
@@ -112,11 +113,11 @@ export const useSourcesStore = create<SourcesState & SourcesActions>()(
         }
       },
 
-      addSource: async (source) => {
+      addSource: async (source, opts) => {
         // Strip the client-only `color` field before sending to the API.
         const { color, ...apiBody } = source
         void color
-        const created = await sourcesApi.create(apiBody)
+        const created = await (opts ? sourcesApi.create(apiBody, opts) : sourcesApi.create(apiBody))
         const mapped = fromApi(created)
         set((state) => { state.sources.push(mapped) })
         return mapped

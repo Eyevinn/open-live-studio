@@ -7,7 +7,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { gatewaysApi, sourcesApi, type ApiSource, type ServerInfo, type SrtCapabilities } from '@/lib/api'
+import { ApiError, gatewaysApi, sourcesApi, type ApiSource, type ServerInfo, type SrtCapabilities } from '@/lib/api'
 import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
 import { SourcesPanel } from './SourcesPanel'
@@ -235,5 +235,48 @@ describe('SourcesPanel — relay picker', () => {
     const picker = screen.getByLabelText('Relay') as HTMLSelectElement
     expect(picker.value).toBe('eu-north')
     expect([...picker.options].map((o) => o.textContent)).toContain('eu-north (not reported by Strom)')
+  })
+})
+
+describe('SourcesPanel — SRT save errors', () => {
+  it('shows a 422 srt-relay-unknown on create with the configured relays, keeping the dialog open', async () => {
+    withSrt({ relays: [DEFAULT_RELAY, EU_RELAY] })
+    vi.spyOn(sourcesApi, 'create').mockRejectedValue(new ApiError('Strom has no SRT relay named "eu-north"; configured: default', 422, {
+      error: 'Strom has no SRT relay named "eu-north"; configured: default', statusCode: 422, code: 'srt-relay-unknown', relays: ['default'],
+    }))
+    await openNew()
+    fireEvent.click(screen.getByRole('button', { name: RELAY }))
+    fireEvent.change(screen.getByLabelText('Relay'), { target: { value: 'eu-north' } })
+    save()
+    expect(await screen.findByRole('alert')).toHaveProperty('textContent', 'Strom has no SRT relay of that name. Configured relays: default. Pick one of them.')
+    expect(screen.getByText('New Source')).toBeTruthy()
+  })
+
+  it('shows a 422 srt-relay-not-configured on edit', async () => {
+    withSrt({ relays: [DEFAULT_RELAY] })
+    vi.spyOn(sourcesApi, 'update').mockRejectedValue(new ApiError('no relay', 422, { error: 'no relay', statusCode: 422, code: 'srt-relay-not-configured', relays: [] }))
+    await openEdit()
+    fireEvent.click(screen.getByRole('button', { name: RELAY }))
+    save()
+    expect(await screen.findByText('Strom reports no SRT relay, so "Via relay" cannot be used here. Choose listener or caller.')).toBeTruthy()
+  })
+
+  it('refuses a caller address with a query key without a value before sending it', async () => {
+    const create = vi.spyOn(sourcesApi, 'create').mockResolvedValue({ ...CAM, id: 'new' })
+    await openNew()
+    fireEvent.click(screen.getByRole('button', { name: 'Caller' }))
+    fireEvent.change(screen.getByPlaceholderText('srt://sender.example.com:9000?mode=caller'), { target: { value: 'srt://peer.example.com:9000?latency' } })
+    save()
+    expect(await screen.findByText('The SRT parameter "latency" has no value, which crashes GStreamer. Write latency=<value>, or remove it.')).toBeTruthy()
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('shows the backend 400 for a query key without a value as the same message', async () => {
+    const msg = "SRT parameter 'latency' has no value, which crashes GStreamer: write 'latency=<value>' or remove it"
+    vi.spyOn(sourcesApi, 'update').mockRejectedValue(new ApiError(msg, 400, { error: msg, statusCode: 400 }))
+    await openEdit()
+    fireEvent.change(screen.getAllByRole('textbox')[0]!, { target: { value: 'Renamed' } })
+    save()
+    expect(await screen.findByText('The SRT parameter "latency" has no value, which crashes GStreamer. Write latency=<value>, or remove it.')).toBeTruthy()
   })
 })

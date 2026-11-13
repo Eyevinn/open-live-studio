@@ -296,6 +296,17 @@ export type SrtConnectReason =
 /** Why an SRT address's mode will not work on this Strom (`SrtConnect.warning`). */
 export type SrtConnectWarning = 'srt-listener-unsupported' | 'srt-rendezvous-unsupported' | (string & {})
 
+/**
+ * 422 body for a relay address naming a relay Strom definitely does not have
+ * (POST/PATCH of sources and outputs). `relays` lists the names Strom has.
+ */
+export interface SrtRelayErrorBody {
+  error: string
+  statusCode: number
+  code: 'srt-relay-not-configured' | 'srt-relay-unknown'
+  relays: string[]
+}
+
 export interface ApiOutput {
   id: string
   name: string
@@ -502,10 +513,11 @@ export const sourcesApi = {
   audioStreams: (id: string) =>
     request<AudioStreamsResponse>(`/api/v1/sources/${encodeURIComponent(id)}/audio-streams`),
 
-  create: (body: Omit<ApiSource, 'id' | 'connect'>) =>
+  create: (body: Omit<ApiSource, 'id' | 'connect'>, opts?: { quiet?: boolean }) =>
     request<ApiSource>('/api/v1/sources', {
       method: 'POST',
       body: JSON.stringify(body),
+      ...(opts?.quiet ? { quiet: true } : {}),
     }),
 
   /**
