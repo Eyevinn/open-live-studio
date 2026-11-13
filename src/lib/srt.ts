@@ -5,13 +5,17 @@
  * the shared server and waits for a sender, so the port has to come from this
  * instance's range and be free; port 0 asks the backend to pick one. A caller
  * address names the far end, `srt://host:PORT?mode=caller`, and binds nothing here.
- * A relay address, `srt+relay://<id>`, is a session on the SRT relay Strom fronts:
- * one public UDP port where Strom and the outside party both call in with the
- * same stream ID. `srt+relay://auto` asks the backend to generate the ID; it is
- * kept from then on, also when an edit sends `auto` again.
+ * A relay address, `srt+relay://<id>[@<relay>]`, is a session on one of the SRT
+ * relays Strom knows: one public UDP port where Strom and the outside party both
+ * call in with the same stream ID. Without `@` the relay is `default`, and the
+ * studio writes the default relay without `@`. `srt+relay://auto[@<relay>]` asks
+ * the backend to generate the ID; it is kept from then on, also when an edit
+ * sends `auto` again. On an edit, `auto` without `@` also keeps the stored relay,
+ * `auto@<relay>` moves the stream to that relay (keeping the ID), and
+ * `auto@default` moves it back to the default relay.
  */
 
-import type { SrtConnect } from './api'
+import type { SrtCapabilities, SrtConnect, SrtRelayEndpoint } from './api'
 
 export type SrtDirection = 'listener' | 'caller' | 'relay'
 
@@ -20,10 +24,27 @@ export function isRelayAddress(address: string | undefined | null): boolean {
   return !!address && /^srt\+relay:\/\//i.test(address.trim())
 }
 
+/** The relay an address without `@<relay>` uses. */
+export const DEFAULT_RELAY = 'default'
+
+/** A relay name as Strom and the backend accept it. */
+export const RELAY_NAME_RE = /^[a-z0-9-]{1,32}$/
+
+const RELAY_ADDRESS_RE = /^srt\+relay:\/\/([A-Za-z0-9_-]{1,64})(?:@([a-z0-9-]{1,32}))?(?:[?#]|$)/i
+
 /** The stream ID of a relay address, or null. */
 export function relayIdOf(address: string): string | null {
-  const m = /^srt\+relay:\/\/([A-Za-z0-9_-]{1,64})(?:[?#]|$)/i.exec(address.trim())
+  const m = RELAY_ADDRESS_RE.exec(address.trim())
   return m ? (m[1] ?? null) : null
+}
+
+/**
+ * The relay a relay address uses: its `@<relay>`, or `default` without one.
+ * Null when the address is not a (well-formed) relay address.
+ */
+export function relayNameOf(address: string): string | null {
+  const m = RELAY_ADDRESS_RE.exec(address.trim())
+  return m ? (m[2] ?? DEFAULT_RELAY) : null
 }
 
 /**
@@ -35,13 +56,18 @@ export function encodePassphrase(passphrase: string): string {
   return encodeURIComponent(passphrase).replace(/[!*'()~]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
 }
 
-/**
- * A relay address for a new or re-saved document. The backend generates the
- * stream ID for `auto`, or keeps the one the document already has.
- */
-export function buildRelayAddress(passphrase?: string): string {
+/** `srt+relay://auto`, with `@<at>` when given, and the passphrase when given. */
+function autoRelayAddress(passphrase: string | undefined, at: string | undefined): string {
   const p = passphrase?.trim()
-  return `srt+relay://auto${p ? `?passphrase=${encodePassphrase(p)}` : ''}`
+  return `srt+relay://auto${at ? `@${at}` : ''}${p ? `?passphrase=${encodePassphrase(p)}` : ''}`
+}
+
+/**
+ * A relay address for a new document on `relay` (default: the default relay,
+ * written without `@`). The backend generates the stream ID for `auto`.
+ */
+export function buildRelayAddress(passphrase?: string, relay: string = DEFAULT_RELAY): string {
+  return autoRelayAddress(passphrase, relay === DEFAULT_RELAY ? undefined : relay)
 }
 
 /** Which way a stored SRT address points. Hostless means Strom listens. */
@@ -169,11 +195,19 @@ export function dialInIsLocalOnly(address: string, connect: SrtConnect | undefin
   return !!connect && !connect.uri && srtDirection(address) === 'listener'
 }
 
-/** Why the backend could not give a dial-in address, in an operator's words. */
-export function dialInUnknownReason(connect: SrtConnect | undefined): string {
+/**
+ * Why the backend could not give a dial-in address, in an operator's words.
+ * `relays` (server-info `srt.relays`) names the configured relays for
+ * `srt-relay-unknown`.
+ */
+export function dialInUnknownReason(connect: SrtConnect | undefined, relays?: SrtRelayEndpoint[]): string {
   switch (connect?.reason) {
     case 'srt-relay-not-configured':
       return 'Strom reports no SRT relay'
+    case 'srt-relay-unknown': {
+      const names = relays?.map((r) => r.name) ?? []
+      return `Strom has no SRT relay named "${connect.relay ?? DEFAULT_RELAY}"${names.length ? ` (configured: ${names.join(', ')})` : ''}; edit it and pick another relay`
+    }
     case 'srt-relay-unreachable':
       return 'relay status unavailable, Strom is not answering'
     case 'srt-host-not-configured':
@@ -191,7 +225,7 @@ export function dialInUnknownReason(connect: SrtConnect | undefined): string {
  * the dial-in address is unknown, why. `dials` is the subject and verb
  * ("sender dials", "viewers dial"). A caller address is shown as stored.
  */
-export function srtRowLabel(address: string, connect: SrtConnect | undefined, stromHost: string | undefined, dials: string): string {
+export function srtRowLabel(address: string, connect: SrtConnect | undefined, stromHost: string | undefined, dials: string, relays?: SrtRelayEndpoint[]): string {
   const direction = srtDirection(address)
   const dialIn = dialInAddress(address, connect, stromHost)
   const withPassphrase = passphraseOf(address) !== null ? ' with the passphrase' : ''
@@ -199,7 +233,11 @@ export function srtRowLabel(address: string, connect: SrtConnect | undefined, st
     const localOnly = dialInIsLocalOnly(address, connect) ? ' · local network only (set SRT_PUBLIC_HOST on the backend for a public address)' : ''
     return `${dials} ${dialIn}${withPassphrase}${localOnly}`
   }
-  if (direction === 'relay') return `via relay · stream ID ${relayIdOf(address) ?? '—'} · ${dialInUnknownReason(connect)}`
+  if (direction === 'relay') {
+    const relay = relayNameOf(address)
+    const named = relay && relay !== DEFAULT_RELAY ? ` ${relay}` : ''
+    return `via relay${named} · stream ID ${relayIdOf(address) ?? '—'} · ${dialInUnknownReason(connect, relays)}`
+  }
   if (direction === 'listener') {
     return `${stripPassphrase(address)}${withPassphrase} · ${connect ? dialInUnknownReason(connect) : 'Strom host not known'}`
   }
@@ -213,10 +251,58 @@ export function srtRowLabel(address: string, connect: SrtConnect | undefined, st
  * never written back. Otherwise `auto`, and the backend keeps the stream ID.
  * `removePassphrase` on a stored relay address sends it without a passphrase,
  * which removes it (the backend replaces a sent address in full).
+ *
+ * `relay` is the relay chosen in the form (default: the stored one). On the
+ * stored relay the address is `auto` without `@`, which keeps the stored relay;
+ * on another one it is `auto@<relay>`, also `auto@default` to move back to the
+ * default relay. A document that was not a relay address yet gets the create
+ * form (default relay without `@`).
  */
-export function relayAddressPatch(storedDirection: SrtDirection | null, passphrase: string, removePassphrase = false): string | undefined {
-  if (removePassphrase && storedDirection === 'relay') return buildRelayAddress()
-  return storedDirection !== 'relay' || passphrase.trim() ? buildRelayAddress(passphrase) : undefined
+export function relayAddressPatch(edit: {
+  storedDirection: SrtDirection | null
+  /** The stored relay (`relayNameOf`), when the stored address is a relay address. */
+  storedRelay?: string | null
+  relay?: string
+  passphrase: string
+  removePassphrase?: boolean
+}): string | undefined {
+  const { storedDirection, passphrase } = edit
+  if (storedDirection !== 'relay') return buildRelayAddress(passphrase, edit.relay)
+  const stored = edit.storedRelay ?? DEFAULT_RELAY
+  const chosen = edit.relay ?? stored
+  const at = chosen !== stored ? chosen : undefined
+  if (edit.removePassphrase) return autoRelayAddress(undefined, at)
+  return at || passphrase.trim() ? autoRelayAddress(passphrase, at) : undefined
+}
+
+/**
+ * Why a relay switch cannot be saved as is, or null. A sent address replaces
+ * the stored one in full, and the stored passphrase comes back masked, so
+ * moving a stream with a passphrase to another relay needs the passphrase typed
+ * again (or removed); a blank field would otherwise drop it silently.
+ */
+export function relaySwitchPassphraseError(edit: {
+  storedDirection: SrtDirection | null
+  storedRelay?: string | null
+  relay?: string
+  storedPassphrase: boolean
+  passphrase: string
+  removePassphrase?: boolean
+}): string | null {
+  if (edit.storedDirection !== 'relay' || !edit.storedPassphrase || edit.removePassphrase || edit.passphrase.trim()) return null
+  const stored = edit.storedRelay ?? DEFAULT_RELAY
+  if ((edit.relay ?? stored) === stored) return null
+  return 'Moving to another relay sends the address again, and the stored passphrase is hidden. Type the passphrase again, or use "Remove passphrase".'
+}
+
+/**
+ * The relay the form uses: the one picked when Strom has it (or it is the
+ * stored one), else the stored relay, else the first one Strom reports
+ * (`default` first), else `default`.
+ */
+export function chosenRelay(picked: string, relays: SrtRelayEndpoint[], storedRelay?: string | null): string {
+  if (picked && (picked === storedRelay || relays.some((r) => r.name === picked))) return picked
+  return storedRelay ?? relays[0]?.name ?? DEFAULT_RELAY
 }
 
 /**
@@ -253,4 +339,93 @@ export function bareQueryKey(address: string): string | null {
 export function bareQueryKeyError(address: string): string | null {
   const key = bareQueryKey(address)
   return key === null ? null : `The SRT parameter "${key}" has no value, which crashes GStreamer. Write ${key}=<value>, or remove it.`
+}
+
+/** Whether a typed SRT address asks for rendezvous mode. */
+export function isRendezvousAddress(address: string): boolean {
+  return /^srt:\/\//i.test(address.trim()) && /[?&]mode=rendezvous(?:[&#]|$)/i.test(address)
+}
+
+/**
+ * What the direction pickers offer, from server-info `srt`. Only a definite
+ * answer from Strom (`state: ok`) hides a mode: while the state is `unknown`,
+ * `unreachable` or `unsupported` (or the backend is too old to report `srt`)
+ * every mode is offered. "Via relay" needs at least one relay; the relay picker
+ * shows when there is more than one, or the only one is not `default`.
+ */
+export interface SrtOffer {
+  state: SrtCapabilities['state']
+  listener: boolean
+  rendezvous: boolean
+  relays: SrtRelayEndpoint[]
+  relayPicker: boolean
+  /**
+   * A line under the direction choice. `blocked`: Strom says listener cannot
+   * work here. `unreachable`: a subtle note that Strom did not answer the last
+   * check, so everything is offered.
+   */
+  note: { kind: 'blocked' | 'unreachable'; text: string } | null
+}
+
+/** The explanation for a Strom that cannot be reached from outside. */
+export function unreachableFromOutsideText(relays: boolean): string {
+  return relays
+    ? 'This Strom cannot be reached from outside; use caller or Via relay.'
+    : 'This Strom cannot be reached from outside; use caller.'
+}
+
+export function srtOffer(srt: SrtCapabilities | undefined | null): SrtOffer {
+  const state = srt?.state ?? 'unknown'
+  const relays = srt?.relays ?? []
+  const definite = state === 'ok'
+  const listener = !definite || srt?.modes.listener !== false
+  const rendezvous = !definite || srt?.modes.rendezvous !== false
+  const note: SrtOffer['note'] = !listener
+    ? { kind: 'blocked', text: unreachableFromOutsideText(relays.length > 0) }
+    : state === 'unreachable'
+      ? { kind: 'unreachable', text: 'Strom did not answer the last check of what SRT can do here, so every direction is offered.' }
+      : null
+  return {
+    state,
+    listener,
+    rendezvous,
+    relays,
+    relayPicker: relays.length > 1 || (relays.length === 1 && relays[0]!.name !== DEFAULT_RELAY),
+    note,
+  }
+}
+
+/**
+ * The direction a form shows: the chosen one if it is offered, or is the
+ * stored direction (an existing document stays editable as it is); otherwise
+ * caller, which always works.
+ */
+export function offeredDirection(chosen: SrtDirection, offer: SrtOffer, stored?: SrtDirection | null): SrtDirection {
+  if (chosen === stored) return chosen
+  if (chosen === 'listener' && !offer.listener) return 'caller'
+  if (chosen === 'relay' && offer.relays.length === 0) return offer.listener ? 'listener' : 'caller'
+  return chosen
+}
+
+/**
+ * Why a typed rendezvous address cannot be saved, or null. Only a new or
+ * changed address is refused; a stored one stays editable as it is.
+ */
+export function rendezvousError(address: string, offer: SrtOffer, stored?: string): string | null {
+  if (offer.rendezvous || !isRendezvousAddress(address) || address.trim() === stored?.trim()) return null
+  return `Rendezvous will not work here. ${unreachableFromOutsideText(offer.relays.length > 0)}`
+}
+
+/** `connect.warning` in an operator's words, or null. */
+export function srtConnectWarningText(connect: SrtConnect | undefined): string | null {
+  switch (connect?.warning) {
+    case undefined:
+      return null
+    case 'srt-listener-unsupported':
+      return 'Strom reports that it cannot be reached from outside, so this listener address will not work. Switch to caller or Via relay.'
+    case 'srt-rendezvous-unsupported':
+      return 'Strom reports that it cannot be reached from outside, so this rendezvous address will not work. Switch to caller or Via relay.'
+    default:
+      return 'Strom reports that this SRT mode will not work here.'
+  }
 }

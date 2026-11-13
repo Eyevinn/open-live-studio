@@ -36,7 +36,7 @@ beforeEach(() => {
     stromHost: 'strom.example.com',
     srtPorts: [47100],
     srtPortState: 'reserved',
-    srtRelay: { configured: true, public: 'relay.example.com:9000' },
+    srt: { state: 'ok', modes: { listener: true, caller: true, rendezvous: true }, relays: [{ name: 'default', public: 'relay.example.com:9000' }], inboundReachable: true, ports: null },
   })
   useSourcesStore.setState({ sources: [], isLoading: false, lastFetchedAt: Date.now() })
   useProductionsStore.setState({ productions: [] })

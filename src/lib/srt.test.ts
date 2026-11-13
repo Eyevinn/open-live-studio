@@ -20,10 +20,18 @@ import {
   relayAddressPatch,
   encodePassphrase,
   srtRowLabel,
+  relayNameOf,
+  relaySwitchPassphraseError,
+  chosenRelay,
   bareQueryKey,
   bareQueryKeyError,
+  isRendezvousAddress,
+  srtOffer,
+  offeredDirection,
+  rendezvousError,
+  srtConnectWarningText,
 } from './srt'
-import type { SrtConnect } from './api'
+import type { SrtCapabilities, SrtConnect } from './api'
 
 describe('srtDirection', () => {
   it('treats a hostless address without a caller mode as a listener', () => {
@@ -205,13 +213,28 @@ describe('relay addresses', () => {
   it('carry a stream ID', () => {
     expect(relayIdOf('srt+relay://abc_123?passphrase=***')).toBe('abc_123')
     expect(relayIdOf('srt+relay://abc-1')).toBe('abc-1')
+    expect(relayIdOf('srt+relay://abc-1@eu-north?passphrase=***')).toBe('abc-1')
     expect(relayIdOf('srt://:9000')).toBeNull()
+  })
+
+  it('name their relay, default without @', () => {
+    expect(relayNameOf('srt+relay://abc')).toBe('default')
+    expect(relayNameOf('srt+relay://abc?passphrase=***')).toBe('default')
+    expect(relayNameOf('srt+relay://abc@eu-north?passphrase=***')).toBe('eu-north')
+    expect(relayNameOf('srt+relay://abc@Bad_Name')).toBeNull()
+    expect(relayNameOf('srt://:9000')).toBeNull()
   })
 
   it('are built as auto, with an optional encoded passphrase', () => {
     expect(buildRelayAddress()).toBe('srt+relay://auto')
     expect(buildRelayAddress('  ')).toBe('srt+relay://auto')
     expect(buildRelayAddress('pass word!1')).toBe('srt+relay://auto?passphrase=pass%20word%211')
+  })
+
+  it('are built as auto@<relay> on a named relay, and without @ on the default one', () => {
+    expect(buildRelayAddress('', 'eu-north')).toBe('srt+relay://auto@eu-north')
+    expect(buildRelayAddress('supersecret1', 'eu-north')).toBe('srt+relay://auto@eu-north?passphrase=supersecret1')
+    expect(buildRelayAddress('supersecret1', 'default')).toBe('srt+relay://auto?passphrase=supersecret1')
   })
 
   it('bind no listener port', () => {
@@ -284,6 +307,13 @@ describe('srtRowLabel', () => {
     expect(srtRowLabel('srt://cdn.example.com:9000?mode=caller', undefined, 'strom', 'x')).toBe('srt://cdn.example.com:9000?mode=caller')
   })
 
+  it('names the relay and the configured ones for srt-relay-unknown', () => {
+    const connect: SrtConnect = { ...unresolved('srt-relay-unknown'), relay: 'eu-north' }
+    expect(srtRowLabel('srt+relay://abc@eu-north', connect, undefined, 'x', [{ name: 'default', public: 'srt.example.com:9000' }]))
+      .toBe('via relay eu-north · stream ID abc · Strom has no SRT relay named "eu-north" (configured: default); edit it and pick another relay')
+    expect(dialInUnknownReason(connect)).toBe('Strom has no SRT relay named "eu-north"; edit it and pick another relay')
+  })
+
   it('reason texts', () => {
     expect(dialInUnknownReason({ uri: null, host: null, port: 1, mode: 'caller', source: 'strom-host', reason: 'srt-host-not-loopback-reachable' })).toMatch(/SRT_PUBLIC_HOST/)
   })
@@ -291,35 +321,62 @@ describe('srtRowLabel', () => {
 
 describe('relayAddressPatch', () => {
   it('leaves a stored relay address alone without a new passphrase', () => {
-    expect(relayAddressPatch('relay', '')).toBeUndefined()
-    expect(relayAddressPatch('relay', '   ')).toBeUndefined()
+    expect(relayAddressPatch({ storedDirection: 'relay', passphrase: '' })).toBeUndefined()
+    expect(relayAddressPatch({ storedDirection: 'relay', passphrase: '   ' })).toBeUndefined()
+    expect(relayAddressPatch({ storedDirection: 'relay', storedRelay: 'eu-north', relay: 'eu-north', passphrase: '' })).toBeUndefined()
   })
   it('sends auto with a new passphrase, or when switching to relay', () => {
-    expect(relayAddressPatch('relay', 'anothersecret')).toBe('srt+relay://auto?passphrase=anothersecret')
-    expect(relayAddressPatch('listener', '')).toBe('srt+relay://auto')
-    expect(relayAddressPatch(null, '')).toBe('srt+relay://auto')
+    expect(relayAddressPatch({ storedDirection: 'relay', passphrase: 'anothersecret' })).toBe('srt+relay://auto?passphrase=anothersecret')
+    expect(relayAddressPatch({ storedDirection: 'listener', passphrase: '' })).toBe('srt+relay://auto')
+    expect(relayAddressPatch({ storedDirection: null, passphrase: '' })).toBe('srt+relay://auto')
+  })
+  it('renews the passphrase with auto without @, which keeps the stored relay', () => {
+    expect(relayAddressPatch({ storedDirection: 'relay', storedRelay: 'eu-north', relay: 'eu-north', passphrase: 'anothersecret' }))
+      .toBe('srt+relay://auto?passphrase=anothersecret')
+  })
+  it('switches relay with auto@<relay>, and back to the default one with auto@default', () => {
+    expect(relayAddressPatch({ storedDirection: 'relay', storedRelay: 'default', relay: 'eu-north', passphrase: 'anothersecret' }))
+      .toBe('srt+relay://auto@eu-north?passphrase=anothersecret')
+    expect(relayAddressPatch({ storedDirection: 'relay', storedRelay: 'eu-north', relay: 'default', passphrase: '' }))
+      .toBe('srt+relay://auto@default')
+    expect(relayAddressPatch({ storedDirection: 'relay', storedRelay: 'eu-north', relay: 'default', passphrase: '', removePassphrase: true }))
+      .toBe('srt+relay://auto@default')
+  })
+  it('a listener or caller switched to a named relay uses auto@<relay>', () => {
+    expect(relayAddressPatch({ storedDirection: 'listener', relay: 'eu-north', passphrase: '' })).toBe('srt+relay://auto@eu-north')
+    expect(relayAddressPatch({ storedDirection: 'caller', relay: 'default', passphrase: '' })).toBe('srt+relay://auto')
   })
   it('removes a stored passphrase when asked, even with text in the field', () => {
-    expect(relayAddressPatch('relay', 'ignored-value', true)).toBe('srt+relay://auto')
-    expect(relayAddressPatch('listener', 'pass-123456', true)).toBe('srt+relay://auto?passphrase=pass-123456')
+    expect(relayAddressPatch({ storedDirection: 'relay', passphrase: 'ignored-value', removePassphrase: true })).toBe('srt+relay://auto')
+    expect(relayAddressPatch({ storedDirection: 'listener', passphrase: 'pass-123456', removePassphrase: true })).toBe('srt+relay://auto?passphrase=pass-123456')
   })
 })
 
-describe('passphraseError', () => {
-  it('accepts none, or 10–80 UTF-8 bytes counted before URL encoding', () => {
-    expect(passphraseError('')).toBeNull()
-    expect(passphraseError('   ')).toBeNull()
-    expect(passphraseError('a'.repeat(10))).toBeNull()
-    expect(passphraseError('a'.repeat(80))).toBeNull()
-    // 10 raw characters that encode to more: still fine.
-    expect(passphraseError('&&&&&&&&&&')).toBeNull()
+describe('relaySwitchPassphraseError', () => {
+  const base = { storedDirection: 'relay' as const, storedRelay: 'default', storedPassphrase: true, passphrase: '' }
+  it('asks for the passphrase again when moving a stream with one to another relay', () => {
+    expect(relaySwitchPassphraseError({ ...base, relay: 'eu-north' })).toMatch(/Type the passphrase again/)
   })
-  it('refuses shorter or longer ones with a clear message', () => {
-    expect(passphraseError('short')).toBe('The passphrase must be 10–80 bytes (it is 5; letters such as å count as 2).')
-    expect(passphraseError('a'.repeat(81))).toMatch(/10–80 bytes \(it is 81;/)
-    // 45 × å is 45 UTF-16 units but 90 bytes, which Strom refuses.
-    expect(passphraseError('å'.repeat(45))).toMatch(/it is 90;/)
-    expect(passphraseError('å'.repeat(39))).toBeNull()
+  it('is fine on the same relay, with a typed passphrase, a removal, or no stored passphrase', () => {
+    expect(relaySwitchPassphraseError({ ...base, relay: 'default' })).toBeNull()
+    expect(relaySwitchPassphraseError({ ...base, relay: 'eu-north', passphrase: 'anothersecret' })).toBeNull()
+    expect(relaySwitchPassphraseError({ ...base, relay: 'eu-north', removePassphrase: true })).toBeNull()
+    expect(relaySwitchPassphraseError({ ...base, relay: 'eu-north', storedPassphrase: false })).toBeNull()
+    expect(relaySwitchPassphraseError({ ...base, storedDirection: 'listener', relay: 'eu-north' })).toBeNull()
+  })
+})
+
+describe('chosenRelay', () => {
+  const relays = [{ name: 'default', public: 'srt.example.com:9000' }, { name: 'eu-north', public: 'eu.example.com:9000' }]
+  it('uses the picked relay when Strom has it, or it is the stored one', () => {
+    expect(chosenRelay('eu-north', relays)).toBe('eu-north')
+    expect(chosenRelay('gone', relays, 'gone')).toBe('gone')
+  })
+  it('falls back to the stored relay, then the first one, then default', () => {
+    expect(chosenRelay('', relays, 'eu-north')).toBe('eu-north')
+    expect(chosenRelay('', relays)).toBe('default')
+    expect(chosenRelay('unknown', [{ name: 'eu-north', public: 'x:1' }])).toBe('eu-north')
+    expect(chosenRelay('', [])).toBe('default')
   })
 })
 
@@ -337,8 +394,124 @@ describe('bareQueryKey', () => {
     expect(bareQueryKeyError('srt://h:1?mode=caller')).toBeNull()
   })
   it('is never produced by the address builders', () => {
-    for (const a of [buildListenerAddress(0), buildListenerAddress(9000, 'supersecret1'), buildRelayAddress(), buildRelayAddress('x y z 12345')]) {
+    for (const a of [buildListenerAddress(0), buildListenerAddress(9000, 'supersecret1'), buildRelayAddress(), buildRelayAddress('x y z 12345', 'eu-north'),
+      relayAddressPatch({ storedDirection: 'relay', storedRelay: 'eu-north', relay: 'default', passphrase: '' })!]) {
       expect(bareQueryKey(a)).toBeNull()
     }
+  })
+})
+
+describe('isRendezvousAddress', () => {
+  it('reads mode=rendezvous only', () => {
+    expect(isRendezvousAddress('srt://h:1?mode=rendezvous')).toBe(true)
+    expect(isRendezvousAddress('srt://h:1?latency=1&mode=rendezvous&x=1')).toBe(true)
+    expect(isRendezvousAddress('srt://h:1?mode=caller')).toBe(false)
+    expect(isRendezvousAddress('srt://h:1?mode=rendezvousx')).toBe(false)
+  })
+})
+
+function caps(over: Partial<SrtCapabilities> = {}): SrtCapabilities {
+  return {
+    state: 'ok',
+    modes: { listener: true, caller: true, rendezvous: true },
+    relays: [],
+    inboundReachable: true,
+    ports: null,
+    ...over,
+  }
+}
+const DEFAULT_RELAY_EP = { name: 'default', public: 'srt.example.com:9000' }
+const EU_RELAY = { name: 'eu-north', public: 'eu.example.com:9000' }
+const CLOSED = { listener: false, caller: true, rendezvous: false }
+
+describe('srtOffer', () => {
+  it('offers every mode and no relay on an older backend without srt', () => {
+    const o = srtOffer(undefined)
+    expect(o).toMatchObject({ state: 'unknown', listener: true, rendezvous: true, relays: [], relayPicker: false, note: null })
+  })
+
+  it('hides listener and rendezvous only when Strom answered (state ok) that they cannot work', () => {
+    const o = srtOffer(caps({ modes: CLOSED, inboundReachable: false, relays: [DEFAULT_RELAY_EP] }))
+    expect(o.listener).toBe(false)
+    expect(o.rendezvous).toBe(false)
+    expect(o.note).toEqual({ kind: 'blocked', text: 'This Strom cannot be reached from outside; use caller or Via relay.' })
+    expect(srtOffer(caps({ modes: CLOSED })).note?.text).toBe('This Strom cannot be reached from outside; use caller.')
+  })
+
+  it('keeps everything offered while the state is unknown, unreachable or unsupported', () => {
+    for (const state of ['unknown', 'unreachable', 'unsupported'] as const) {
+      const o = srtOffer(caps({ state, modes: CLOSED }))
+      expect(o.listener).toBe(true)
+      expect(o.rendezvous).toBe(true)
+    }
+    expect(srtOffer(caps({ state: 'unreachable', modes: CLOSED })).note?.kind).toBe('unreachable')
+    expect(srtOffer(caps({ state: 'unknown' })).note).toBeNull()
+    expect(srtOffer(caps({ state: 'unsupported' })).note).toBeNull()
+  })
+
+  it('shows the relay picker for more than one relay, or one not named default', () => {
+    expect(srtOffer(caps({ relays: [] })).relayPicker).toBe(false)
+    expect(srtOffer(caps({ relays: [DEFAULT_RELAY_EP] })).relayPicker).toBe(false)
+    expect(srtOffer(caps({ relays: [EU_RELAY] })).relayPicker).toBe(true)
+    expect(srtOffer(caps({ relays: [DEFAULT_RELAY_EP, EU_RELAY] })).relayPicker).toBe(true)
+  })
+})
+
+describe('offeredDirection', () => {
+  const closed = srtOffer(caps({ modes: CLOSED, relays: [DEFAULT_RELAY_EP] }))
+  it('falls back to caller for a listener Strom cannot do, unless it is stored', () => {
+    expect(offeredDirection('listener', closed)).toBe('caller')
+    expect(offeredDirection('listener', closed, 'listener')).toBe('listener')
+    expect(offeredDirection('relay', closed)).toBe('relay')
+  })
+  it('falls back from relay when there is none', () => {
+    expect(offeredDirection('relay', srtOffer(caps()))).toBe('listener')
+    expect(offeredDirection('relay', srtOffer(caps({ modes: CLOSED })))).toBe('caller')
+    expect(offeredDirection('relay', srtOffer(caps()), 'relay')).toBe('relay')
+  })
+})
+
+describe('rendezvousError', () => {
+  const closed = srtOffer(caps({ modes: CLOSED, relays: [DEFAULT_RELAY_EP] }))
+  it('refuses a new rendezvous address when Strom says it cannot work', () => {
+    expect(rendezvousError('srt://h:1?mode=rendezvous', closed)).toBe('Rendezvous will not work here. This Strom cannot be reached from outside; use caller or Via relay.')
+  })
+  it('accepts it when Strom can, when it is the stored one, and any caller address', () => {
+    expect(rendezvousError('srt://h:1?mode=rendezvous', srtOffer(caps()))).toBeNull()
+    expect(rendezvousError('srt://h:1?mode=rendezvous', srtOffer(caps({ state: 'unreachable', modes: CLOSED })))).toBeNull()
+    expect(rendezvousError('srt://h:1?mode=rendezvous', closed, 'srt://h:1?mode=rendezvous')).toBeNull()
+    expect(rendezvousError('srt://h:1?mode=caller', closed)).toBeNull()
+  })
+})
+
+describe('srtConnectWarningText', () => {
+  const connect: SrtConnect = { uri: 'srt://strom:1?mode=caller', host: 'strom', port: 1, mode: 'caller', source: 'strom-host' }
+  it('explains a listener or rendezvous address that will not work', () => {
+    expect(srtConnectWarningText({ ...connect, warning: 'srt-listener-unsupported' })).toMatch(/cannot be reached from outside, so this listener address will not work/)
+    expect(srtConnectWarningText({ ...connect, warning: 'srt-rendezvous-unsupported' })).toMatch(/rendezvous address will not work/)
+    expect(srtConnectWarningText({ ...connect, warning: 'srt-something-new' })).toMatch(/will not work here/)
+  })
+  it('says nothing without a warning', () => {
+    expect(srtConnectWarningText(connect)).toBeNull()
+    expect(srtConnectWarningText(undefined)).toBeNull()
+  })
+})
+
+
+describe('passphraseError', () => {
+  it('accepts none, or 10–80 UTF-8 bytes counted before URL encoding', () => {
+    expect(passphraseError('')).toBeNull()
+    expect(passphraseError('   ')).toBeNull()
+    expect(passphraseError('a'.repeat(10))).toBeNull()
+    expect(passphraseError('a'.repeat(80))).toBeNull()
+    // 10 raw characters that encode to more: still fine.
+    expect(passphraseError('&&&&&&&&&&')).toBeNull()
+  })
+  it('refuses shorter or longer ones with a clear message', () => {
+    expect(passphraseError('short')).toBe('The passphrase must be 10–80 bytes (it is 5; letters such as å count as 2).')
+    expect(passphraseError('a'.repeat(81))).toMatch(/10–80 bytes \(it is 81;/)
+    // 45 × å is 45 UTF-16 units but 90 bytes, which Strom refuses.
+    expect(passphraseError('å'.repeat(45))).toMatch(/it is 90;/)
+    expect(passphraseError('å'.repeat(39))).toBeNull()
   })
 })

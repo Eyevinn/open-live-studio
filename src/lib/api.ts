@@ -266,13 +266,21 @@ export interface SrtConnect {
   source: 'authored-host' | 'srt-public-host' | 'strom-host' | 'srt-relay' | 'unknown'
   /** Relay addresses only: the stream ID the outside party uses. */
   streamid?: string
+  /** Relay addresses only: the relay's name, `default` when the address has no `@<relay>`. */
+  relay?: string
   /** Present only when `uri` is null: why the backend cannot give the address. */
   reason?: SrtConnectReason
+  /**
+   * The mode this address needs cannot work on this Strom (server-info
+   * `srt.modes`). Reported, never enforced: the address is stored and resolved.
+   */
+  warning?: SrtConnectWarning
 }
 
 /**
  * Why `SrtConnect.uri` is null. `srt-relay-not-configured`: Strom reports no
- * relay. `srt-relay-unreachable`: Strom could not be asked, so it is unknown.
+ * relay. `srt-relay-unknown`: Strom has no relay of the address's name.
+ * `srt-relay-unreachable`: Strom could not be asked, so it is unknown.
  * Newer backends may add reasons; treat unknown ones as "not known".
  */
 export type SrtConnectReason =
@@ -280,9 +288,13 @@ export type SrtConnectReason =
   | 'srt-host-not-loopback-reachable'
   | 'strom-url-not-parseable'
   | 'srt-relay-not-configured'
+  | 'srt-relay-unknown'
   | 'srt-relay-unreachable'
   | 'srt-relay-public-unknown'
   | (string & {})
+
+/** Why an SRT address's mode will not work on this Strom (`SrtConnect.warning`). */
+export type SrtConnectWarning = 'srt-listener-unsupported' | 'srt-rendezvous-unsupported' | (string & {})
 
 export interface ApiOutput {
   id: string
@@ -780,13 +792,32 @@ export interface ServerInfo {
   /** `pending` means no ports are held yet; `unsupported`/`disabled` mean any port goes. */
   srtPortState?: 'reserved' | 'pending' | 'unsupported' | 'disabled'
   /**
-   * The SRT relay Strom fronts. Absent on older backends. When `configured`,
-   * sources and outputs may use `srt+relay://auto` addresses; `public` is the
-   * relay's public host:port. `state` (newer backends): `ok` when Strom
-   * answered the last check, `unreachable` when the values are last known,
-   * `unknown` before Strom has answered at all.
+   * What SRT can do on this Strom (Strom `GET /api/capabilities`, cached by the
+   * backend). Absent on older backends, which the studio reads as `unknown`.
    */
-  srtRelay?: { configured: boolean; public: string | null; state?: 'ok' | 'unreachable' | 'unknown' }
+  srt?: SrtCapabilities
+}
+
+/** One SRT relay Strom can use. `default` needs no `@` in an address. */
+export interface SrtRelayEndpoint {
+  name: string
+  /** The relay's public host:port, as the outside party dials it. */
+  public: string
+}
+
+/**
+ * `server-info.srt`. `state`: `ok` when Strom answered the last check;
+ * `unsupported` (an older Strom) and `unknown` (no answer yet) report every
+ * mode and no relay; `unreachable` reports the last known values.
+ */
+export interface SrtCapabilities {
+  state: 'ok' | 'unsupported' | 'unreachable' | 'unknown'
+  modes: { listener: boolean; caller: boolean; rendezvous: boolean }
+  /** `default` first; empty when no relay is configured or known. */
+  relays: SrtRelayEndpoint[]
+  inboundReachable: boolean | null
+  /** Strom's STROM_PORTS spans; null for any port. Not the legacy `srtPorts`. */
+  ports: Array<{ first: number; last: number }> | null
 }
 
 export const serverInfoApi = {

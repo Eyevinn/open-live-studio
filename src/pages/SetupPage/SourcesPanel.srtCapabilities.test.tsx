@@ -1,0 +1,239 @@
+// @vitest-environment jsdom
+/**
+ * SRT sources against server-info `srt` (open-live#628, named relays): only the
+ * directions Strom can do are offered, the relay picker follows the relay list,
+ * `auto@<relay>` is written on create and on a relay switch, `connect.warning`
+ * is shown, and the relay/query-key errors read as operator messages.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { gatewaysApi, sourcesApi, type ApiSource, type ServerInfo, type SrtCapabilities } from '@/lib/api'
+import { useProductionsStore } from '@/store/productions.store'
+import { useSourcesStore } from '@/store/sources.store'
+import { SourcesPanel } from './SourcesPanel'
+
+let mockInfo: ServerInfo | null = null
+vi.mock('@/hooks/useServerInfo', () => ({ useServerInfo: () => ({ info: mockInfo, loaded: true }) }))
+
+const DEFAULT_RELAY = { name: 'default', public: 'srt.example.com:9000' }
+const EU_RELAY = { name: 'eu-north', public: 'eu.example.com:9000' }
+const OPEN = { listener: true, caller: true, rendezvous: true }
+const CLOSED = { listener: false, caller: true, rendezvous: false }
+
+function withSrt(srt: Partial<SrtCapabilities>): void {
+  mockInfo = {
+    stromHost: 'strom.example.com',
+    srtPorts: [47100],
+    srtPortState: 'reserved',
+    srt: { state: 'ok', modes: OPEN, relays: [], inboundReachable: true, ports: null, ...srt },
+  }
+}
+
+const CAM: ApiSource = {
+  id: 'cam-1',
+  name: 'Cam 1',
+  address: 'srt://sender.example.com:9000?mode=caller',
+  streamType: 'srt',
+  status: 'inactive',
+}
+
+const RELAY_CAM: ApiSource = {
+  id: 'cam-relay',
+  name: 'Relay cam',
+  address: 'srt+relay://AbCdEfGhIjKlMnOpQrStUv@eu-north?passphrase=***',
+  streamType: 'srt',
+  status: 'inactive',
+  connect: {
+    uri: 'srt://eu.example.com:9000?streamid=AbCdEfGhIjKlMnOpQrStUv',
+    host: 'eu.example.com',
+    port: 9000,
+    mode: 'caller',
+    source: 'srt-relay',
+    streamid: 'AbCdEfGhIjKlMnOpQrStUv',
+    relay: 'eu-north',
+  },
+}
+
+const LISTENER_CAM: ApiSource = {
+  id: 'cam-listener',
+  name: 'Listener cam',
+  address: 'srt://:47100?mode=listener',
+  streamType: 'srt',
+  status: 'inactive',
+  connect: {
+    uri: 'srt://strom.example.com:47100?mode=caller',
+    host: 'strom.example.com',
+    port: 47100,
+    mode: 'caller',
+    source: 'strom-host',
+    warning: 'srt-listener-unsupported',
+  },
+}
+
+beforeEach(() => {
+  vi.stubGlobal('matchMedia', (query: string) => ({ matches: false, media: query, addEventListener: () => {}, removeEventListener: () => {} }))
+  vi.spyOn(sourcesApi, 'list').mockResolvedValue([CAM])
+  vi.spyOn(sourcesApi, 'audioStreams').mockResolvedValue({ discovery: 'unavailable', reason: 'no-live-flow', streams: [] } as never)
+  vi.spyOn(gatewaysApi, 'list').mockResolvedValue([])
+  withSrt({})
+  useSourcesStore.setState({ sources: [], isLoading: false, lastFetchedAt: Date.now() })
+  useProductionsStore.setState({ productions: [] })
+})
+
+afterEach(() => {
+  cleanup()
+  vi.restoreAllMocks()
+  vi.unstubAllGlobals()
+})
+
+const save = () => fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+const RELAY = 'Via relay (one public port)'
+const BLOCKED = 'This Strom cannot be reached from outside; use caller or Via relay.'
+
+async function openNew(): Promise<void> {
+  render(<SourcesPanel />)
+  await screen.findByText(/Cam 1|Relay cam|Listener cam/)
+  fireEvent.click(screen.getByRole('button', { name: '+ New Source' }))
+  await screen.findByRole('button', { name: 'Listener' })
+  fireEvent.change(screen.getAllByRole('textbox')[0]!, { target: { value: 'Cam 2' } })
+}
+
+async function openEdit(): Promise<void> {
+  render(<SourcesPanel />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+  await screen.findByText('Edit Source')
+}
+
+describe('SourcesPanel — SRT directions Strom can do', () => {
+  it('Strom unreachable from outside (state ok): Listener disabled with the reason, caller chosen', async () => {
+    withSrt({ modes: CLOSED, inboundReachable: false, relays: [DEFAULT_RELAY] })
+    await openNew()
+    expect((screen.getByRole('button', { name: 'Listener' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(screen.getByText(BLOCKED)).toBeTruthy()
+    expect(screen.getByPlaceholderText('srt://sender.example.com:9000?mode=caller')).toBeTruthy()
+    expect(screen.getByRole('button', { name: RELAY })).toBeTruthy()
+  })
+
+  it('without a relay the reason only points to caller, and Via relay is not offered', async () => {
+    withSrt({ modes: CLOSED, inboundReachable: false })
+    await openNew()
+    expect(screen.getByText('This Strom cannot be reached from outside; use caller.')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: RELAY })).toBeNull()
+  })
+
+  it.each(['unknown', 'unsupported'] as const)('state %s: every direction offered, no note', async (state) => {
+    withSrt({ state, modes: CLOSED })
+    await openNew()
+    expect((screen.getByRole('button', { name: 'Listener' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.queryByText(BLOCKED)).toBeNull()
+    expect(screen.queryByText(/did not answer/)).toBeNull()
+  })
+
+  it('state unreachable: every direction offered, with a subtle note', async () => {
+    withSrt({ state: 'unreachable', modes: CLOSED })
+    await openNew()
+    expect((screen.getByRole('button', { name: 'Listener' }) as HTMLButtonElement).disabled).toBe(false)
+    expect(screen.getByText(/Strom did not answer the last check/)).toBeTruthy()
+  })
+
+  it('refuses a new rendezvous address when Strom says it cannot work', async () => {
+    withSrt({ modes: CLOSED, relays: [DEFAULT_RELAY] })
+    const create = vi.spyOn(sourcesApi, 'create').mockResolvedValue({ ...CAM, id: 'new' })
+    await openNew()
+    fireEvent.change(screen.getByPlaceholderText('srt://sender.example.com:9000?mode=caller'), { target: { value: 'srt://peer.example.com:9000?mode=rendezvous' } })
+    save()
+    expect(await screen.findByText(`Rendezvous will not work here. ${BLOCKED}`)).toBeTruthy()
+    expect(create).not.toHaveBeenCalled()
+  })
+
+  it('an existing listener shows connect.warning in the row and stays a listener in Edit', async () => {
+    withSrt({ modes: CLOSED, relays: [DEFAULT_RELAY] })
+    vi.spyOn(sourcesApi, 'list').mockResolvedValue([LISTENER_CAM])
+    await openEdit()
+    const warnings = screen.getAllByText(/so this listener address will not work/)
+    expect(warnings.length).toBe(2) // the row and the dialog
+    expect((screen.getByRole('button', { name: 'Listener' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+})
+
+describe('SourcesPanel — relay picker', () => {
+  it('one relay named default: no picker, auto without @', async () => {
+    withSrt({ relays: [DEFAULT_RELAY] })
+    const create = vi.spyOn(sourcesApi, 'create').mockResolvedValue({ ...CAM, id: 'new' })
+    await openNew()
+    fireEvent.click(screen.getByRole('button', { name: RELAY }))
+    expect(screen.queryByLabelText('Relay')).toBeNull()
+    save()
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    expect(create.mock.calls[0]?.[0]).toMatchObject({ address: 'srt+relay://auto' })
+  })
+
+  it('one relay not named default: picker shown, auto@<name>', async () => {
+    withSrt({ relays: [EU_RELAY] })
+    const create = vi.spyOn(sourcesApi, 'create').mockResolvedValue({ ...CAM, id: 'new' })
+    await openNew()
+    fireEvent.click(screen.getByRole('button', { name: RELAY }))
+    expect((screen.getByLabelText('Relay') as HTMLSelectElement).value).toBe('eu-north')
+    save()
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    expect(create.mock.calls[0]?.[0]).toMatchObject({ address: 'srt+relay://auto@eu-north' })
+  })
+
+  it('several relays: default first and preselected; picking one writes auto@<name>', async () => {
+    withSrt({ relays: [DEFAULT_RELAY, EU_RELAY] })
+    const create = vi.spyOn(sourcesApi, 'create').mockResolvedValue({ ...CAM, id: 'new' })
+    await openNew()
+    fireEvent.click(screen.getByRole('button', { name: RELAY }))
+    const picker = screen.getByLabelText('Relay') as HTMLSelectElement
+    expect(picker.value).toBe('default')
+    expect([...picker.options].map((o) => o.textContent)).toEqual(['default (srt.example.com:9000)', 'eu-north (eu.example.com:9000)'])
+    fireEvent.change(picker, { target: { value: 'eu-north' } })
+    fireEvent.change(screen.getByPlaceholderText('None'), { target: { value: 'supersecretpass' } })
+    save()
+    await waitFor(() => expect(create).toHaveBeenCalledTimes(1))
+    expect(create.mock.calls[0]?.[0]).toMatchObject({ address: 'srt+relay://auto@eu-north?passphrase=supersecretpass' })
+  })
+
+  it('Edit on the stored relay: shows its dial-in address; a new passphrase sends auto without @', async () => {
+    withSrt({ relays: [DEFAULT_RELAY, EU_RELAY] })
+    vi.spyOn(sourcesApi, 'list').mockResolvedValue([RELAY_CAM])
+    const update = vi.spyOn(sourcesApi, 'update').mockResolvedValue(RELAY_CAM)
+    await openEdit()
+    expect((screen.getByLabelText('Relay') as HTMLSelectElement).value).toBe('eu-north')
+    expect(screen.getByText('The sender dials srt://eu.example.com:9000?streamid=AbCdEfGhIjKlMnOpQrStUv with the passphrase')).toBeTruthy()
+    fireEvent.change(screen.getByPlaceholderText('Set — leave blank to keep'), { target: { value: 'anothersecret' } })
+    save()
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0]?.[1]).toMatchObject({ address: 'srt+relay://auto?passphrase=anothersecret' })
+  })
+
+  it('Edit switching back to the default relay asks for the passphrase, then sends auto@default', async () => {
+    withSrt({ relays: [DEFAULT_RELAY, EU_RELAY] })
+    vi.spyOn(sourcesApi, 'list').mockResolvedValue([RELAY_CAM])
+    const update = vi.spyOn(sourcesApi, 'update').mockResolvedValue(RELAY_CAM)
+    await openEdit()
+    fireEvent.change(screen.getByLabelText('Relay'), { target: { value: 'default' } })
+    expect(screen.getByText(/Moves to the default relay on save; the stream ID stays the same. The sender then dials srt.example.com:9000 instead./)).toBeTruthy()
+    save()
+    expect(await screen.findByText(/Type the passphrase again/)).toBeTruthy()
+    expect(update).not.toHaveBeenCalled()
+    fireEvent.change(screen.getByPlaceholderText('Set — leave blank to keep'), { target: { value: 'anothersecret' } })
+    save()
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0]?.[1]).toMatchObject({ address: 'srt+relay://auto@default?passphrase=anothersecret' })
+  })
+
+  it('a stored relay Strom no longer has: row says so with the configured relays, picker keeps it', async () => {
+    withSrt({ relays: [DEFAULT_RELAY] })
+    vi.spyOn(sourcesApi, 'list').mockResolvedValue([
+      { ...RELAY_CAM, connect: { ...RELAY_CAM.connect!, uri: null, host: null, port: null, reason: 'srt-relay-unknown' } },
+    ])
+    await openEdit()
+    expect(screen.getByText(
+      'via relay eu-north · stream ID AbCdEfGhIjKlMnOpQrStUv · Strom has no SRT relay named "eu-north" (configured: default); edit it and pick another relay',
+    )).toBeTruthy()
+    const picker = screen.getByLabelText('Relay') as HTMLSelectElement
+    expect(picker.value).toBe('eu-north')
+    expect([...picker.options].map((o) => o.textContent)).toContain('eu-north (not reported by Strom)')
+  })
+})
