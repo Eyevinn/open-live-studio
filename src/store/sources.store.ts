@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { devtools } from 'zustand/middleware'
-import { sourcesApi, type ApiSource, type HtmlSourceAuth, type HtmlSourceAuthInput, type StreamType } from '@/lib/api'
+import { sourcesApi, type ApiSource, type HtmlSourceAuth, type HtmlSourceAuthInput, type SrtConnect, type StreamType } from '@/lib/api'
 
 export type SourceStatus = 'active' | 'inactive'
 
@@ -18,6 +18,8 @@ export interface Source {
   audioStreamIndex?: number
   /** Id of the gateway that registered this source, if gateway-owned (open-live #263). */
   gatewayId?: string
+  /** Read-only dial-in address derived by the backend (SRT/EFP sources). */
+  connect?: SrtConnect
   /**
    * Authenticated-HTML-source material (open-live #332). The credential value is
    * never present — only `header.valueSet` echoes that one is stored.
@@ -35,7 +37,8 @@ interface SourcesActions {
   fetchAll: () => Promise<void>
   refresh: () => Promise<void>
   /** Returns the created source so callers can chain a follow-up call (e.g. setting HTML auth right after create, studio#154). */
-  addSource: (source: Omit<Source, 'id'>) => Promise<Source>
+  /** `quiet` suppresses the global error toast, for callers that show the failure inline. */
+  addSource: (source: Omit<Source, 'id'>, opts?: { quiet?: boolean }) => Promise<Source>
   removeSource: (id: string) => Promise<void>
   /**
    * `auth`, when passed, is merged into the same PATCH as the other fields
@@ -71,6 +74,7 @@ function fromApi(s: ApiSource): Source {
     audioStreamIndex: s.audioStreamIndex,
     gatewayId: s.gatewayId,
     auth: s.auth,
+    connect: s.connect,
   }
 }
 
@@ -109,11 +113,11 @@ export const useSourcesStore = create<SourcesState & SourcesActions>()(
         }
       },
 
-      addSource: async (source) => {
+      addSource: async (source, opts) => {
         // Strip the client-only `color` field before sending to the API.
         const { color, ...apiBody } = source
         void color
-        const created = await sourcesApi.create(apiBody)
+        const created = await (opts ? sourcesApi.create(apiBody, opts) : sourcesApi.create(apiBody))
         const mapped = fromApi(created)
         set((state) => { state.sources.push(mapped) })
         return mapped
@@ -132,6 +136,8 @@ export const useSourcesStore = create<SourcesState & SourcesActions>()(
           if (source) {
             if (updated.name !== undefined) source.name = updated.name
             if (updated.address !== undefined) source.address = updated.address
+            // Derived from the address, so it follows every address change.
+            source.connect = updated.connect
             if (updated.latency !== undefined) source.latency = updated.latency
             if (updated.audioStreamIndex !== undefined) source.audioStreamIndex = updated.audioStreamIndex
             // The endpoint always echoes the current `auth` (masked); keep the

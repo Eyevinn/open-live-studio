@@ -68,6 +68,22 @@ describe('ProductionsPanel endpoint pills', () => {
     await waitFor(() => expect(srtPill?.getAttribute('title')).toBe('srt://strom.example:9000?mode=caller'))
   })
 
+  it('copies a caller output as stored without the passphrase, and a listener on a private Strom via the Strom host', async () => {
+    vi.spyOn(outputsApi, 'list').mockResolvedValue([
+      { id: 'o-caller', name: 'CDN', outputType: 'mpegtssrt', url: 'srt://cdn.example.com:9000?mode=caller&passphrase=***', createdAt: TS, updatedAt: TS },
+      {
+        id: 'o-lan', name: 'LAN', outputType: 'mpegtssrt', url: 'srt://:9001?mode=listener', createdAt: TS, updatedAt: TS,
+        connect: { uri: null, host: '192.168.1.97', port: 9001, mode: 'caller', source: 'strom-host', reason: 'srt-host-not-loopback-reachable' },
+      },
+    ])
+    vi.spyOn(productionsApi, 'list').mockResolvedValue([production({ outputAssignments: [{ outputId: 'o-caller' }, { outputId: 'o-lan' }] })])
+    render(<MemoryRouter><ProductionsPanel /></MemoryRouter>)
+
+    await waitFor(() => expect(screen.getByText('SRT OUT: CDN')).toBeTruthy())
+    expect(screen.getByText('SRT OUT: CDN').closest('button')?.getAttribute('title')).toBe('srt://cdn.example.com:9000?mode=caller')
+    expect(screen.getByText('SRT OUT: LAN').closest('button')?.getAttribute('title')).toBe('srt://192.168.1.97:9001?mode=caller')
+  })
+
   it('shows no endpoint pills for an inactive production', async () => {
     vi.spyOn(productionsApi, 'list').mockResolvedValue([production({ status: 'inactive' })])
     render(<MemoryRouter><ProductionsPanel /></MemoryRouter>)

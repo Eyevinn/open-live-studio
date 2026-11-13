@@ -11,7 +11,7 @@ import type { ProductionConfig, ProductionGraphicAssignment } from '@/lib/api'
 import { PRODUCTION_PROPERTIES, type TemplateProperty } from '@/lib/production-schema'
 import { Button } from '@/components/ui/Button'
 import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
-import { toCallerUrl } from '@/lib/srt'
+import { dialInAddress, srtDirection, stripPassphrase } from '@/lib/srt'
 import { isReturnOnlySlot } from '@/lib/guest-slots'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { Modal } from '@/components/ui/Modal'
@@ -1332,7 +1332,14 @@ export function ProductionsPanel() {
                   {isActive && prod.outputAssignments?.flatMap((a) => {
                     const out = outputs.find((o) => o.id === a.outputId)
                     if (!out || out.outputType === 'whep' || !out.url) return []
-                    return [<InlineCopyButton key={a.outputId} label={`SRT OUT: ${out.name}`} value={toCallerUrl(out.url, stromHost)} />]
+                    // A caller output: where Strom sends it, without the passphrase.
+                    // A listener or relay output: the address viewers dial (listener
+                    // falls back to the Strom host); nothing to copy while unknown.
+                    const dial = srtDirection(out.url) === 'caller'
+                      ? stripPassphrase(out.url)
+                      : dialInAddress(out.url, out.connect, stromHost)
+                    if (!dial) return []
+                    return [<InlineCopyButton key={a.outputId} label={`SRT OUT: ${out.name}`} value={dial} />]
                   })}
                   {isActive && prod.whepOutputUrls?.map((w) => {
                     const out = outputs.find((o) => o.id === w.outputId)

@@ -125,6 +125,8 @@ export interface ApiSource {
   latency?: number
   /** 0-based audio elementary-stream index (SRT/EFP only); absent means 0 (ADR-006). */
   audioStreamIndex?: number
+  /** Derived SRT dial-in address (SRT/EFP sources, newer backends only). */
+  connect?: SrtConnect
   /**
    * Id of the Gateway (open-live `GatewayDoc._id`) that registered this source,
    * if any. Present only on gateway-owned sources; the gateway recreates these
@@ -248,13 +250,77 @@ export interface RtmpDestinationInput {
   ingestUrl?: string
 }
 
+/**
+ * Read-only dial-in address the backend derives for an SRT source or output
+ * (open-live `lib/srt-connect.ts`). For a relay address (`source: 'srt-relay'`)
+ * `uri` is `srt://<relay public host:port>?streamid=<id>`, or null with a
+ * `reason` while the relay's public address is unknown. Never carries the
+ * passphrase.
+ */
+export interface SrtConnect {
+  uri: string | null
+  host: string | null
+  port: number | null
+  /** The SRT mode the outside party uses. */
+  mode: 'caller' | 'listener'
+  source: 'authored-host' | 'srt-public-host' | 'strom-host' | 'srt-relay' | 'unknown'
+  /** Relay addresses only: the stream ID the outside party uses. */
+  streamid?: string
+  /** Relay addresses only: the relay's name, `default` when the address has no `@<relay>`. */
+  relay?: string
+  /** Present only when `uri` is null: why the backend cannot give the address. */
+  reason?: SrtConnectReason
+  /**
+   * The mode this address needs cannot work on this Strom (server-info
+   * `srt.modes`). Reported, never enforced: the address is stored and resolved.
+   */
+  warning?: SrtConnectWarning
+}
+
+/**
+ * Why `SrtConnect.uri` is null. `srt-relay-not-configured`: Strom reports no
+ * relay. `srt-relay-unknown`: Strom has no relay of the address's name.
+ * `srt-relay-unreachable`: Strom could not be asked, so it is unknown.
+ * Newer backends may add reasons; treat unknown ones as "not known".
+ */
+export type SrtConnectReason =
+  | 'srt-host-not-configured'
+  | 'srt-host-not-loopback-reachable'
+  | 'strom-url-not-parseable'
+  | 'srt-relay-not-configured'
+  | 'srt-relay-unknown'
+  | 'srt-relay-unreachable'
+  | 'srt-relay-public-unknown'
+  | (string & {})
+
+/**
+ * Why an SRT address may not work on this Strom (`SrtConnect.warning`).
+ * `srt-port-outside-strom-ports`: a listener port outside Strom's `srt.ports`.
+ */
+export type SrtConnectWarning =
+  | 'srt-listener-unsupported'
+  | 'srt-rendezvous-unsupported'
+  | 'srt-port-outside-strom-ports'
+  | (string & {})
+
+/**
+ * 422 body for a relay address naming a relay Strom definitely does not have
+ * (POST/PATCH of sources and outputs). `relays` lists the names Strom has.
+ */
+export interface SrtRelayErrorBody {
+  error: string
+  statusCode: number
+  code: 'srt-relay-not-configured' | 'srt-relay-unknown'
+  relays: string[]
+}
+
 export interface ApiOutput {
   id: string
   name: string
   outputType: OutputType
   url?: string
   /** Derived SRT dial-in address (SRT outputs only). */
-  connect?: string
+  connect?: SrtConnect
   /** RTMP destination material (rtmp outputs only). Stream key masked to `streamKeySet`. */
   rtmp?: RtmpDestination
   /** Derived health, present on list/get responses (open-live #255). */
@@ -454,10 +520,11 @@ export const sourcesApi = {
   audioStreams: (id: string) =>
     request<AudioStreamsResponse>(`/api/v1/sources/${encodeURIComponent(id)}/audio-streams`),
 
-  create: (body: Omit<ApiSource, 'id'>) =>
+  create: (body: Omit<ApiSource, 'id' | 'connect'>, opts?: { quiet?: boolean }) =>
     request<ApiSource>('/api/v1/sources', {
       method: 'POST',
       body: JSON.stringify(body),
+      ...(opts?.quiet ? { quiet: true } : {}),
     }),
 
   /**
@@ -467,7 +534,7 @@ export const sourcesApi = {
    * trip (studio#154), matching the single non-strict `SourcePatch` surface on
    * `PATCH /api/v1/sources/:id`.
    */
-  update: (id: string, body: Partial<Omit<ApiSource, 'id' | 'auth'>> & { auth?: HtmlSourceAuthInput }, opts?: { quiet?: boolean }) =>
+  update: (id: string, body: Partial<Omit<ApiSource, 'id' | 'auth' | 'connect'>> & { auth?: HtmlSourceAuthInput }, opts?: { quiet?: boolean }) =>
     request<ApiSource>(`/api/v1/sources/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       body: JSON.stringify(body),
@@ -743,6 +810,33 @@ export interface ServerInfo {
   srtPorts?: number[] | null
   /** `pending` means no ports are held yet; `unsupported`/`disabled` mean any port goes. */
   srtPortState?: 'reserved' | 'pending' | 'unsupported' | 'disabled'
+  /**
+   * What SRT can do on this Strom (Strom `GET /api/capabilities`, cached by the
+   * backend). Absent on older backends, which the studio reads as `unknown`.
+   */
+  srt?: SrtCapabilities
+}
+
+/** One SRT relay Strom can use. `default` needs no `@` in an address. */
+export interface SrtRelayEndpoint {
+  name: string
+  /** The relay's public host:port, as the outside party dials it. */
+  public: string
+}
+
+/**
+ * `server-info.srt`. `state`: `ok` when Strom answered the last check;
+ * `unsupported` (an older Strom) and `unknown` (no answer yet) report every
+ * mode and no relay; `unreachable` reports the last known values.
+ */
+export interface SrtCapabilities {
+  state: 'ok' | 'unsupported' | 'unreachable' | 'unknown'
+  modes: { listener: boolean; caller: boolean; rendezvous: boolean }
+  /** `default` first; empty when no relay is configured or known. */
+  relays: SrtRelayEndpoint[]
+  inboundReachable: boolean | null
+  /** Strom's STROM_PORTS spans; null for any port. Not the legacy `srtPorts`. */
+  ports: Array<{ first: number; last: number }> | null
 }
 
 export const serverInfoApi = {

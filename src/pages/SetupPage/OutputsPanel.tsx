@@ -1,15 +1,15 @@
 import { useState, useEffect } from 'react'
 import { useOutputsStore, type OutputType, type Output } from '@/store/outputs.store'
 import { useProductionsStore } from '@/store/productions.store'
-import { useServerInfo } from '@/hooks/useServerInfo'
-import type { OutputStatus, RtmpDestinationInput, RtmpPlatform } from '@/lib/api'
-import { buildListenerAddress, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, passphraseOf, srtDirection, stripPassphrase, toCallerUrl, type SrtDirection } from '@/lib/srt'
+import { refreshServerInfo, useServerInfo } from '@/hooks/useServerInfo'
+import type { OutputStatus, RtmpDestinationInput, RtmpPlatform, SrtConnect } from '@/lib/api'
+import { DEFAULT_RELAY, bareQueryKeyError, buildListenerAddress, buildRelayAddress, chosenRelay, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, offeredDirection, passphraseError, passphraseOf, relayAddressPatch, relayNameOf, rendezvousError, srtConnectWarningText, srtDirection, srtRowLabel, srtSaveErrorMessage, stripPassphrase, type SrtDirection } from '@/lib/srt'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Badge } from '@/components/ui/Badge'
 import { StatusDot } from '@/components/ui/StatusDot'
 import { InlineCopyButton } from '@/components/ui/InlineCopyButton'
-import { DirectionToggle, ListenerFields, RemovePassphraseButton, inputCls, labelCls, listenerPortFor, listenerReady, useListenerPortMode } from '@/components/ui/SrtDirectionFields'
+import { DirectionToggle, ListenerFields, RELAY_LABEL, RelayFields, RemovePassphraseButton, SrtWarning, inputCls, labelCls, listenerPortFor, listenerReady, useListenerPortMode, useSrtOffer } from '@/components/ui/SrtDirectionFields'
 import { RtmpFields, RTMP_PLATFORM_LABELS, streamKeyError, customUrlMissing } from '@/components/ui/RtmpDestinationFields'
 import { useStorageStore } from '@/store/storage.store'
 import {
@@ -58,6 +58,16 @@ interface EditState {
   outputType: OutputType
   /** The URL as stored (passphrase masked by the backend). SRT outputs only. */
   stored: string
+  /** Which way the stored URL points, read once on open; null when there is none. */
+  storedDirection: SrtDirection | null
+  /** Whether the stored URL carries a passphrase (masked). */
+  storedPassphrase: boolean
+  /** The backend's dial-in address for the stored URL (relay: `srt://<relay>?streamid=<id>`). */
+  connect?: SrtConnect
+  /** The relay the stored URL uses, when it is a relay address. */
+  storedRelay: string | null
+  /** Relay mode: the relay picked in the form ('' = the stored or first one, see `chosenRelay`). */
+  relay: string
   direction: SrtDirection
   url: string
   port: number | null
@@ -171,6 +181,7 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
   const productions = useProductionsStore((s) => s.productions)
   const { info } = useServerInfo()
   const portMode = useListenerPortMode()
+  const offer = useSrtOffer()
   const storageConnections = useStorageStore((s) => s.connections)
   const storageLoaded = useStorageStore((s) => s.loaded)
   const fetchStorage = useStorageStore((s) => s.fetchAll)
@@ -192,6 +203,12 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
 
   const [addOpen, setAddOpen] = useState(false)
   const [editTarget, setEditTarget] = useState<EditState | null>(null)
+  // server-info `srt` follows Strom (capabilities, relays, ports): read it
+  // again whenever a New or Edit dialog opens, so the choices are current.
+  const editOpenId = editTarget?.id ?? null
+  useEffect(() => {
+    if (addOpen || editOpenId !== null) void refreshServerInfo()
+  }, [addOpen, editOpenId])
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [addUrlError, setAddUrlError] = useState<string | null>(null)
@@ -204,7 +221,11 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
 
   const [newName, setNewName] = useState('')
   const [newType, setNewType] = useState<OutputType>('mpegtssrt')
-  const [newDirection, setNewDirection] = useState<SrtDirection>('listener')
+  const [newDirectionChoice, setNewDirection] = useState<SrtDirection>('listener')
+  // Listener (or Via relay) chosen while Strom cannot do it falls back to caller.
+  const newDirection = offeredDirection(newDirectionChoice, offer)
+  const [newRelayChoice, setNewRelay] = useState('')
+  const newRelay = chosenRelay(newRelayChoice, offer.relays)
   const [newUrl, setNewUrl] = useState('')
   const [newManualPort, setNewManualPort] = useState('')
   const [newPassphrase, setNewPassphrase] = useState('')
@@ -220,6 +241,7 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
     setNewUrl('')
     setNewManualPort('')
     setNewPassphrase('')
+    setNewRelay('')
     setNewPlatform('youtube')
     setNewCustomUrl('')
     setNewStreamKey('')
@@ -245,7 +267,9 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
       ? rtmpAddReady
       : newType === 'recording'
         ? recordingStorageReady(storageConnections, storageLoaded, newStorageValue)
-        : newDirection === 'listener' ? listenerReady(portMode, newManualPort) : !!newUrl.trim()
+        : newDirection === 'listener' ? listenerReady(portMode, newManualPort)
+        : newDirection === 'relay' ? true
+        : !!newUrl.trim()
   )
 
   async function submitAdd(body: Parameters<typeof addOutput>[0]) {
@@ -257,7 +281,7 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
       setAddOpen(false)
     } catch (err) {
       // Keep the dialog open with the entered values; show the backend message once.
-      setAddError(outputSaveErrorMessage(err))
+      setAddError(srtSaveErrorMessage(err, offer) ?? outputSaveErrorMessage(err))
     } finally {
       setSaving(false)
     }
@@ -278,14 +302,22 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
       await submitAdd({ name: newName.trim(), outputType: 'rtmp', rtmp })
       return
     }
+    if (newDirection === 'listener' || newDirection === 'relay') {
+      const ppErr = passphraseError(newPassphrase)
+      if (ppErr) { setAddUrlError(ppErr); return }
+    }
     let url: string
     if (newDirection === 'listener') {
       const port = listenerPortFor(portMode, newManualPort)
       if (port === null) return
       url = buildListenerAddress(port, newPassphrase)
+    } else if (newDirection === 'relay') {
+      url = buildRelayAddress(newPassphrase, newRelay)
     } else {
       if (!isCallerAddress(newUrl)) { setAddUrlError("Enter the destination's host and port, e.g. srt://cdn.example.com:9000?mode=caller"); return }
       url = withCallerMode(newUrl.trim())
+      const queryErr = bareQueryKeyError(url) ?? rendezvousError(url, offer)
+      if (queryErr) { setAddUrlError(queryErr); return }
       const duplicate = outputs.find((o) => o.url?.trim() === url)
       if (duplicate) { setAddUrlError(`Address already used by "${duplicate.name}"`); return }
     }
@@ -294,12 +326,18 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
 
   function openEdit(o: Output) {
     const stored = o.url ?? ''
-    const direction = stored ? srtDirection(stored) : 'listener'
+    const storedDirection = stored ? srtDirection(stored) : null
+    const direction = storedDirection ?? 'listener'
     setEditTarget({
       id: o.id,
       name: o.name,
       outputType: o.outputType,
       stored,
+      storedDirection,
+      storedPassphrase: passphraseOf(stored) !== null,
+      connect: o.connect,
+      storedRelay: direction === 'relay' ? relayNameOf(stored) : null,
+      relay: '',
       direction,
       url: direction === 'caller' ? stored : '',
       port: direction === 'listener' ? listenerPort(stored) : null,
@@ -334,6 +372,7 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
         !(editTarget.streamKey.length > 0 && streamKeyError(editTarget.streamKey))
       : editTarget.direction === 'listener'
         ? listenerReady(portMode, editTarget.manualPort, editTarget.port)
+        : editTarget.direction === 'relay' ? true
         : !!editTarget.url.trim()
   )
 
@@ -345,7 +384,7 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
       closeEdit()
     } catch (err) {
       // Keep the dialog open with the entered values; show the backend message once.
-      setEditError(outputSaveErrorMessage(err))
+      setEditError(srtSaveErrorMessage(err, offer) ?? outputSaveErrorMessage(err))
     } finally {
       setSaving(false)
     }
@@ -371,16 +410,26 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
       await submitEdit(editTarget.id, { name: editTarget.name.trim(), rtmp })
       return
     }
+    const editRelay = chosenRelay(editTarget.relay, offer.relays, editTarget.storedRelay)
+    if (editTarget.direction === 'listener' || editTarget.direction === 'relay') {
+      const ppErr = editTarget.removePassphrase ? null : passphraseError(editTarget.passphrase)
+      if (ppErr) { setEditUrlError(ppErr); return }
+    }
     let url: string | undefined
     if (editTarget.direction === 'listener') {
       const port = listenerPortFor(portMode, editTarget.manualPort, editTarget.port)
       if (port === null) return
       url = listenerEditAddress({ ...editTarget, port })
+    } else if (editTarget.direction === 'relay') {
+      url = relayAddressPatch({ ...editTarget, relay: editRelay })
     } else {
       if (!isCallerAddress(editTarget.url)) { setEditUrlError("Enter the destination's host and port, e.g. srt://cdn.example.com:9000?mode=caller"); return }
       url = withCallerMode(editTarget.url.trim())
       const maskErr = maskedPassphraseError(url, editTarget.stored)
       if (maskErr) { setEditUrlError(maskErr); return }
+      // A stored URL that is not sent again stays saveable as it is.
+      const queryErr = url === editTarget.stored ? null : bareQueryKeyError(url) ?? rendezvousError(url, offer)
+      if (queryErr) { setEditUrlError(queryErr); return }
       const duplicate = outputs.find((o) => o.id !== editTarget.id && o.url?.trim() === url)
       if (duplicate) { setEditUrlError(`Address already used by "${duplicate.name}"`); return }
       if (url === editTarget.stored) url = undefined
@@ -415,8 +464,7 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
       <div className="flex flex-col gap-1">
         {outputs.map((o) => {
           const inActiveProd = activeOutputIds.has(o.id)
-          const listener = !!o.url && srtDirection(o.url) === 'listener'
-          const viewer = listener && o.url ? toCallerUrl(o.url, info?.stromHost) : null
+          const viewer = o.url ? dialInAddress(o.url, o.connect, info?.stromHost) : null
           return (
             <div
               key={o.id}
@@ -449,9 +497,10 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
                 )}
                 {o.url && (
                   <span className="text-xs text-[--color-text-muted] font-mono truncate block">
-                    {viewer ? `viewers dial ${viewer}${passphraseOf(o.url ?? '') ? ' with the passphrase' : ''}` : o.url}
+                    {srtRowLabel(o.url, o.connect, info?.stromHost, 'viewers dial', offer.relays)}
                   </span>
                 )}
+                {o.url && <SrtWarning text={srtConnectWarningText(o.connect)} />}
               </div>
               <Button
                 size="sm"
@@ -565,6 +614,9 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
                 onChange={(d) => { setNewDirection(d); setAddUrlError(null) }}
                 listenerLabel={LISTENER_LABEL}
                 callerLabel={CALLER_LABEL}
+                relayLabel={offer.relays.length > 0 ? RELAY_LABEL : undefined}
+                listenerDisabled={!offer.listener}
+                note={offer.note}
               />
               {newDirection === 'listener' ? (
                 <ListenerFields
@@ -572,7 +624,19 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
                   manualPort={newManualPort}
                   onManualPort={setNewManualPort}
                   passphrase={newPassphrase}
-                  onPassphrase={setNewPassphrase}
+                  onPassphrase={(v) => { setNewPassphrase(v); setAddUrlError(null) }}
+                  passphraseError={addUrlError}
+                />
+              ) : newDirection === 'relay' ? (
+                <RelayFields
+                  who="Viewers"
+                  passphrase={newPassphrase}
+                  onPassphrase={(v) => { setNewPassphrase(v); setAddUrlError(null) }}
+                  passphraseError={addUrlError}
+                  relays={offer.relays}
+                  showPicker={offer.relayPicker}
+                  relay={newRelay}
+                  onRelay={(relay) => { setNewRelay(relay); setAddError(null) }}
                 />
               ) : (
                 <div>
@@ -633,7 +697,14 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
                   onChange={(direction) => { setEditTarget({ ...editTarget, direction }); setEditUrlError(null) }}
                   listenerLabel={LISTENER_LABEL}
                   callerLabel={CALLER_LABEL}
+                  relayLabel={offer.relays.length > 0 || editTarget.storedDirection === 'relay' ? RELAY_LABEL : undefined}
+                  // The stored direction stays selectable; Strom only decides new choices.
+                  listenerDisabled={!offer.listener && editTarget.storedDirection !== 'listener'}
+                  note={offer.note}
                 />
+                {editTarget.direction === editTarget.storedDirection && (
+                  <SrtWarning text={srtConnectWarningText(editTarget.connect)} />
+                )}
                 {editTarget.direction === 'listener' ? (
                   <>
                     <ListenerFields
@@ -641,18 +712,39 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
                       manualPort={editTarget.manualPort}
                       onManualPort={(manualPort) => setEditTarget({ ...editTarget, manualPort })}
                       passphrase={editTarget.passphrase}
-                      onPassphrase={(passphrase) => setEditTarget({ ...editTarget, passphrase })}
-                      keepPort={srtDirection(editTarget.stored) === 'listener' ? editTarget.port : null}
-                      hasPassphrase={passphraseOf(editTarget.stored) !== null}
+                      onPassphrase={(passphrase) => { setEditTarget({ ...editTarget, passphrase }); setEditUrlError(null) }}
+                      keepPort={editTarget.storedDirection === 'listener' ? editTarget.port : null}
+                      // "Leave blank to keep" only holds when the stored URL is a
+                      // listener too: switching from relay builds a new URL.
+                      hasPassphrase={editTarget.storedDirection === 'listener' && editTarget.storedPassphrase}
+                      passphraseError={editUrlError}
                       removePassphrase={editTarget.removePassphrase}
                       onRemovePassphrase={(removePassphrase) => setEditTarget({ ...editTarget, removePassphrase })}
                     />
-                    {editTarget.port && srtDirection(editTarget.stored) === 'listener' && (
+                    {editTarget.port && editTarget.storedDirection === 'listener' && (
                       <p className="text-xs text-[--color-text-muted] font-mono break-all">
-                        Viewers dial {toCallerUrl(editTarget.stored, info?.stromHost)}{passphraseOf(editTarget.stored) ? ' with the passphrase' : ''}
+                        {srtRowLabel(editTarget.stored, editTarget.connect, info?.stromHost, 'Viewers dial')}
                       </p>
                     )}
                   </>
+                ) : editTarget.direction === 'relay' ? (
+                  <RelayFields
+                    who="Viewers"
+                    passphrase={editTarget.passphrase}
+                    onPassphrase={(passphrase) => { setEditTarget({ ...editTarget, passphrase }); setEditUrlError(null) }}
+                    hasPassphrase={editTarget.storedDirection === 'relay' && editTarget.storedPassphrase}
+                    stored={editTarget.storedDirection === 'relay'}
+                    removePassphrase={editTarget.removePassphrase}
+                    onRemovePassphrase={(removePassphrase) => setEditTarget({ ...editTarget, removePassphrase })}
+                    dialIn={dialInAddress(editTarget.stored, editTarget.connect)}
+                    dialInMissing={dialInUnknownReason(editTarget.connect, offer.relays)}
+                    passphraseError={editUrlError}
+                    relays={offer.relays}
+                    showPicker={offer.relayPicker || (!!editTarget.storedRelay && editTarget.storedRelay !== DEFAULT_RELAY)}
+                    relay={chosenRelay(editTarget.relay, offer.relays, editTarget.storedRelay)}
+                    onRelay={(relay) => { setEditTarget({ ...editTarget, relay }); setEditUrlError(null) }}
+                    storedRelay={editTarget.storedRelay}
+                  />
                 ) : (
                   <div>
                     <label className={labelCls}>Destination address</label>
