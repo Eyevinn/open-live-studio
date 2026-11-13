@@ -7,7 +7,7 @@ import { useServerInfo } from '@/hooks/useServerInfo'
 import { ApiError, sourcesApi, type AudioStreamsResponse, type HtmlSourceAuth, type HtmlSourceAuthInput, type SrtConnect, type StreamType } from '@/lib/api'
 import { openHtmlAuthPopup, originOf, maskCredential } from '@/lib/htmlSourceAuthPopup'
 import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
-import { buildListenerAddress, buildRelayAddress, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, passphraseError, passphraseOf, relayAddressPatch, srtDirection, srtRowLabel, stripPassphrase, type SrtDirection } from '@/lib/srt'
+import { bareQueryKeyError, buildListenerAddress, buildRelayAddress, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, passphraseError, passphraseOf, relayAddressPatch, srtDirection, srtRowLabel, stripPassphrase, type SrtDirection } from '@/lib/srt'
 import { EFP_AUDIO_STREAM_NOTE, audioStreamIndexPatch, efpIgnoredAudioStreamNote, newSourceAudioStreamIndex, supportsAudioStreamSelection } from '@/lib/audio-stream-index'
 import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
@@ -227,7 +227,8 @@ export function SourcesPanel() {
   )
   const clipStates = useProductionStore((s) => s.clipStates)
 
-  function validateAddress(address: string, streamType: StreamType, direction: SrtDirection): string | null {
+  /** `stored`: the address the source already has, which stays saveable as is. */
+  function validateAddress(address: string, streamType: StreamType, direction: SrtDirection, stored?: string): string | null {
     if (!STREAM_TYPE_HAS_ADDRESS[streamType]) return null
     // Listener and relay addresses are built here, not typed in.
     if (isSrt(streamType) && direction !== 'caller') return null
@@ -237,6 +238,10 @@ export function SourcesPanel() {
       catch { return 'Must be a valid http:// or https:// URL' }
     } else if (!isCallerAddress(address)) {
       return "Enter the sender's host and port, e.g. srt://sender.example.com:9000?mode=caller"
+    } else {
+      // A stored address that is not sent again stays saveable as it is.
+      if (address.trim() === stored?.trim()) return null
+      return bareQueryKeyError(address)
     }
     return null
   }
@@ -456,7 +461,7 @@ export function SourcesPanel() {
       }
     }
 
-    const addrErr = validateAddress(editTarget.address, editTarget.streamType, editTarget.direction)
+    const addrErr = validateAddress(editTarget.address, editTarget.streamType, editTarget.direction, editTarget.stored)
     if (addrErr) { setEditAddressError(addrErr); return }
     // An empty field leaves the stored latency unchanged (no `latency` key).
     const latency = validateLatency(editTarget.latency)

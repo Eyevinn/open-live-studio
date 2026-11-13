@@ -20,6 +20,8 @@ import {
   relayAddressPatch,
   encodePassphrase,
   srtRowLabel,
+  bareQueryKey,
+  bareQueryKeyError,
 } from './srt'
 import type { SrtConnect } from './api'
 
@@ -318,5 +320,25 @@ describe('passphraseError', () => {
     // 45 × å is 45 UTF-16 units but 90 bytes, which Strom refuses.
     expect(passphraseError('å'.repeat(45))).toMatch(/it is 90;/)
     expect(passphraseError('å'.repeat(39))).toBeNull()
+  })
+})
+
+describe('bareQueryKey', () => {
+  it('finds a query key without =', () => {
+    expect(bareQueryKey('srt://h:1?latency')).toBe('latency')
+    expect(bareQueryKey('srt://h:1?mode=caller&latency')).toBe('latency')
+    expect(bareQueryKeyError('srt://h:1?latency&mode=caller')).toBe('The SRT parameter "latency" has no value, which crashes GStreamer. Write latency=<value>, or remove it.')
+  })
+  it('accepts keys with values, empty values and empty segments', () => {
+    expect(bareQueryKey('srt://h:1')).toBeNull()
+    expect(bareQueryKey('srt://h:1?')).toBeNull()
+    expect(bareQueryKey('srt://h:1?mode=caller&&latency=200')).toBeNull()
+    expect(bareQueryKey('srt://h:1?passphrase=')).toBeNull()
+    expect(bareQueryKeyError('srt://h:1?mode=caller')).toBeNull()
+  })
+  it('is never produced by the address builders', () => {
+    for (const a of [buildListenerAddress(0), buildListenerAddress(9000, 'supersecret1'), buildRelayAddress(), buildRelayAddress('x y z 12345')]) {
+      expect(bareQueryKey(a)).toBeNull()
+    }
   })
 })

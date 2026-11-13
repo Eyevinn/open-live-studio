@@ -233,3 +233,24 @@ export function passphraseError(passphrase: string): string | null {
     ? `The passphrase must be 10–80 bytes (it is ${bytes}; letters such as å count as 2).`
     : null
 }
+
+/**
+ * The first query key without `=` in an SRT address (`srt://h:1?latency`), or
+ * null. Such a key crashes GStreamer when the SRT element starts, so the backend
+ * refuses it (400) and the studio never sends one. Empty segments (`?&a=1`) are
+ * fine: they are skipped.
+ */
+export function bareQueryKey(address: string): string | null {
+  const q = address.indexOf('?')
+  if (q === -1) return null
+  for (const param of address.slice(q + 1).split('#')[0]!.split('&')) {
+    if (param && !param.includes('=')) return param
+  }
+  return null
+}
+
+/** The message for an SRT address with a query key without a value, or null. */
+export function bareQueryKeyError(address: string): string | null {
+  const key = bareQueryKey(address)
+  return key === null ? null : `The SRT parameter "${key}" has no value, which crashes GStreamer. Write ${key}=<value>, or remove it.`
+}

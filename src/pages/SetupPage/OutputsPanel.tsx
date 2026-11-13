@@ -3,7 +3,7 @@ import { useOutputsStore, type OutputType, type Output } from '@/store/outputs.s
 import { useProductionsStore } from '@/store/productions.store'
 import { useServerInfo } from '@/hooks/useServerInfo'
 import type { OutputStatus, RtmpDestinationInput, RtmpPlatform, SrtConnect } from '@/lib/api'
-import { buildListenerAddress, buildRelayAddress, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, passphraseError, passphraseOf, relayAddressPatch, srtDirection, srtRowLabel, stripPassphrase, type SrtDirection } from '@/lib/srt'
+import { bareQueryKeyError, buildListenerAddress, buildRelayAddress, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, passphraseError, passphraseOf, relayAddressPatch, srtDirection, srtRowLabel, stripPassphrase, type SrtDirection } from '@/lib/srt'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Badge } from '@/components/ui/Badge'
@@ -301,6 +301,8 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
     } else {
       if (!isCallerAddress(newUrl)) { setAddUrlError("Enter the destination's host and port, e.g. srt://cdn.example.com:9000?mode=caller"); return }
       url = withCallerMode(newUrl.trim())
+      const queryErr = bareQueryKeyError(url)
+      if (queryErr) { setAddUrlError(queryErr); return }
       const duplicate = outputs.find((o) => o.url?.trim() === url)
       if (duplicate) { setAddUrlError(`Address already used by "${duplicate.name}"`); return }
     }
@@ -407,6 +409,9 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
       url = withCallerMode(editTarget.url.trim())
       const maskErr = maskedPassphraseError(url, editTarget.stored)
       if (maskErr) { setEditUrlError(maskErr); return }
+      // A stored URL that is not sent again stays saveable as it is.
+      const queryErr = url === editTarget.stored ? null : bareQueryKeyError(url)
+      if (queryErr) { setEditUrlError(queryErr); return }
       const duplicate = outputs.find((o) => o.id !== editTarget.id && o.url?.trim() === url)
       if (duplicate) { setEditUrlError(`Address already used by "${duplicate.name}"`); return }
       if (url === editTarget.stored) url = undefined
