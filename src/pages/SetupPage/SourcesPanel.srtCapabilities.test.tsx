@@ -2,8 +2,9 @@
 /**
  * SRT sources against server-info `srt` (open-live#628, named relays): only the
  * directions Strom can do are offered, the relay picker follows the relay list,
- * `auto@<relay>` is written on create and on a relay switch, `connect.warning`
- * is shown, and the relay/query-key errors read as operator messages.
+ * `auto@<relay>` is written on create and on a relay switch (which keeps the
+ * stored passphrase unless one is typed or removed), `connect.warning` is
+ * shown, and the relay/query-key errors read as operator messages.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -207,20 +208,41 @@ describe('SourcesPanel — relay picker', () => {
     expect(update.mock.calls[0]?.[1]).toMatchObject({ address: 'srt+relay://auto?passphrase=anothersecret' })
   })
 
-  it('Edit switching back to the default relay asks for the passphrase, then sends auto@default', async () => {
+  it('Edit switching back to the default relay with a blank passphrase sends auto@default and keeps the passphrase', async () => {
     withSrt({ relays: [DEFAULT_RELAY, EU_RELAY] })
     vi.spyOn(sourcesApi, 'list').mockResolvedValue([RELAY_CAM])
     const update = vi.spyOn(sourcesApi, 'update').mockResolvedValue(RELAY_CAM)
     await openEdit()
     fireEvent.change(screen.getByLabelText('Relay'), { target: { value: 'default' } })
-    expect(screen.getByText(/Moves to the default relay on save; the stream ID stays the same. The sender then dials srt.example.com:9000 instead./)).toBeTruthy()
+    expect(screen.getByText(/Moves to the default relay on save; the stream ID and the passphrase stay the same. The sender then dials srt.example.com:9000 instead./)).toBeTruthy()
     save()
-    expect(await screen.findByText(/Type the passphrase again/)).toBeTruthy()
-    expect(update).not.toHaveBeenCalled()
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0]?.[1]).toMatchObject({ address: 'srt+relay://auto@default' })
+  })
+
+  it('Edit switching relay with a new passphrase sends it', async () => {
+    withSrt({ relays: [DEFAULT_RELAY, EU_RELAY] })
+    vi.spyOn(sourcesApi, 'list').mockResolvedValue([RELAY_CAM])
+    const update = vi.spyOn(sourcesApi, 'update').mockResolvedValue(RELAY_CAM)
+    await openEdit()
+    fireEvent.change(screen.getByLabelText('Relay'), { target: { value: 'default' } })
     fireEvent.change(screen.getByPlaceholderText('Set — leave blank to keep'), { target: { value: 'anothersecret' } })
+    expect(screen.getByText(/Moves to the default relay on save; the stream ID stays the same./)).toBeTruthy()
     save()
     await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
     expect(update.mock.calls[0]?.[1]).toMatchObject({ address: 'srt+relay://auto@default?passphrase=anothersecret' })
+  })
+
+  it('Edit switching relay with "Remove passphrase" sends auto@default?passphrase=', async () => {
+    withSrt({ relays: [DEFAULT_RELAY, EU_RELAY] })
+    vi.spyOn(sourcesApi, 'list').mockResolvedValue([RELAY_CAM])
+    const update = vi.spyOn(sourcesApi, 'update').mockResolvedValue(RELAY_CAM)
+    await openEdit()
+    fireEvent.change(screen.getByLabelText('Relay'), { target: { value: 'default' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Remove passphrase' }))
+    save()
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0]?.[1]).toMatchObject({ address: 'srt+relay://auto@default?passphrase=' })
   })
 
   it('a stored relay Strom no longer has: row says so with the configured relays, picker keeps it', async () => {

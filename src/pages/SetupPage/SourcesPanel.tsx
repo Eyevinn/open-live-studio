@@ -7,7 +7,7 @@ import { useServerInfo } from '@/hooks/useServerInfo'
 import { ApiError, sourcesApi, type AudioStreamsResponse, type HtmlSourceAuth, type HtmlSourceAuthInput, type SrtConnect, type StreamType } from '@/lib/api'
 import { openHtmlAuthPopup, originOf, maskCredential } from '@/lib/htmlSourceAuthPopup'
 import { heartbeatAge, indexGatewaysBySource } from '@/lib/gateway'
-import { DEFAULT_RELAY, bareQueryKeyError, buildListenerAddress, buildRelayAddress, chosenRelay, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, offeredDirection, passphraseError, passphraseOf, relayAddressPatch, relayNameOf, relaySwitchPassphraseError, rendezvousError, srtConnectWarningText, srtDirection, srtRowLabel, srtSaveErrorMessage, stripPassphrase, type SrtDirection } from '@/lib/srt'
+import { DEFAULT_RELAY, bareQueryKeyError, buildListenerAddress, buildRelayAddress, chosenRelay, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, offeredDirection, passphraseError, passphraseOf, relayAddressPatch, relayNameOf, rendezvousError, srtConnectWarningText, srtDirection, srtRowLabel, srtSaveErrorMessage, stripPassphrase, type SrtDirection } from '@/lib/srt'
 import { EFP_AUDIO_STREAM_NOTE, audioStreamIndexPatch, efpIgnoredAudioStreamNote, newSourceAudioStreamIndex, supportsAudioStreamSelection } from '@/lib/audio-stream-index'
 import { Button } from '@/components/ui/Button'
 import { StatusDot } from '@/components/ui/StatusDot'
@@ -492,10 +492,6 @@ export function SourcesPanel() {
     if (editIsListener || editIsRelay) {
       const ppErr = editTarget.removePassphrase ? null : passphraseError(editTarget.passphrase)
       if (ppErr) { setEditAddressError(ppErr); return }
-    }
-    if (editIsRelay) {
-      const switchErr = relaySwitchPassphraseError({ ...editTarget, relay: editRelay })
-      if (switchErr) { setEditAddressError(switchErr); return }
     }
     let address: string | undefined
     if (editIsListener) {

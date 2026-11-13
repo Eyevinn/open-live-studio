@@ -249,8 +249,11 @@ export function srtRowLabel(address: string, connect: SrtConnect | undefined, st
  * stored one alone. Like a listener: an unchanged relay address with no new
  * passphrase is not sent, so the masked passphrase the backend returned is
  * never written back. Otherwise `auto`, and the backend keeps the stream ID.
- * `removePassphrase` on a stored relay address sends it without a passphrase,
- * which removes it (the backend replaces a sent address in full).
+ * The backend keeps the stored passphrase on an `auto` address without a
+ * `passphrase` key, so moving to another relay with a blank field keeps it
+ * (the relay never sees it; the stream stays encrypted end to end).
+ * `removePassphrase` sends an empty `passphrase=`, which removes it, on the
+ * stored relay or another one.
  *
  * `relay` is the relay chosen in the form (default: the stored one). On the
  * stored relay the address is `auto` without `@`, which keeps the stored relay;
@@ -271,28 +274,8 @@ export function relayAddressPatch(edit: {
   const stored = edit.storedRelay ?? DEFAULT_RELAY
   const chosen = edit.relay ?? stored
   const at = chosen !== stored ? chosen : undefined
-  if (edit.removePassphrase) return autoRelayAddress(undefined, at)
+  if (edit.removePassphrase) return `${autoRelayAddress(undefined, at)}?passphrase=`
   return at || passphrase.trim() ? autoRelayAddress(passphrase, at) : undefined
-}
-
-/**
- * Why a relay switch cannot be saved as is, or null. A sent address replaces
- * the stored one in full, and the stored passphrase comes back masked, so
- * moving a stream with a passphrase to another relay needs the passphrase typed
- * again (or removed); a blank field would otherwise drop it silently.
- */
-export function relaySwitchPassphraseError(edit: {
-  storedDirection: SrtDirection | null
-  storedRelay?: string | null
-  relay?: string
-  storedPassphrase: boolean
-  passphrase: string
-  removePassphrase?: boolean
-}): string | null {
-  if (edit.storedDirection !== 'relay' || !edit.storedPassphrase || edit.removePassphrase || edit.passphrase.trim()) return null
-  const stored = edit.storedRelay ?? DEFAULT_RELAY
-  if ((edit.relay ?? stored) === stored) return null
-  return 'Moving to another relay sends the address again, and the stored passphrase is hidden. Type the passphrase again, or use "Remove passphrase".'
 }
 
 /**

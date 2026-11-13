@@ -3,7 +3,7 @@ import { useOutputsStore, type OutputType, type Output } from '@/store/outputs.s
 import { useProductionsStore } from '@/store/productions.store'
 import { useServerInfo } from '@/hooks/useServerInfo'
 import type { OutputStatus, RtmpDestinationInput, RtmpPlatform, SrtConnect } from '@/lib/api'
-import { DEFAULT_RELAY, bareQueryKeyError, buildListenerAddress, buildRelayAddress, chosenRelay, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, offeredDirection, passphraseError, passphraseOf, relayAddressPatch, relayNameOf, relaySwitchPassphraseError, rendezvousError, srtConnectWarningText, srtDirection, srtRowLabel, srtSaveErrorMessage, stripPassphrase, type SrtDirection } from '@/lib/srt'
+import { DEFAULT_RELAY, bareQueryKeyError, buildListenerAddress, buildRelayAddress, chosenRelay, dialInAddress, dialInUnknownReason, isCallerAddress, listenerEditAddress, listenerPort, maskedPassphraseError, offeredDirection, passphraseError, passphraseOf, relayAddressPatch, relayNameOf, rendezvousError, srtConnectWarningText, srtDirection, srtRowLabel, srtSaveErrorMessage, stripPassphrase, type SrtDirection } from '@/lib/srt'
 import { Button } from '@/components/ui/Button'
 import { Modal } from '@/components/ui/Modal'
 import { Badge } from '@/components/ui/Badge'
@@ -408,10 +408,6 @@ export function OutputsPanel({ onOpenStorage }: OutputsPanelProps = {}) {
     if (editTarget.direction === 'listener' || editTarget.direction === 'relay') {
       const ppErr = editTarget.removePassphrase ? null : passphraseError(editTarget.passphrase)
       if (ppErr) { setEditUrlError(ppErr); return }
-    }
-    if (editTarget.direction === 'relay') {
-      const switchErr = relaySwitchPassphraseError({ ...editTarget, relay: editRelay })
-      if (switchErr) { setEditUrlError(switchErr); return }
     }
     let url: string | undefined
     if (editTarget.direction === 'listener') {

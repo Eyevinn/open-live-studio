@@ -266,6 +266,9 @@ export function RelayFields({
     ? [...relays, { name: storedRelay, public: '' }]
     : relays
   const switched = !!stored && !!storedRelay && relay !== storedRelay
+  // A blank field on a relay switch keeps the stored passphrase: the relay
+  // never sees it, so the operator need not type it again.
+  const keepsPassphrase = !!hasPassphrase && !removePassphrase && !passphrase.trim()
   const target = relays.find((r) => r.name === relay)
   // "The sender dials", "Viewers dial".
   const dials = who.endsWith('s') ? 'dial' : 'dials'
@@ -288,7 +291,7 @@ export function RelayFields({
           </select>
           {switched && (
             <p className="text-xs text-amber-400 mt-1">
-              Moves to the {relay} relay on save; the stream ID stays the same.
+              Moves to the {relay} relay on save; the stream ID {keepsPassphrase ? 'and the passphrase stay' : 'stays'} the same.
               {target ? ` ${who} then ${dials} ${target.public} instead.` : ''}
             </p>
           )}

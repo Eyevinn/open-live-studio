@@ -26,7 +26,6 @@ import {
   encodePassphrase,
   srtRowLabel,
   relayNameOf,
-  relaySwitchPassphraseError,
   chosenRelay,
   bareQueryKey,
   bareQueryKeyError,
@@ -346,29 +345,23 @@ describe('relayAddressPatch', () => {
     expect(relayAddressPatch({ storedDirection: 'relay', storedRelay: 'eu-north', relay: 'default', passphrase: '' }))
       .toBe('srt+relay://auto@default')
     expect(relayAddressPatch({ storedDirection: 'relay', storedRelay: 'eu-north', relay: 'default', passphrase: '', removePassphrase: true }))
-      .toBe('srt+relay://auto@default')
+      .toBe('srt+relay://auto@default?passphrase=')
+  })
+  it('a relay switch with a blank field sends auto@<relay> without a passphrase key (the backend keeps the stored one)', () => {
+    expect(relayAddressPatch({ storedDirection: 'relay', storedRelay: 'default', relay: 'eu-north', passphrase: '' }))
+      .toBe('srt+relay://auto@eu-north')
+    expect(relayAddressPatch({ storedDirection: 'relay', storedRelay: 'default', relay: 'eu-north', passphrase: '   ' }))
+      .toBe('srt+relay://auto@eu-north')
   })
   it('a listener or caller switched to a named relay uses auto@<relay>', () => {
     expect(relayAddressPatch({ storedDirection: 'listener', relay: 'eu-north', passphrase: '' })).toBe('srt+relay://auto@eu-north')
     expect(relayAddressPatch({ storedDirection: 'caller', relay: 'default', passphrase: '' })).toBe('srt+relay://auto')
   })
   it('removes a stored passphrase when asked, even with text in the field', () => {
-    expect(relayAddressPatch({ storedDirection: 'relay', passphrase: 'ignored-value', removePassphrase: true })).toBe('srt+relay://auto')
+    expect(relayAddressPatch({ storedDirection: 'relay', passphrase: 'ignored-value', removePassphrase: true })).toBe('srt+relay://auto?passphrase=')
+    expect(relayAddressPatch({ storedDirection: 'relay', storedRelay: 'eu-north', relay: 'eu-north', passphrase: '', removePassphrase: true }))
+      .toBe('srt+relay://auto?passphrase=')
     expect(relayAddressPatch({ storedDirection: 'listener', passphrase: 'pass-123456', removePassphrase: true })).toBe('srt+relay://auto?passphrase=pass-123456')
-  })
-})
-
-describe('relaySwitchPassphraseError', () => {
-  const base = { storedDirection: 'relay' as const, storedRelay: 'default', storedPassphrase: true, passphrase: '' }
-  it('asks for the passphrase again when moving a stream with one to another relay', () => {
-    expect(relaySwitchPassphraseError({ ...base, relay: 'eu-north' })).toMatch(/Type the passphrase again/)
-  })
-  it('is fine on the same relay, with a typed passphrase, a removal, or no stored passphrase', () => {
-    expect(relaySwitchPassphraseError({ ...base, relay: 'default' })).toBeNull()
-    expect(relaySwitchPassphraseError({ ...base, relay: 'eu-north', passphrase: 'anothersecret' })).toBeNull()
-    expect(relaySwitchPassphraseError({ ...base, relay: 'eu-north', removePassphrase: true })).toBeNull()
-    expect(relaySwitchPassphraseError({ ...base, relay: 'eu-north', storedPassphrase: false })).toBeNull()
-    expect(relaySwitchPassphraseError({ ...base, storedDirection: 'listener', relay: 'eu-north' })).toBeNull()
   })
 })
 

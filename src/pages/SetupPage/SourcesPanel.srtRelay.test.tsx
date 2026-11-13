@@ -95,6 +95,17 @@ describe('SourcesPanel — SRT relay', () => {
     expect(update.mock.calls[0]?.[1]).toMatchObject({ address: 'srt+relay://auto?passphrase=anothersecret' })
   })
 
+  it('"Remove passphrase" on the same relay sends auto?passphrase=, which removes it', async () => {
+    const update = vi.spyOn(sourcesApi, 'update').mockResolvedValue(RELAY_CAM)
+    render(<SourcesPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    await screen.findByText('Edit Source')
+    fireEvent.click(screen.getByRole('button', { name: 'Remove passphrase' }))
+    save()
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1))
+    expect(update.mock.calls[0]?.[1]).toMatchObject({ address: 'srt+relay://auto?passphrase=' })
+  })
+
   it('switching a relay source with a passphrase to Listener does not claim to keep it', async () => {
     const update = vi.spyOn(sourcesApi, 'update').mockResolvedValue(RELAY_CAM)
     render(<SourcesPanel />)
