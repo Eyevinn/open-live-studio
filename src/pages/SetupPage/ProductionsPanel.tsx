@@ -21,7 +21,7 @@ import { useIsPhone } from '@/hooks/usePhoneLayout'
 import { ONE_RECORDING_PER_PRODUCTION, RECORDING_SLOT_HELP, isRecordingOutput, recordingSlotConflict } from '@/lib/recordingOutput'
 import { RECORD_NO_OUTPUT_WARNING, hasRecordingOutputAssigned, isRecordableSource, recordingOutputMissing } from '@/lib/input-recording'
 import { RecordToggle } from './RecordToggle'
-import { assignmentsByPad, compactSources, shiftAssignments, sourceMoveErrorMessage, syncRemoveShift, type SourceMoveOps } from '@/lib/source-moves'
+import { assignmentsByPad, compactSources, compactTargets, shiftAssignments, sourceMoveErrorMessage, syncRemoveShift, type SourceMoveOps } from '@/lib/source-moves'
 
 // ---------------------------------------------------------------------------
 // Stream type labels — used for grouping source dropdowns
@@ -105,13 +105,23 @@ interface SlotRowProps {
   children?: ReactNode
 }
 
-function SlotRow({ index: _index, currentSourceId, excludeIds = [], canRemove, onChange, onRemove, children }: SlotRowProps) {
+function SlotRow({ index, currentSourceId, excludeIds = [], canRemove, onChange, onRemove, children }: SlotRowProps) {
   const sources = useSourcesStore((s) => s.sources)
+  // The assigned source no longer exists (studio#260): show its id as the
+  // flagged current value instead of a blank select, so it can be removed.
+  const missing = !!currentSourceId && !sources.some((s) => s.id === currentSourceId) && !(currentSourceId in VIRTUAL_SOURCE_NAMES)
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-2">
-        <select value={currentSourceId} onChange={(e) => onChange(e.target.value)} className={`${selectCls} flex-1`}>
+        <select
+          value={currentSourceId}
+          onChange={(e) => onChange(e.target.value)}
+          aria-label={`Input ${index + 1} source`}
+          aria-invalid={missing || undefined}
+          className={`${selectCls} flex-1${missing ? ' border-red-500 text-red-400' : ''}`}
+        >
           <option value="">— unassigned —</option>
+          {missing && <option value={currentSourceId}>{missingSourceLabel(currentSourceId)}</option>}
           {Object.entries(
             sources.filter((s) => s.id === currentSourceId || !excludeIds.includes(s.id)).sort((a, b) => a.name.localeCompare(b.name)).reduce<Record<string, typeof sources>>((acc, s) => {
               ;(acc[s.streamType] ??= []).push(s)
@@ -462,24 +472,35 @@ export function ProductionOptionsModal({ production, onClose }: OptionsModalProp
   }
   const guestSlotPad = (i: number) => guestSlotAssignments(production.sources)[i]?.mixerInput ?? guestSlotMixerInput(i)
 
-  // Sort valid sources by their pad index and compact to contiguous 0-based indices.
-  // Non-contiguous gaps arise when remove+shift backend writes partially fail.
-  // Guest slots (returnFeed assignments) are excluded — they live in their own
-  // reserved range at the top of the mixer-input space (guestSlotMixerInput)
-  // and are managed by the Guest Slots field below, not this compaction.
-  const validSources = [...production.sources.filter((s) => isValidSource(s.sourceId) && !isGuestSlotAssignment(s))]
-    .sort((a, b) => {
-      const ai = parseInt(/(\d+)$/.exec(a.mixerInput)?.[1] ?? '0', 10)
-      const bi = parseInt(/(\d+)$/.exec(b.mixerInput)?.[1] ?? '0', 10)
-      return ai - bi
-    })
+  // Non-guest assignments by pad. Guest slots (returnFeed assignments) are
+  // excluded — they live in their own reserved range at the top of the
+  // mixer-input space (guestSlotMixerInput) and are managed by the Guest Slots
+  // field below.
+  //
+  // An assignment whose source no longer exists (an orphan, studio#260) is
+  // still a slot: the production card counts it and the mixer still has the
+  // pad. It is shown as its own row at its own pad, marked missing, so it can
+  // be removed — and compaction never moves it or overwrites its pad.
+  const padIndex = (mi: string) => parseInt(/(\d+)$/.exec(mi)?.[1] ?? '0', 10)
+  const byPad = (a: { mixerInput: string }, b: { mixerInput: string }) => padIndex(a.mixerInput) - padIndex(b.mixerInput)
+  const slotSources = production.sources.filter((s) => !isGuestSlotAssignment(s))
+  const orphanPads = new Set(slotSources.filter((s) => !isValidSource(s.sourceId)).map((s) => s.mixerInput))
+  // Valid sources in pad order, compacted onto the lowest free pads (skipping
+  // orphan pads). Non-contiguous gaps arise when remove+shift backend writes
+  // partially fail.
+  const validSources = slotSources.filter((s) => !orphanPads.has(s.mixerInput)).sort(byPad)
+  const validTargets = compactTargets(validSources, orphanPads)
 
-  const [assignments, setAssignments] = useState<Record<string, string>>(() =>
-    Object.fromEntries(validSources.map((s, i) => [mixerInput(i), s.sourceId]))
-  )
-  const [slotCount, setSlotCount] = useState(() =>
-    Math.max(MIN_INPUTS, validSources.length)
-  )
+  const [assignments, setAssignments] = useState<Record<string, string>>(() => ({
+    ...assignmentsByPad(slotSources.filter((s) => orphanPads.has(s.mixerInput))),
+    ...Object.fromEntries(validSources.map((s, i) => [validTargets[i] ?? mixerInput(i), s.sourceId])),
+  }))
+  const [slotCount, setSlotCount] = useState(() => slotCountFor(Object.keys(assignments)))
+
+  /** Rows needed to show every pad in `pads` (at least MIN_INPUTS). */
+  function slotCountFor(pads: string[]) {
+    return Math.max(MIN_INPUTS, ...pads.map((p) => padIndex(p) + 1))
+  }
 
   // Shown when a remove-shift or compaction could not be saved completely.
   const [sourceMoveError, setSourceMoveError] = useState<string | null>(null)
@@ -490,22 +511,23 @@ export function ProductionOptionsModal({ production, onClose }: OptionsModalProp
   }
   // After a failed move, show the pads as the backend now has them (the store
   // mirrors every write that succeeded) instead of the optimistic shift.
+  // Orphans are kept too: they are still slots (studio#260).
   async function showSavedSources(err: unknown) {
     setSourceMoveError(sourceMoveErrorMessage(err))
     await fetchAll()
     const saved = useProductionsStore.getState().productions.find((p) => p.id === production.id)?.sources ?? production.sources
-    const kept = saved.filter((s) => isValidSource(s.sourceId) && !isGuestSlotAssignment(s))
-    const highest = Math.max(-1, ...kept.map((s) => parseInt(/(\d+)$/.exec(s.mixerInput)?.[1] ?? '0', 10)))
+    const kept = saved.filter((s) => !isGuestSlotAssignment(s))
     setAssignments(assignmentsByPad(kept))
-    setSlotCount(Math.max(MIN_INPUTS, highest + 1))
+    setSlotCount(slotCountFor(kept.map((s) => s.mixerInput)))
   }
 
   // On open: fix any non-contiguous pad indices in the DB (ghost cleanup is handled server-side on source deletion).
+  // Orphan pads stay where they are (studio#260).
   // Sequential, and `record` (OL-32) is re-applied only after the old pad is
   // cleared, so the record cap is never exceeded (see source-moves.ts).
   useEffect(() => {
-    if (!validSources.some((s, i) => s.mixerInput !== mixerInput(i))) return
-    void compactSources(validSources, sourceMoveOps).then((err) => (err ? showSavedSources(err) : undefined))
+    if (!validSources.some((s, i) => s.mixerInput !== validTargets[i])) return
+    void compactSources(validSources, sourceMoveOps, orphanPads).then((err) => (err ? showSavedSources(err) : undefined))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const [gfxAssignments, setGfxAssignments] = useState<Record<string, string>>(() =>
     Object.fromEntries((production.graphicAssignments ?? []).map((g) => [g.dskInput, g.graphicId]))
@@ -558,6 +580,14 @@ export function ProductionOptionsModal({ production, onClose }: OptionsModalProp
   async function handleRemove(index: number) {
     if (slotCount <= MIN_INPUTS) return
 
+    // A row whose source no longer exists (studio#260) is cleared with a DELETE
+    // on its own pad first; the rows below then shift up as usual.
+    const removedPad = mixerInput(index)
+    const removedSrc = assignments[removedPad]
+    const removingOrphan = !!removedSrc && !isValidSource(removedSrc)
+    const before = { ...assignments }
+    if (removingOrphan) delete before[removedPad]
+
     // Shift all assignments after the removed index down by 1, clear the last slot
     const newAssignments = shiftAssignments(assignments, index, slotCount)
     // `record` (OL-32) of each pad before the shift, so a source keeps its
@@ -571,7 +601,16 @@ export function ProductionOptionsModal({ production, onClose }: OptionsModalProp
     // Sync backend for every slot that changed — sequential to avoid CouchDB 409 conflicts
     // when multiple writes race on the same document revision. `record` is
     // re-applied after the moves, so the record cap is never exceeded.
-    const err = await syncRemoveShift(assignments, newAssignments, index, slotCount, recordBefore, sourceMoveOps)
+    if (removingOrphan) {
+      try {
+        await sourceMoveOps.unassign(removedPad)
+      } catch (err) {
+        await showSavedSources(err)
+        return
+      }
+      recordBefore.delete(removedPad)
+    }
+    const err = await syncRemoveShift(before, newAssignments, index, slotCount, recordBefore, sourceMoveOps)
     if (err) await showSavedSources(err)
   }
 
@@ -1522,6 +1561,11 @@ const VIRTUAL_SOURCE_NAMES: Record<string, string> = {
   '__test2__': 'Colors',
 }
 
+/** Label of an assignment whose source no longer exists (studio#260). */
+function missingSourceLabel(sourceId: string): string {
+  return `Missing source (${sourceId})`
+}
+
 
 function GuestSlotBadge({ slotIndex, sourceId }: { slotIndex: number; sourceId: string }) {
   const sources = useSourcesStore((s) => s.sources)
@@ -1537,7 +1581,15 @@ function GuestSlotBadge({ slotIndex, sourceId }: { slotIndex: number; sourceId: 
 
 function SourceAssignmentBadge({ assignment }: { assignment: { sourceId: string; mixerInput: string } }) {
   const source = useSourcesStore((s) => s.sources.find((src) => src.id === assignment.sourceId))
-  const name = source?.name ?? VIRTUAL_SOURCE_NAMES[assignment.sourceId] ?? assignment.sourceId
+  const virtualName = VIRTUAL_SOURCE_NAMES[assignment.sourceId]
+  if (!source && !virtualName) {
+    return (
+      <div className="flex items-center gap-1.5 text-xs">
+        <span className="text-red-400">{missingSourceLabel(assignment.sourceId)}</span>
+      </div>
+    )
+  }
+  const name = source?.name ?? virtualName
   return (
     <div className="flex items-center gap-1.5 text-xs">
       <span className="text-[--color-text-primary]">{name}</span>
