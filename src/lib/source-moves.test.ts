@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest'
 import { ApiError, type InputRecordMode, type ProductionSourceAssignment } from '@/lib/api'
 import {
-  assignmentsByPad, compactSources, shiftAssignments, sourceMoveErrorMessage, syncRemoveShift, type SourceMoveOps,
+  assignmentsByPad, compactSources, compactTargets, shiftAssignments, sourceMoveErrorMessage, syncRemoveShift, type SourceMoveOps,
 } from './source-moves'
 
 const CAP = 4
@@ -141,6 +141,23 @@ describe('compactSources: record carry-over (OL-32)', () => {
     expect(await compactSources(stored, backend.ops)).toBeNull()
     expect(backend.state()).toEqual({ video_in_0: 'A', video_in_1: 'B' })
     expect(backend.requests.some((r) => r.startsWith('PUT'))).toBe(false)
+  })
+})
+
+describe('compactSources: kept pads (studio#260)', () => {
+  it('compactTargets skips kept pads and never moves an entry up', () => {
+    const sorted = [off('video_in_0', 'A'), off('video_in_3', 'C'), off('video_in_5', 'D')]
+    expect(compactTargets(sorted, new Set(['video_in_1']))).toEqual(['video_in_0', 'video_in_2', 'video_in_3'])
+    expect(compactTargets(sorted)).toEqual(['video_in_0', 'video_in_1', 'video_in_2'])
+  })
+
+  it('leaves a kept (orphan) pad untouched while closing the gaps around it', async () => {
+    const stored = [off('video_in_0', 'A'), off('video_in_1', 'GONE'), rec('video_in_3', 'C')]
+    const backend = fakeBackend(stored)
+    const sorted = stored.filter((s) => s.sourceId !== 'GONE')
+    expect(await compactSources(sorted, backend.ops, new Set(['video_in_1']))).toBeNull()
+    expect(backend.state()).toEqual({ video_in_0: 'A', video_in_1: 'GONE', video_in_2: 'C+rec' })
+    expect(backend.requests).toEqual(['POST video_in_2 C', 'DELETE video_in_3', 'PUT video_in_2 transcode'])
   })
 })
 

@@ -96,17 +96,41 @@ export async function syncRemoveShift(
 }
 
 /**
- * Moves `sorted` (non-guest assignments in pad order) onto contiguous pads
- * from `video_in_0`, one request at a time. A source's old pad is only
- * cleared once its new pad is saved, and its `record` is re-applied after
- * that. Stops at the first failed move (a later move could otherwise replace
- * a pad that still holds the only copy of a source); returns that error (or
- * the first failed `record` re-apply), null when everything was saved.
+ * Target pad per entry of `sorted` (non-guest assignments in pad order) when
+ * they are compacted onto the lowest free pads from `video_in_0`. Pads in
+ * `keepPads` are skipped: they hold an assignment that must stay where it is
+ * (studio#260: a source that no longer exists keeps its pad, so the user sees
+ * it and can remove it, and compaction never overwrites it). No entry ever
+ * moves to a higher pad, and no target holds a not-yet-moved entry.
  */
-export async function compactSources(sorted: readonly ProductionSourceAssignment[], ops: SourceMoveOps): Promise<unknown> {
+export function compactTargets(sorted: readonly ProductionSourceAssignment[], keepPads: ReadonlySet<string> = new Set()): string[] {
+  const targets: string[] = []
+  let next = 0
+  for (let i = 0; i < sorted.length; i++) {
+    while (keepPads.has(pad(next))) next++
+    targets.push(pad(next++))
+  }
+  return targets
+}
+
+/**
+ * Moves `sorted` (non-guest assignments in pad order) onto the pads given by
+ * {@link compactTargets} (contiguous from `video_in_0`, skipping `keepPads`),
+ * one request at a time. A source's old pad is only cleared once its new pad
+ * is saved, and its `record` is re-applied after that. Stops at the first
+ * failed move (a later move could otherwise replace a pad that still holds the
+ * only copy of a source); returns that error (or the first failed `record`
+ * re-apply), null when everything was saved.
+ */
+export async function compactSources(
+  sorted: readonly ProductionSourceAssignment[],
+  ops: SourceMoveOps,
+  keepPads: ReadonlySet<string> = new Set(),
+): Promise<unknown> {
   let error: unknown = null
+  const targets = compactTargets(sorted, keepPads)
   for (const [i, s] of sorted.entries()) {
-    const to = pad(i)
+    const to = targets[i] ?? pad(i)
     if (s.mixerInput === to) continue
     try {
       await ops.assign({ mixerInput: to, sourceId: s.sourceId })
