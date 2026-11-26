@@ -27,3 +27,30 @@ export function guestSlotNumber(assignments: Array<{ mixerInput: string; returnF
   const at = ordered.findIndex((a) => a.mixerInput === mixerInput)
   return at === -1 ? undefined : at + 1
 }
+
+/**
+ * Display name of a guest slot's mixer input, or `undefined` when `mixerInput`
+ * is not a guest slot (no assignment, or one without `returnFeed`), so the
+ * caller falls back to its normal source naming.
+ *
+ * A joined guest (matched by `mixerInput`) shows their own invite label, the
+ * same name the Guests panel shows; a free slot, or a joined guest with no
+ * known label, shows "Guest N" (studio#221). Never the raw `Whip` sourceId
+ * (studio#171, #212, #262). Shared by the vision-mixer tiles, the PiP editor
+ * and the phone tally strip so all three name a guest identically.
+ */
+export function guestSlotName(
+  assignments: Array<{ mixerInput: string; returnFeed?: unknown }>,
+  mixerInput: string,
+  guests: Iterable<{ mixerInput: string; label?: string }>,
+): string | undefined {
+  if (!assignments.some((a) => a.mixerInput === mixerInput && !!a.returnFeed)) return undefined
+  let label: string | undefined
+  for (const g of guests) {
+    if (g.mixerInput === mixerInput) {
+      label = g.label?.trim()
+      break
+    }
+  }
+  return label || `Guest ${guestSlotNumber(assignments, mixerInput) ?? ''}`.trim()
+}
