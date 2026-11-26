@@ -16,13 +16,17 @@ import { useTallyLight, type TallyState } from '@/hooks/useTallyLight'
 import { useProductionStore } from '@/store/production.store'
 import { useProductionsStore } from '@/store/productions.store'
 import { useSourcesStore } from '@/store/sources.store'
+import { useGuestsStore } from '@/store/guests.store'
 import { useIsOnAir } from '@/store/programClock.store'
 import { cn } from '@/lib/cn'
+import { guestSlotName } from '@/lib/guest-slots'
 
 // Same virtual-source labels the desktop controller uses for built-in inputs that
 // have no entry in the saved sources store (TransitionPanel, PipPanel,
 // SetupPage/ProductionsPanel's SourceAssignmentBadge all keep their own copy of
-// this map).
+// this map). A guest slot's virtual `Whip` source never reaches this map: it is
+// named by guestSlotName first (studio#262). 'WHIP' remains the label of a
+// manually assigned virtual WHIP input that is not a guest slot.
 const VIRTUAL_SOURCE_NAMES: Record<string, string> = {
   'Whip': 'WHIP',
   '__test1__': 'Pinwheel',
@@ -51,16 +55,21 @@ export function PhoneTallyStrip() {
   const pvwPip = useProductionStore((s) => s.pvwPip)
   const production = useProductionsStore((s) => s.productions.find((p) => p.id === activeProductionId))
   const sources = useSourcesStore((s) => s.sources)
+  const guests = useGuestsStore((s) => s.guests)
   const isOnAir = useIsOnAir()
 
   const sourceIdForInput = (input: string | null): string => {
     if (!input) return ''
     return production?.sources?.find((a) => a.mixerInput === input)?.sourceId ?? ''
   }
-  // Same fallback order the desktop controller uses: saved source name, then the
-  // built-in virtual-source label, then '—' for a genuinely unresolved input.
-  const nameForSourceId = (sourceId: string): string =>
-    (sourceId ? sources.find((s) => s.id === sourceId)?.name : undefined) ?? VIRTUAL_SOURCE_NAMES[sourceId] ?? '—'
+  // Same fallback order the desktop controller uses: a guest slot's guest label
+  // or "Guest N" (studio#262), then the saved source name, then the built-in
+  // virtual-source label, then '—' for a genuinely unresolved input.
+  const nameForInput = (input: string | null, sourceId: string): string =>
+    (input ? guestSlotName(production?.sources ?? [], input, Object.values(guests)) : undefined)
+    ?? (sourceId ? sources.find((s) => s.id === sourceId)?.name : undefined)
+    ?? VIRTUAL_SOURCE_NAMES[sourceId]
+    ?? '—'
 
   const pgmSourceId = sourceIdForInput(pgmInput)
   const pvwSourceId = sourceIdForInput(pvwInput)
@@ -73,8 +82,8 @@ export function PhoneTallyStrip() {
   // A PiP slot is a composite, not a mixer input — it never has a production.sources
   // entry, so the desktop controller (TransitionPanel, PipPanel) labels and tallies
   // it directly from pgmPip/pvwPip instead of resolving it via sourceId.
-  const pgmName = pgmPip !== null ? `PiP ${pgmPip + 1}` : nameForSourceId(pgmSourceId)
-  const pvwName = pvwPip !== null ? `PiP ${pvwPip + 1}` : nameForSourceId(pvwSourceId)
+  const pgmName = pgmPip !== null ? `PiP ${pgmPip + 1}` : nameForInput(pgmInput, pgmSourceId)
+  const pvwName = pvwPip !== null ? `PiP ${pvwPip + 1}` : nameForInput(pvwInput, pvwSourceId)
   const pgmState: TallyState = pgmPip !== null ? 'pgm' : pgmSourceTally
   const pvwState: TallyState = pvwPip !== null ? 'pvw' : pvwSourceTally
 

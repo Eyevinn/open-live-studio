@@ -5,6 +5,7 @@ import { useGuestsStore } from '@/store/guests.store'
 import { cn } from '@/lib/cn'
 import { pipShowsBlackBehind } from '@/lib/pip'
 import { compareMixerInput } from '@/lib/mixer-input-order'
+import { guestSlotName } from '@/lib/guest-slots'
 import { useRef, useCallback, useState, useEffect } from 'react'
 import { MutedMicIcon } from '@/components/ui/MutedMicIcon'
 import { GuestDroppedBadge } from '@/components/ui/GuestDroppedBadge'
@@ -68,14 +69,6 @@ export const TRANSITION_LABELS: Record<TransitionType, string> = {
   tv_roll:        'ROLL',
   negative_flash: 'NEGATIVE',
   ripple:         'RIPPLE',
-}
-
-/** Trailing numeric index of a mixer-input key, used to order guest slots into
- *  the same "Slot 1, Slot 2, …" sequence the Guests panel shows (it allocates
- *  slots from the top of the mixer-input range down, so the highest index is
- *  Slot 1). Keeps the "GUEST N" tile label aligned with the Guests panel. */
-function guestSlotIndex(mixerInput: string): number {
-  return parseInt(/(\d+)$/.exec(mixerInput)?.[1] ?? '0', 10)
 }
 
 /** Small amber "no background" marker shown on a PiP tile whose take would
@@ -223,32 +216,17 @@ export function TransitionPanel({ onCut, onAuto, onFtb, onSelectPvw, onSetOvl, o
     '__test2__': 'COLORS',
   }
 
-  // Guest slots (open-live#381): a source assignment carrying `returnFeed` is a
-  // reserved guest input whose source is the virtual `Whip` (or a return-only
-  // encoder). Number them the way the Guests panel does so a free slot can be
-  // labelled "GUEST 1", "GUEST 2", … instead of the raw sourceId ("WHIP").
-  const guestSlotNumbers = new Map<string, number>()
-  const orderedGuestSlots = [...(production?.sources ?? [])]
-    .filter((a) => !!a.returnFeed)
-    .sort((a, b) => guestSlotIndex(b.mixerInput) - guestSlotIndex(a.mixerInput))
-  orderedGuestSlots.forEach((a, i) => guestSlotNumbers.set(a.mixerInput, i + 1))
-
-  const inputSlots = [...(production?.sources ?? [])]
+  const assignments = production?.sources ?? []
+  const guestList = Object.values(guests)
+  const inputSlots = [...assignments]
     .sort((a, b) => compareMixerInput(a.mixerInput, b.mixerInput))
     .map((a) => {
-      let name: string
-      if (a.returnFeed) {
-        // Joined guest → their own label (the same name the Guests panel shows);
-        // free slot → its slot number. Never the raw `Whip` sourceId (studio#171).
-        const guest = Object.values(guests).find((g) => g.mixerInput === a.mixerInput)
-        // A joined guest with no known label also falls back to its slot
-        // number, never the raw mixer input (studio#221).
-        const slotName = `Guest ${guestSlotNumbers.get(a.mixerInput) ?? ''}`.trim()
-        name = guest?.label?.trim() || slotName
-      } else {
-        const realSource = sources.find((s) => s.id === a.sourceId)
-        name = realSource?.name ?? VIRTUAL_SOURCE_NAMES[a.sourceId] ?? a.sourceId
-      }
+      // Guest slots (open-live#381, a `returnFeed` assignment): the joined
+      // guest's label or "Guest N", never the raw `Whip` sourceId.
+      const name = guestSlotName(assignments, a.mixerInput, guestList)
+        ?? sources.find((s) => s.id === a.sourceId)?.name
+        ?? VIRTUAL_SOURCE_NAMES[a.sourceId]
+        ?? a.sourceId
       return { mixerInput: a.mixerInput, sourceId: a.sourceId, name: name.toUpperCase() }
     })
 
